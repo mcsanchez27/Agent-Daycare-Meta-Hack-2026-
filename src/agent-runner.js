@@ -139,18 +139,15 @@ class AgentRunner {
     this.startProcessScanner();
   }
 
-  // Auto-scan system for running agent processes in external terminals
   startProcessScanner() {
     this.scanInterval = setInterval(() => {
       this.checkExternalProcesses();
     }, 2500);
-    // Initial check immediately
     setTimeout(() => this.checkExternalProcesses(), 500);
   }
 
   checkExternalProcesses() {
     try {
-      // Use tasklist /FO CSV /NH to get running processes quickly
       const output = execSync('tasklist /FO CSV /NH', { encoding: 'utf8', timeout: 3000 });
       const lines = output.split('\n');
 
@@ -204,12 +201,9 @@ class AgentRunner {
       if (changed) {
         this.broadcastAllStatus();
       }
-    } catch (_) {
-      // Ignore background scan transient errors
-    }
+    } catch (_) {}
   }
 
-  // Scan and verify agent installations on machine
   scanAgents() {
     const results = [];
     Object.values(this.agents).forEach(agent => {
@@ -281,7 +275,7 @@ class AgentRunner {
     return null;
   }
 
-  // Start agent with optional prompt
+  // Start agent with precise argument formatting & shell: false
   startAgent(agentId, initialPrompt = '') {
     const agent = this.agents[agentId];
     if (!agent) throw new Error(`Agent ${agentId} not found`);
@@ -297,16 +291,16 @@ class AgentRunner {
 
     const workingDir = 'C:\\Users\\Matth\\.gemini\\antigravity\\scratch';
     let args = [];
+    const isPromptMode = !!(initialPrompt && initialPrompt.trim());
 
-    // Format prompt arguments depending on agent
-    if (initialPrompt && initialPrompt.trim()) {
+    if (isPromptMode) {
       const p = initialPrompt.trim();
       if (agentId === 'antigravity') {
         args = ['-p', p];
       } else if (agentId === 'claude') {
         args = ['-p', p];
       } else if (agentId === 'codex') {
-        args = [p];
+        args = ['exec', p];
       } else if (agentId === 'grok') {
         args = [p];
       } else {
@@ -314,15 +308,21 @@ class AgentRunner {
       }
     }
 
-    this.emitOutput(agentId, `\x1b[36m> Launching ${agent.name} (${exe} ${args.join(' ')})...\x1b[0m\r\n\r\n`);
+    this.emitOutput(agentId, `\x1b[36m> [Mission Control] Launching ${agent.name}...\x1b[0m\r\n\r\n`);
 
     let child;
     try {
+      // Use shell: false so Node properly passes each array element as an intact argument
       child = spawn(exe, args, {
         cwd: workingDir,
-        shell: true,
+        shell: false,
         env: { ...process.env, FORCE_COLOR: '1' }
       });
+
+      // If non-interactive one-off prompt, close stdin so CLIs don't hang waiting for stdin
+      if (isPromptMode && child.stdin) {
+        child.stdin.end();
+      }
     } catch (err) {
       this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
       return false;
@@ -390,27 +390,29 @@ class AgentRunner {
     }
   }
 
-  // Key upgrade: sendInput now auto-launches if not already running!
   sendInput(agentId, input) {
     const child = this.processes.get(agentId);
     const agent = this.agents[agentId];
     
-    // If active embedded session, pipe to stdin
-    if (child && child.stdin && child.stdin.writable) {
-      child.stdin.write(input + '\r\n');
-      this.emitOutput(agentId, `\x1b[36m> ${input}\x1b[0m\r\n`);
-      
-      if (agent) {
-        agent.status = 'working';
-        agent.unreadPrompt = null;
-        this.broadcastStatus(agentId, 'working');
+    // If active process with open writable stdin
+    if (child && child.stdin && child.stdin.writable && !child.stdin.destroyed) {
+      try {
+        child.stdin.write(input + '\r\n');
+        this.emitOutput(agentId, `\x1b[36m> ${input}\x1b[0m\r\n`);
+        
+        if (agent) {
+          agent.status = 'working';
+          agent.unreadPrompt = null;
+          this.broadcastStatus(agentId, 'working');
+        }
+        return true;
+      } catch (_) {
+        // Fallback to auto-launching
       }
-      return true;
     }
 
-    // If not running, AUTO-LAUNCH with the prompt!
+    // Auto-launch with prompt
     if (agent) {
-      this.emitOutput(agentId, `\x1b[32m[Summoning ${agent.name} to execute your prompt...]\x1b[0m\r\n`);
       return this.startAgent(agentId, input);
     }
 

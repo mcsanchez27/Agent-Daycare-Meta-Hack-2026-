@@ -213,14 +213,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     terminalOutput.scrollTop = terminalOutput.scrollHeight;
   }
 
-  function appendLog(agentId, html) {
+  function appendLog(agentId, htmlOrText) {
     if (!logs[agentId]) logs[agentId] = '';
+    
+    // Parse ANSI codes if any exist in the incoming string
+    let html = htmlOrText;
+    if (typeof html === 'string' && html.includes('\x1b[')) {
+      html = parseAnsi(html);
+    }
+
     logs[agentId] += html;
 
     if (currentActiveTab === agentId) {
       terminalOutput.insertAdjacentHTML('beforeend', html);
       terminalOutput.scrollTop = terminalOutput.scrollHeight;
     }
+  }
+
+  function parseAnsi(text) {
+    if (!text) return '';
+    const colorMap = {
+      '30': '#4a4a4a', '31': '#ff5555', '32': '#50fa7b', '33': '#f1fa8c',
+      '34': '#bd93f9', '35': '#ff79c6', '36': '#8be9fd', '37': '#f8f8f2',
+      '90': '#6272a4', '91': '#ff6e6e', '92': '#69ff94', '93': '#ffffa5',
+      '94': '#d6acff', '95': '#ff92df', '96': '#a4ffff', '97': '#ffffff'
+    };
+    let html = text.replace(/\x1b\[([0-9;]+)m/g, (_, codes) => {
+      const list = codes.split(';');
+      let styles = [];
+      for (const c of list) {
+        if (c === '0') return '</span>';
+        if (c === '1') styles.push('font-weight: bold;');
+        if (colorMap[c]) styles.push(`color: ${colorMap[c]};`);
+      }
+      return `<span style="${styles.join(' ')}">`;
+    });
+    return html.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
   }
 
   // Tab click listeners
@@ -238,16 +266,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!text && customText === undefined) return;
 
     if (currentActiveTab === 'team') {
-      // Broadcast to Team Radio
       appendLog('team', `\r\n<div style="margin: 4px 0;"><span style="color: #ffd166; font-weight: bold;">[Commander Broadcast]:</span> ${escapeHtml(text)}</div>`);
       terminalInput.value = '';
       window.soundFX.playWakeup();
 
-      // Find the designated Team Lead
       const leadAgent = Object.values(agents).find(a => a.role === 'lead') || agents.antigravity;
       if (leadAgent) {
         appendLog('team', `<div style="color: #00f5d4; margin: 4px 0;">👑 <strong>${leadAgent.name} (Team Lead)</strong>: "Mission acknowledged! Dispatching and working on it..."</div>`);
-        appendLog(leadAgent.id, `\r\n\x1b[33m[Dispatched from Team Radio]: ${text}\x1b[0m\r\n`);
+        appendLog(leadAgent.id, `<div style="color: #f1fa8c; margin: 4px 0;"><strong>[Dispatched from Team Radio]:</strong> ${escapeHtml(text)}</div>\r\n`);
         await window.api.sendInput(leadAgent.id, text);
         leadAgent.status = 'working';
         renderStage();
@@ -258,8 +284,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const agent = agents[currentActiveTab];
     if (!agent) return;
 
-    // Send to agent process (auto-spawns if inactive)
-    appendLog(currentActiveTab, `\x1b[36m> ${text}\x1b[0m\r\n`);
+    // Send to agent process
+    appendLog(currentActiveTab, `<div style="color: #8be9fd; margin: 4px 0;"><strong>&gt; ${escapeHtml(text)}</strong></div>\r\n`);
     await window.api.sendInput(currentActiveTab, text);
     
     if (agent.status === 'needs_input') {
