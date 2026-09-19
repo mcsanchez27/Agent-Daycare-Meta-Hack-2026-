@@ -1,7 +1,7 @@
 {
-  "name": "cli-companions",
+  "name": "agent-daycare",
   "version": "1.0.0",
-  "description": "Retro Pixel-Art Multi-Agent Mission Control & Desk Pets for Windows",
+  "description": "Agent Daycare (Batcave Predecessor) - Retro 16-Bit Multi-Agent Mission Control & Desk Pets",
   "main": "src/main.js",
   "scripts": {
     "start": "electron ."

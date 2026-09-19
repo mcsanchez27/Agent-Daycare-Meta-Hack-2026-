@@ -1,4 +1,4 @@
-# 👾 Agent Mission Control (CLI Companions v1.0)
+# 👾 Agent Daycare (Batcave Predecessor)
 
 A multi-agent desktop command center and desk pet overlay designed for your second monitor. Features cute retro 16-bit pixel-art bot companions (**Antigravity**, **Claude Code**, **Codex**, and **Grok**) that visually reflect your CLI agents' live activity.
 
