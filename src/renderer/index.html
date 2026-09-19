@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Mission Control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Window Titlebar & Controls -->
+  <header class="titlebar">
+    <div class="titlebar-brand">
+      <span class="titlebar-logo">👾</span>
+      <span class="titlebar-text">AGENT MISSION CONTROL</span>
+      <span class="titlebar-badge">v1.1</span>
+    </div>
+
+    <div class="titlebar-controls">
+      <button id="scanAgentsBtn" class="title-btn" title="Scan PC for Installed Agents">
+        <span>🔍</span> Scan Agents
+      </button>
+      <button id="soundToggleBtn" class="title-btn" title="Toggle 8-bit Audio">
+        <span id="soundIcon">🔊</span> <span id="soundText">Sound</span>
+      </button>
+      <button id="manageRolesBtn" class="title-btn" title="Reassign Agent Roles">
+        <span>👑</span> Roles
+      </button>
+      <button id="demoAlertBtn" class="title-btn" title="Test Alert (!) Flow">
+        <span>⚡</span> Test Alert
+      </button>
+      <span style="color: var(--border-color); margin: 0 4px;">|</span>
+      <button id="winMinBtn" class="title-btn" title="Minimize">—</button>
+      <button id="winMaxBtn" class="title-btn" title="Maximize">□</button>
+      <button id="winCloseBtn" class="title-btn window-close" title="Close">✕</button>
+    </div>
+  </header>
+
+  <!-- Main App Layout -->
+  <main class="app-container">
+    <!-- The Office / Mascot Stage -->
+    <section class="stage-section">
+      <div class="stage-header">
+        <div class="stage-title-group">
+          <span class="stage-title">Agent Office & Desk Pets</span>
+          <span class="stage-status-summary" id="stageSummary">Scanning system agents...</span>
+        </div>
+        <div class="stage-tools">
+          <button id="summonAllBtn" class="stage-tool-btn">▶ Summon Team</button>
+          <button id="sleepAllBtn" class="stage-tool-btn">💤 All Sleep</button>
+        </div>
+      </div>
+
+      <!-- Grid of Agent Cards -->
+      <div class="agents-grid" id="agentsGrid">
+        <!-- Dynamically rendered by app.js -->
+      </div>
+    </section>
+
+    <!-- Embedded Terminal Dialogue Drawer -->
+    <section class="terminal-section">
+      <!-- Tabs -->
+      <div class="terminal-tabs" id="terminalTabs">
+        <button class="terminal-tab active" data-agent="antigravity">
+          <span>🔵 Antigravity</span>
+          <span class="tab-badge-alert hidden" id="badge-antigravity">!</span>
+        </button>
+        <button class="terminal-tab" data-agent="claude">
+          <span>🟠 Claude Code</span>
+          <span class="tab-badge-alert hidden" id="badge-claude">!</span>
+        </button>
+        <button class="terminal-tab" data-agent="codex">
+          <span>🟢 Codex</span>
+          <span class="tab-badge-alert hidden" id="badge-codex">!</span>
+        </button>
+        <button class="terminal-tab" data-agent="grok">
+          <span>⚫ Grok</span>
+          <span class="tab-badge-alert hidden" id="badge-grok">!</span>
+        </button>
+        <button class="terminal-tab team-tab" data-agent="team">
+          <span>📻 Team Radio</span>
+        </button>
+      </div>
+
+      <!-- Output Screen -->
+      <div class="terminal-body" id="terminalOutput">
+        <!-- Live terminal text with ANSI styling streams here -->
+      </div>
+
+      <!-- Quick Action & Reply Chips -->
+      <div class="action-bar">
+        <div class="quick-replies">
+          <span class="quick-reply-label">Quick Reply:</span>
+          <button class="chip-btn chip-yes" data-reply="y">y (Yes)</button>
+          <button class="chip-btn chip-no" data-reply="n">n (No)</button>
+          <button class="chip-btn" data-reply="">[ Enter ]</button>
+          <button class="chip-btn" data-reply="cancel">Cancel</button>
+        </div>
+
+        <div class="agent-controls">
+          <button id="startAgentBtn" class="control-btn start">▶ Start</button>
+          <button id="stopAgentBtn" class="control-btn stop">⏹ Stop</button>
+          <button id="forwardBtn" class="control-btn">🔄 Forward to...</button>
+          <button id="promoteBtn" class="control-btn">👑 Make Lead</button>
+        </div>
+      </div>
+
+      <!-- Terminal Input Bar -->
+      <div class="input-bar">
+        <span class="input-prompt-label" id="inputPromptLabel">&gt;</span>
+        <input type="text" id="terminalInput" class="terminal-input" placeholder="Type prompt or command..." autocomplete="off" spellcheck="false">
+        <button id="sendBtn" class="send-btn">Send ↵</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Role Customizer Modal -->
+  <div class="modal-overlay hidden" id="roleModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title">👑 Manage Agent Roles & Hierarchy</span>
+        <button id="closeModalBtn" class="title-btn">✕</button>
+      </div>
+      <div class="modal-body" id="roleModalBody">
+        <!-- Dynamically rendered -->
+      </div>
+      <div class="modal-footer">
+        <button id="saveRolesBtn" class="send-btn">Apply Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent Diagnostics & Discovery Modal -->
+  <div class="modal-overlay hidden" id="diagnosticsModal">
+    <div class="modal-box" style="width: 620px;">
+      <div class="modal-header">
+        <span class="modal-title">🔍 Installed Agents & System Diagnostics</span>
+        <button id="closeDiagBtn" class="title-btn">✕</button>
+      </div>
+      <div class="modal-body" id="diagnosticsModalBody">
+        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
+          Detected CLI agents on this Windows machine:
+        </div>
+        <div id="diagnosticsList" style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 10px; color: var(--text-dim);">Background scanner polls external processes every 2.5s</span>
+        <button id="refreshDiagBtn" class="send-btn">🔄 Re-scan System</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="audio.js"></script>
+  <script src="mascots.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

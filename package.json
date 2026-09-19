@@ -1,0 +1,25 @@
+{
+  "name": "cli-companions",
+  "version": "1.0.0",
+  "description": "Retro Pixel-Art Multi-Agent Mission Control & Desk Pets for Windows",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "agents",
+    "cli",
+    "antigravity",
+    "claude",
+    "codex",
+    "grok",
+    "retro",
+    "pixel-art",
+    "mission-control"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^34.0.0"
+  }
+}
