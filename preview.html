@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Daycare - Standalone Design Preview</title>
+  <style>
+    /* Standalone Preview Styles */
+    :root {
+      --bg-primary: #0d0f18;
+      --bg-secondary: #16192b;
+      --bg-tertiary: #1f233d;
+      --bg-card: #181b2e;
+      --border-color: #2b3054;
+      --border-highlight: #4d5594;
+      --text-main: #e2e8f0;
+      --text-muted: #8c96b5;
+      --text-dim: #5c6585;
+      --color-lead: #ffd166;
+      --color-antigravity: #9d4edd;
+      --color-claude: #f4a261;
+      --color-codex: #52b788;
+      --color-grok: #00f5d4;
+      --alert-red: #ef476f;
+      --alert-yellow: #ffd166;
+      --success-green: #06d6a0;
+      --font-mono: 'Consolas', 'Cascadia Code', 'Courier New', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      background: #090a12;
+      border-bottom: 1px solid var(--border-color);
+      padding: 10px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand { font-size: 14px; font-weight: bold; color: #fff; display: flex; align-items: center; gap: 8px; }
+    .badge { font-size: 10px; background: #252a48; color: var(--color-grok); padding: 2px 6px; border-radius: 3px; }
+    .stage {
+      padding: 20px;
+      background: linear-gradient(180deg, #131524 0%, #0d0f18 100%);
+      border-bottom: 2px solid var(--border-color);
+    }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+    }
+    .card.selected { border-color: var(--border-highlight); background: #1c2038; }
+    .role-badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: bold; }
+    .role-lead { color: var(--color-lead); border: 1px solid var(--color-lead); background: rgba(255,209,102,0.15); }
+    .role-arch { color: var(--color-claude); border: 1px solid var(--color-claude); background: rgba(244,162,97,0.15); }
+    .role-test { color: var(--color-codex); border: 1px solid var(--color-codex); background: rgba(82,183,136,0.15); }
+    .role-rev { color: var(--color-grok); border: 1px solid var(--color-grok); background: rgba(0,245,212,0.15); }
+    .diorama {
+      height: 100px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      position: relative;
+      margin: 10px 0;
+    }
+    .pixel-avatar { width: 56px; height: 56px; image-rendering: pixelated; }
+    .desk { position: absolute; bottom: 0; left: 10%; right: 10%; height: 6px; background: #2b3054; border-radius: 2px; }
+    .laptop { position: absolute; bottom: 6px; right: 20%; width: 14px; height: 10px; background: #3a416f; border-top: 2px solid var(--color-grok); }
+    .mug { position: absolute; bottom: 6px; left: 20%; width: 6px; height: 8px; background: #d95d39; }
+    .terminal-mock {
+      flex: 1;
+      padding: 16px 20px;
+      background: #080911;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #abb2bf;
+    }
+    .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-color); padding: 8px 16px; background: #0f111e; }
+    .tab { padding: 6px 14px; border-radius: 4px 4px 0 0; font-size: 12px; color: var(--text-muted); }
+    .tab.active { background: #080911; color: #fff; font-weight: bold; border: 1px solid var(--border-color); border-bottom-color: #080911; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <span>👾 AGENT DAYCARE</span>
+      <span class="badge">Batcave Predecessor</span>
+    </div>
+    <div style="font-size: 11px; color: var(--text-muted);">Standalone Design Preview for Google AI Studio</div>
+  </div>
+
+  <div class="stage">
+    <div class="grid">
+      <!-- Antigravity -->
+      <div class="card selected">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span class="role-badge role-lead">👑 LEAD</span>
+          <span style="font-size: 10px; color: var(--success-green);">● READY</span>
+        </div>
+        <div class="diorama">
+          <svg viewBox="0 0 48 48" class="pixel-avatar" shape-rendering="crispEdges">
+            <polygon points="16,6 20,12 24,5 28,12 32,6 30,14 18,14" fill="#ffd166" stroke="#b08900" stroke-width="1"/>
+            <rect x="14" y="14" width="20" height="18" rx="4" fill="#3c096c" stroke="#5a189a" stroke-width="1.5"/>
+            <rect x="17" y="18" width="14" height="8" rx="2" fill="#10002b"/>
+            <rect x="18" y="19" width="12" height="6" rx="1" fill="#00f5d4"/>
+            <circle cx="21" cy="22" r="1.5" fill="#ffffff"/>
+            <circle cx="27" cy="22" r="1.5" fill="#ffffff"/>
+            <rect x="17" y="32" width="4" height="6" fill="#5a189a"/>
+            <rect x="27" y="32" width="4" height="6" fill="#5a189a"/>
+          </svg>
+          <div class="desk"></div><div class="laptop"></div><div class="mug"></div>
+        </div>
+        <strong>Antigravity</strong>
+        <span style="font-size: 10px; color: var(--text-dim);">Team Lead & Orchestrator</span>
+      </div>
+
+      <!-- Claude -->
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span class="role-badge role-arch">📐 ARCHITECT</span>
+          <span style="font-size: 10px; color: var(--success-green);">● READY</span>
+        </div>
+        <div class="diorama">
+          <svg viewBox="0 0 48 48" class="pixel-avatar" shape-rendering="crispEdges">
+            <polygon points="24,6 26,10 30,10 27,13 28,17 24,14 20,17 21,13 18,10 22,10" fill="#f4a261"/>
+            <rect x="13" y="14" width="22" height="20" rx="4" fill="#d95d39" stroke="#9e2a2b" stroke-width="1.5"/>
+            <rect x="16" y="17" width="16" height="13" rx="2" fill="#fceade"/>
+            <circle cx="20" cy="22" r="2" fill="#33272a"/>
+            <circle cx="28" cy="22" r="2" fill="#33272a"/>
+            <rect x="16" y="34" width="6" height="4" rx="2" fill="#9e2a2b"/>
+            <rect x="26" y="34" width="6" height="4" rx="2" fill="#9e2a2b"/>
+          </svg>
+          <div class="desk"></div><div class="laptop"></div><div class="mug"></div>
+        </div>
+        <strong>Claude Code</strong>
+        <span style="font-size: 10px; color: var(--text-dim);">Code Architect & Builder</span>
+      </div>
+
+      <!-- Codex -->
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span class="role-badge role-test">🧪 QA / TEST</span>
+          <span style="font-size: 10px; color: var(--success-green);">● READY</span>
+        </div>
+        <div class="diorama">
+          <svg viewBox="0 0 48 48" class="pixel-avatar" shape-rendering="crispEdges">
+            <rect x="12" y="14" width="24" height="20" rx="3" fill="#1b4332" stroke="#2d6a4f" stroke-width="1.5"/>
+            <rect x="15" y="17" width="18" height="14" rx="2" fill="#081c15"/>
+            <text x="17" y="27" fill="#69ff94" font-family="monospace" font-size="9" font-weight="bold">&gt;_</text>
+            <rect x="15" y="37" width="18" height="3" rx="1" fill="#1b4332"/>
+          </svg>
+          <div class="desk"></div><div class="laptop"></div><div class="mug"></div>
+        </div>
+        <strong>Codex</strong>
+        <span style="font-size: 10px; color: var(--text-dim);">QA & Logic Engineer</span>
+      </div>
+
+      <!-- Grok -->
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span class="role-badge role-rev">🛡️ SENTRY</span>
+          <span style="font-size: 10px; color: var(--success-green);">● READY</span>
+        </div>
+        <div class="diorama">
+          <svg viewBox="0 0 48 48" class="pixel-avatar" shape-rendering="crispEdges">
+            <polygon points="16,8 20,14 18,14" fill="#00f5d4"/>
+            <polygon points="32,8 28,14 30,14" fill="#00f5d4"/>
+            <polygon points="14,15 34,15 32,34 16,34" fill="#121214" stroke="#343a40" stroke-width="1.5"/>
+            <rect x="17" y="20" width="14" height="6" fill="#050505"/>
+            <rect x="18" y="21" width="12" height="4" fill="#00f5d4"/>
+            <circle cx="24" cy="29" r="2" fill="#00f5d4"/>
+          </svg>
+          <div class="desk"></div><div class="laptop"></div><div class="mug"></div>
+        </div>
+        <strong>Grok</strong>
+        <span style="font-size: 10px; color: var(--text-dim);">Sentry & Code Reviewer</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active">🔵 Antigravity</div>
+    <div class="tab">🟠 Claude Code</div>
+    <div class="tab">🟢 Codex</div>
+    <div class="tab">⚫ Grok</div>
+    <div class="tab" style="margin-left: auto; color: var(--color-lead);">📻 Team Radio</div>
+  </div>
+
+  <div class="terminal-mock">
+    <div style="color: #6272a4;">[Antigravity Terminal Ready]</div>
+    <div style="color: #8be9fd; margin: 4px 0;"><strong>&gt; tell me a quick 3 sentance story</strong></div>
+    <div style="color: #abb2bf;">Elena pressed the mysterious glowing button on the ancient console, holding her breath as the dust stirred around her. Deep within the forgotten vault, colossal gears groaned to life, illuminating constellations that hadn't been seen in ten thousand years. A soft chime then echoed through the chamber, accompanied by a calm voice saying, "Welcome back, Commander."</div>
+  </div>
+</body>
+</html>
