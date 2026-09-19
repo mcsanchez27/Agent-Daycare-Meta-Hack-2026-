@@ -146,6 +146,14 @@ class AgentRunner {
     this.startProcessScanner();
   }
 
+  logToFile(agentId, level, text) {
+    try {
+      const logPath = path.join(__dirname, '..', 'agent-daycare.log');
+      const timestamp = new Date().toISOString();
+      fs.appendFileSync(logPath, `[${timestamp}] [${(agentId || 'SYS').toUpperCase()}] [${level}] ${text}\n`);
+    } catch (_) {}
+  }
+
   startProcessScanner() {
     this.scanInterval = setInterval(() => {
       this.checkExternalProcesses();
@@ -316,21 +324,24 @@ class AgentRunner {
     }
 
     this.emitOutput(agentId, `\x1b[36m> [Mission Control] Launching ${agent.name}...\x1b[0m\r\n\r\n`);
+    this.logToFile(agentId, 'LAUNCH', `Starting ${exe} with args: ${JSON.stringify(args)}`);
 
     let child;
     try {
-      // Use shell: false so Node properly passes each array element as an intact argument
-      child = spawn(exe, args, {
+      const spawnOptions = {
         cwd: workingDir,
         shell: false,
         env: { ...process.env, FORCE_COLOR: '1' }
-      });
+      };
 
-      // If non-interactive one-off prompt, close stdin so CLIs don't hang waiting for stdin
-      if (isPromptMode && child.stdin) {
-        child.stdin.end();
+      if (isPromptMode) {
+        // Closes stdin stream explicitly so Claude and Codex do not wait on stdin
+        spawnOptions.stdio = ['ignore', 'pipe', 'pipe'];
       }
+
+      child = spawn(exe, args, spawnOptions);
     } catch (err) {
+      this.logToFile(agentId, 'ERROR', `Launch error: ${err.message}`);
       this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
       return false;
     }
@@ -347,18 +358,25 @@ class AgentRunner {
       text: `${agent.name} started working on: "${initialPrompt || 'Interactive Session'}"`
     });
 
-    child.stdout.on('data', (data) => {
-      const rawText = data.toString('utf8');
-      this.handleOutput(agentId, rawText);
-    });
+    if (child.stdout) {
+      child.stdout.on('data', (data) => {
+        const rawText = data.toString('utf8');
+        this.logToFile(agentId, 'STDOUT', rawText);
+        this.handleOutput(agentId, rawText);
+      });
+    }
 
-    child.stderr.on('data', (data) => {
-      const rawText = data.toString('utf8');
-      this.handleOutput(agentId, rawText);
-    });
+    if (child.stderr) {
+      child.stderr.on('data', (data) => {
+        const rawText = data.toString('utf8');
+        this.logToFile(agentId, 'STDERR', rawText);
+        this.handleOutput(agentId, rawText);
+      });
+    }
 
     child.on('close', (code) => {
       this.processes.delete(agentId);
+      this.logToFile(agentId, 'EXIT', `Process finished with code ${code}`);
       agent.status = agent.externalPid ? 'working' : 'sleeping';
       agent.unreadPrompt = null;
       this.broadcastStatus(agentId, agent.status);
