@@ -370,11 +370,27 @@ class AgentRunner {
       child.stderr.on('data', (data) => {
         const rawText = data.toString('utf8');
         this.logToFile(agentId, 'STDERR', rawText);
-        this.handleOutput(agentId, rawText);
+
+        // Filter out Codex's verbose startup banner & metadata from the UI
+        if (agentId === 'codex') {
+          const cleaned = rawText
+            .split('\n')
+            .filter(line => !/^(Reading additional input|OpenAI Codex|--------|workdir:|model:|provider:|approval:|sandbox:|reasoning effort:|reasoning summaries:|session id:|user$|tokens used|\d{1,3}(,\d{3})*$|codex$)/i.test(line.trim()))
+            .join('\n');
+          if (cleaned.trim()) {
+            this.handleOutput(agentId, cleaned);
+          }
+        } else {
+          this.handleOutput(agentId, rawText);
+        }
       });
     }
 
     child.on('close', (code) => {
+      // Clear any pending prompt timers for this agent so alert doesn't linger
+      clearTimeout(this.promptTimers.get(agentId));
+      this.promptTimers.delete(agentId);
+
       this.processes.delete(agentId);
       this.logToFile(agentId, 'EXIT', `Process finished with code ${code}`);
       agent.status = agent.externalPid ? 'working' : 'sleeping';
@@ -391,6 +407,8 @@ class AgentRunner {
     });
 
     child.on('error', (err) => {
+      clearTimeout(this.promptTimers.get(agentId));
+      this.promptTimers.delete(agentId);
       this.emitOutput(agentId, `\x1b[31m[Process error]: ${err.message}\x1b[0m\r\n`);
       agent.status = 'idle';
       this.broadcastStatus(agentId, 'idle');
@@ -400,6 +418,8 @@ class AgentRunner {
   }
 
   stopAgent(agentId) {
+    clearTimeout(this.promptTimers.get(agentId));
+    this.promptTimers.delete(agentId);
     const child = this.processes.get(agentId);
     if (child) {
       try {
@@ -416,24 +436,26 @@ class AgentRunner {
   }
 
   sendInput(agentId, input) {
+    // Clear any active alert state on backend immediately
+    clearTimeout(this.promptTimers.get(agentId));
+    this.promptTimers.delete(agentId);
+
     const child = this.processes.get(agentId);
     const agent = this.agents[agentId];
     
+    if (agent) {
+      agent.unreadPrompt = null;
+      agent.status = 'working';
+      this.broadcastStatus(agentId, 'working');
+    }
+
     // If active process with open writable stdin
     if (child && child.stdin && child.stdin.writable && !child.stdin.destroyed) {
       try {
         child.stdin.write(input + '\r\n');
         this.emitOutput(agentId, `\x1b[36m> ${input}\x1b[0m\r\n`);
-        
-        if (agent) {
-          agent.status = 'working';
-          agent.unreadPrompt = null;
-          this.broadcastStatus(agentId, 'working');
-        }
         return true;
-      } catch (_) {
-        // Fallback to auto-launching
-      }
+      } catch (_) {}
     }
 
     // Auto-launch with prompt
@@ -452,6 +474,9 @@ class AgentRunner {
   detectPrompt(agentId, rawText) {
     const agent = this.agents[agentId];
     if (!agent) return;
+
+    // Only detect prompt alerts if the process is currently active
+    if (!this.processes.has(agentId)) return;
 
     const promptPatterns = [
       /\?\s+[\w\s]{3,}\??/i,
