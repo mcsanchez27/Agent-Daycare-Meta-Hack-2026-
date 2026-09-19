@@ -6,7 +6,13 @@ const fs = require('fs');
 function ansiToHtml(text) {
   if (!text) return '';
   
-  let html = text
+  // Strip OSC (Operating System Commands like title updates, colors) e.g. \x1b]0;...\x07
+  let cleaned = text
+    .replace(/\x1b\][0-9]+;[^\x07\x1b]*(\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[\?[0-9;]*[a-zA-Z]/g, ''); // cursor & private mode codes
+
+  // Escape HTML characters
+  let html = cleaned
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
@@ -51,6 +57,7 @@ function ansiToHtml(text) {
     return `<span style="${styles.join(' ')}">`;
   });
 
+  // Strip any remaining unhandled control sequences
   html = html.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
 
   return html;
@@ -289,7 +296,7 @@ class AgentRunner {
       exe = agent.command;
     }
 
-    const workingDir = 'C:\\Users\\Matth\\.gemini\\antigravity\\scratch';
+    const workingDir = 'C:\\Users\\Matth\\.gemini\\antigravity\\scratch\\cli-companions';
     let args = [];
     const isPromptMode = !!(initialPrompt && initialPrompt.trim());
 
@@ -300,9 +307,9 @@ class AgentRunner {
       } else if (agentId === 'claude') {
         args = ['-p', p];
       } else if (agentId === 'codex') {
-        args = ['exec', p];
+        args = ['exec', '--skip-git-repo-check', p];
       } else if (agentId === 'grok') {
-        args = [p];
+        args = ['-p', p, '--output-format', 'plain'];
       } else {
         args = [p];
       }
