@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
 const path = require('path');
 const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
 const { HookServer, DEFAULT_PORT } = require('./hook-server');
 const hooksInstaller = require('./hooks-installer');
 const codexNotify = require('./codex-notify');
+const userConfig = require('./config');
 
 // Which agents can report in, and how their hook gets installed.
 const HOOK_INSTALLERS = { claude: hooksInstaller, codex: codexNotify };
@@ -20,6 +21,10 @@ let hookServerError = null;
 const logsDir = app.isPackaged
   ? app.getPath('logs')
   : path.join(__dirname, '..', 'logs');
+const configFile = app.isPackaged
+  ? path.join(app.getPath('userData'), 'config.json')
+  : path.join(__dirname, '..', 'config.json');
+let config = null; // loaded in whenReady, after the logger is open
 
 const logger = new Logger({
   dir: logsDir,
@@ -71,7 +76,7 @@ function createWindow() {
 
   // One runner for the life of the app; re-point it if the window is recreated (macOS).
   if (!agentRunner) {
-    agentRunner = new AgentRunner(mainWindow, logger);
+    agentRunner = new AgentRunner(mainWindow, logger, config);
   } else {
     agentRunner.mainWindow = mainWindow;
   }
@@ -160,6 +165,26 @@ handle('hooks:uninstall', ({ agentId }) => {
   return hookInfo();
 });
 
+// User settings (executable paths, working folder)
+handle('config:get', () => ({ file: configFile, config }));
+
+handle('config:save', ({ config: incoming }) => {
+  config = userConfig.save(configFile, incoming);
+  agentRunner.applyConfig(config);
+  logger.info('app', 'config saved', { file: configFile });
+  return { file: configFile, config };
+});
+
+handle('config:pick-folder', async ({ current }) => {
+  const r = await dialog.showOpenDialog(mainWindow, { title: 'Choose the folder agents work in', defaultPath: current || undefined, properties: ['openDirectory'] });
+  return r.canceled ? null : r.filePaths[0];
+});
+
+handle('config:pick-file', async ({ current, title }) => {
+  const r = await dialog.showOpenDialog(mainWindow, { title: title || 'Choose the agent executable', defaultPath: current || undefined, properties: ['openFile'] });
+  return r.canceled ? null : r.filePaths[0];
+});
+
 handle('logs:open-folder', async () => {
   const result = await shell.openPath(logsDir);
   if (result) logger.warn('app', 'could not open logs folder', { error: result });
@@ -187,6 +212,10 @@ ipcMain.on('window:close', () => {
 
 app.whenReady().then(() => {
   logger.open();
+  const loaded = userConfig.load(configFile);
+  config = loaded.config;
+  if (loaded.error) logger.warn('app', 'config problem', { file: configFile, error: loaded.error });
+  else logger.info('app', loaded.created ? 'config created with defaults' : 'config loaded', { file: configFile });
   logger.info('app', 'starting', {
     version: app.getVersion(),
     electron: process.versions.electron,

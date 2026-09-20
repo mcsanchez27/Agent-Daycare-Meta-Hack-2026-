@@ -140,16 +140,27 @@
         <button id="closeDiagBtn" class="title-btn">✕</button>
       </div>
       <div class="modal-body" id="diagnosticsModalBody">
+        <div class="role-row" style="flex-direction: column; align-items: stretch; gap: 6px; margin-bottom: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <strong style="color: #fff; font-size: 12px;">📁 Project folder agents work in</strong>
+            <button id="pickWorkingDirBtn" class="send-btn" style="padding: 3px 10px; font-size: 10px;">Browse…</button>
+          </div>
+          <input type="text" id="workingDirInput" class="terminal-input" style="width: 100%; font-size: 11px;" spellcheck="false" placeholder="C:\\path\\to\\your\\project">
+          <div style="font-size: 10px; color: var(--text-dim);">Agents launched from this window run inside this folder. Change it per project.</div>
+        </div>
         <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-          Detected CLI agents on this Windows machine:
+          Detected CLI agents on this machine (edit a path if one wasn't found):
         </div>
         <div id="diagnosticsList" style="display: flex; flex-direction: column; gap: 8px;">
           <!-- Dynamically populated -->
         </div>
       </div>
       <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
-        <span style="font-size: 10px; color: var(--text-dim);">Background scanner polls external processes every 2.5s</span>
-        <button id="refreshDiagBtn" class="send-btn">🔄 Re-scan System</button>
+        <span style="font-size: 10px; color: var(--text-dim);" id="configFileLabel">Background scanner polls external processes every 2.5s</span>
+        <div style="display: flex; gap: 6px;">
+          <button id="saveConfigBtn" class="send-btn">💾 Save Settings</button>
+          <button id="refreshDiagBtn" class="send-btn">🔄 Re-scan System</button>
+        </div>
       </div>
     </div>
   </div>

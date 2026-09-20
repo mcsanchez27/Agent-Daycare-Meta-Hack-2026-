@@ -48,6 +48,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const diagnosticsList = document.getElementById('diagnosticsList');
   const closeDiagBtn = document.getElementById('closeDiagBtn');
   const refreshDiagBtn = document.getElementById('refreshDiagBtn');
+  const saveConfigBtn = document.getElementById('saveConfigBtn');
+  const workingDirInput = document.getElementById('workingDirInput');
+  const pickWorkingDirBtn = document.getElementById('pickWorkingDirBtn');
+  const configFileLabel = document.getElementById('configFileLabel');
   const stageSummary = document.getElementById('stageSummary');
   const summonAllBtn = document.getElementById('summonAllBtn');
   const sleepAllBtn = document.getElementById('sleepAllBtn');
@@ -447,11 +451,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     diagnosticsModal.classList.remove('hidden');
     diagnosticsList.innerHTML = '<div style="color: var(--text-dim);">Scanning Windows processes and executables...</div>';
     
-    const [results, hooks] = await Promise.all([
+    const [results, hooks, cfg] = await Promise.all([
       window.api.scanAgents(),
-      window.api.getHookStatus().catch(err => ({ listening: false, error: err.message, agents: {} }))
+      window.api.getHookStatus().catch(err => ({ listening: false, error: err.message, agents: {} })),
+      window.api.getConfig().catch(err => ({ file: '?', config: { workingDir: '', agents: {} }, error: err.message }))
     ]);
     diagnosticsList.innerHTML = '';
+    workingDirInput.value = cfg.config.workingDir || '';
+    configFileLabel.textContent = `Settings file: ${cfg.file}`;
 
     results.forEach(res => {
       const item = document.createElement('div');
@@ -476,10 +483,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           <span>Version: <strong>${res.version}</strong></span> | 
           <span>Role: <strong>${res.role.toUpperCase()}</strong></span>
         </div>
-        <div style="font-size: 10px; color: var(--text-dim); word-break: break-all;">
-          Path: ${res.path}
+        <div style="display: flex; gap: 6px; align-items: center; width: 100%;">
+          <span style="font-size: 10px; color: var(--text-dim);">Path:</span>
+          <input type="text" class="terminal-input agent-path-input" data-agent="${res.id}" value="${escapeAttr(res.path)}" spellcheck="false" style="flex: 1; font-size: 10px; padding: 2px 6px;">
+          <button class="send-btn agent-path-browse" data-agent="${res.id}" style="padding: 2px 8px; font-size: 10px;">Browse…</button>
         </div>
       `;
+
+      item.querySelector('.agent-path-browse').addEventListener('click', async () => {
+        const input = item.querySelector('.agent-path-input');
+        const picked = await window.api.pickFile(input.value, `Choose the ${res.name} executable`);
+        if (picked) input.value = picked;
+      });
 
       if (hooks.agents && hooks.agents[res.id]) {
         item.appendChild(renderHookRow(res, hooks));
@@ -488,6 +503,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       diagnosticsList.appendChild(item);
     });
   }
+
+  pickWorkingDirBtn.addEventListener('click', async () => {
+    const picked = await window.api.pickFolder(workingDirInput.value);
+    if (picked) workingDirInput.value = picked;
+  });
+
+  saveConfigBtn.addEventListener('click', async () => {
+    const agentsCfg = {};
+    diagnosticsList.querySelectorAll('.agent-path-input').forEach(input => {
+      agentsCfg[input.dataset.agent] = { path: input.value };
+    });
+    saveConfigBtn.disabled = true;
+    try {
+      await window.api.saveConfig({ workingDir: workingDirInput.value, agents: agentsCfg });
+      window.soundFX.playSuccess();
+      appendLog('team', `<div style="color: #ffd166;">💾 Settings saved. Agents will now work in: ${escapeHtml(workingDirInput.value)}</div>`);
+      await refreshAgents();
+      await showDiagnostics();
+    } catch (err) {
+      appendLog('team', `<div style="color: #ff5555;">Could not save settings: ${escapeHtml(err.message)}</div>`);
+    } finally {
+      saveConfigBtn.disabled = false;
+    }
+  });
 
   // "Connect" installs a tiny hook into the agent's own settings so it reports
   // its activity straight to this app. "Disconnect" removes it again.

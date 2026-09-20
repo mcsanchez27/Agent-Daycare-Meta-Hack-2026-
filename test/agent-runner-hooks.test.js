@@ -115,3 +115,12 @@ test('a Codex notify payload maps to a finished turn with the last message shown
   const out = sent.filter(m => m.ch === 'agent:output').map(m => m.d.raw).join('');
   assert.ok(out.includes('All 12 tests pass.'));
 });
+
+test('applyConfig sets the working folder and per-agent executable paths', () => {
+  const { runner } = makeRunner();
+  runner.applyConfig({ workingDir: '/work/here', agents: { claude: { path: '/opt/claude', command: 'claude' }, nope: { path: '/x' } } });
+  assert.equal(runner.workingDir, '/work/here');
+  assert.equal(runner.agents.claude.path, '/opt/claude');
+  assert.equal(runner.agents.claude.processFilter, 'claude');
+  assert.equal(runner.agents.codex.path, 'codex.exe');
+});

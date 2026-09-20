@@ -33,6 +33,10 @@ Other fields (`exe`, `args`, `code`, `snippet`, `ipc`, ...) are attached where t
 4. `"msg":"prompt detected, alerting user"` records every time the `!` alert fired and the `snippet` that triggered it — the place to look when the alert fires wrongly or not at all.
 5. `"msg":"process exited"` with a non-zero `code` means the agent's process failed; the preceding `stderr` lines from the same `run` usually say why.
 
+## Settings
+
+`config.json` (project root while developing, `userData` when packaged; git-ignored) holds `workingDir` and `agents.<id>.{path,command}`. `AgentRunner.applyConfig` applies it at start and on save. `"msg":"config applied"` in the log shows the effective paths; `"msg":"launching"` shows the `cwd` actually used.
+
 ## Hook events (how the app knows what Claude Code is doing)
 
 `src/hook-server.js` listens on `http://127.0.0.1:48211` (override with `AGENT_DAYCARE_HOOK_PORT`). `src/hooks-installer.js` adds a `curl` command to `~/.claude/settings.json` for the events `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SessionEnd`; each POSTs Claude Code's hook JSON to `/agent-daycare/hook/claude`. `src/codex-notify.js` sets the top-level `notify = [...]` line in `~/.codex/config.toml`; Codex appends its `{"type":"agent-turn-complete",...}` JSON as the last argv, which lands in `--data-binary` and is POSTed to `/agent-daycare/hook/codex` (`AgentRunner.normalizeHookEvent` maps it to `Stop`). `AgentRunner.handleHookEvent` maps them to per-session states and derives the agent's status: any session `needs_input` → `needs_input`; else any `working` → `working`; else `idle`; no sessions → sleeping (or whatever a locally spawned process says).
@@ -43,6 +47,7 @@ Every received event is logged as `"msg":"hook: <EventName>"` with `session`, `c
 
 - `src/main.js` — Electron main process: window, IPC, logger setup, crash capture
 - `src/agent-runner.js` — launches agent CLIs, streams their output, detects prompts
+- `src/config.js` — user settings (`config.json`: agent executable paths, working folder); created with defaults on first run
 - `src/logger.js` — the log writer described above (unit tests in `test/`)
 - `src/hook-server.js` — local HTTP listener for agent hook events
 - `src/hooks-installer.js` — adds/removes our entries in `~/.claude/settings.json`

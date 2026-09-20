@@ -25,11 +25,15 @@ Simply double-click:
 ```text
 Start-Mission-Control.bat
 ```
-Or run from PowerShell / Command Prompt:
+Or run from PowerShell / Command Prompt in this folder:
 ```powershell
-cd C:\Users\Matth\.gemini\antigravity\scratch\cli-companions
+npm install   # first time only
 npm start
 ```
+
+## ⚙️ Settings (project folder & agent paths)
+
+Open **🔍 Scan Agents**. At the top, pick the **project folder** agents should work in (this is where anything you launch from the app runs — change it when you switch projects). If an agent shows **✕ Not Found**, use **Browse…** next to it to point at its executable, then **💾 Save Settings**. Everything is stored in `config.json` next to the app (created with sensible defaults on first run; git-ignored).
 
 ---
 

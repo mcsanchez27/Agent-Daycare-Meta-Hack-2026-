@@ -64,9 +64,10 @@ function ansiToHtml(text) {
 }
 
 class AgentRunner {
-  constructor(mainWindow, logger) {
+  constructor(mainWindow, logger, config = null) {
     this.mainWindow = mainWindow;
     this.log = logger;
+    this.workingDir = null; // set by applyConfig
     this.processes = new Map();
     this.promptTimers = new Map();
     this.runCounts = new Map();
@@ -82,7 +83,7 @@ class AgentRunner {
         title: 'Team Lead & Orchestrator',
         role: 'lead',
         command: 'agy.exe',
-        path: 'C:\\Users\\Matth\\AppData\\Local\\agy\\bin\\agy.exe',
+        path: 'agy.exe',
         processFilter: 'agy.exe',
         color: '#7b2cbf',
         accent: '#9d4edd',
@@ -99,7 +100,7 @@ class AgentRunner {
         title: 'Code Architect & Builder',
         role: 'architect',
         command: 'claude.exe',
-        path: 'C:\\Users\\Matth\\.local\\bin\\claude.exe',
+        path: 'claude.exe',
         processFilter: 'claude.exe',
         color: '#e76f51',
         accent: '#f4a261',
@@ -116,7 +117,7 @@ class AgentRunner {
         title: 'QA & Logic Engineer',
         role: 'tester',
         command: 'codex.exe',
-        path: 'C:\\Users\\Matth\\AppData\\Local\\OpenAI\\Codex\\bin\\eab8377aebac6c07\\codex.exe',
+        path: 'codex.exe',
         processFilter: 'codex.exe',
         color: '#2a9d8f',
         accent: '#52b788',
@@ -133,7 +134,7 @@ class AgentRunner {
         title: 'Sentry & Code Reviewer',
         role: 'reviewer',
         command: 'grok.exe',
-        path: 'C:\\Users\\Matth\\.grok\\bin\\grok.exe',
+        path: 'grok.exe',
         processFilter: 'grok.exe',
         color: '#212529',
         accent: '#00f5d4',
@@ -146,8 +147,25 @@ class AgentRunner {
       }
     };
 
+    if (config) this.applyConfig(config);
+
     // Start background process scanner
     this.startProcessScanner();
+  }
+
+  // Applies user settings (see config.js): executable paths and working folder.
+  applyConfig(config) {
+    if (config.workingDir) this.workingDir = config.workingDir;
+    for (const [id, cfg] of Object.entries(config.agents || {})) {
+      const agent = this.agents[id];
+      if (!agent || !cfg) continue;
+      if (cfg.command) {
+        agent.command = cfg.command;
+        agent.processFilter = cfg.command;
+      }
+      if (cfg.path) agent.path = cfg.path;
+    }
+    this.log.info('app', 'config applied', { workingDir: this.workingDir, paths: Object.fromEntries(Object.values(this.agents).map(a => [a.id, a.path])) });
   }
 
   // Each agent launch gets a run number so log lines from a restart are distinguishable.
@@ -333,7 +351,7 @@ class AgentRunner {
       exe = agent.command;
     }
 
-    const workingDir = 'C:\\Users\\Matth\\.gemini\\antigravity\\scratch\\cli-companions';
+    const workingDir = this.workingDir || process.cwd();
     let args = [];
     const isPromptMode = !!(initialPrompt && initialPrompt.trim());
 
