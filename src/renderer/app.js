@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // State
   let agents = {};
   let currentActiveTab = 'antigravity';
+  const cardSignatures = {}; // last-rendered state per card, see renderStage()
   let logs = {
     antigravity: '<span style="color: #6272a4;">[Antigravity Terminal Ready - Type any prompt below to run]</span>\r\n',
     claude: '<span style="color: #6272a4;">[Claude Code Terminal Ready - Type any prompt below to run]</span>\r\n',
@@ -94,10 +95,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     soundToggleBtn.style.color = isMuted ? 'var(--text-dim)' : 'var(--color-lead)';
   }
 
-  // Render Agent Cards on Stage
+  // Render Agent Cards on Stage.
+  //
+  // Cards are created once and kept. A card's contents are only rebuilt when
+  // something about that agent changed (its "signature"); otherwise the DOM is
+  // left alone so the sprite animations keep running smoothly.
   function renderStage() {
-    agentsGrid.innerHTML = '';
-    
     let workingCount = 0;
     let alertCount = 0;
     let linkedCount = 0;
@@ -111,18 +114,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (isAlert) alertCount++;
       if (isLinked) linkedCount++;
 
-      const isSelected = agent.id === currentActiveTab;
-      const config = window.MASCOT_CONFIGS[agent.id] || window.MASCOT_CONFIGS.antigravity;
+      let card = document.getElementById(`card-${agent.id}`);
+      if (!card) {
+        card = document.createElement('div');
+        card.id = `card-${agent.id}`;
+        card.className = 'agent-card';
+        card.addEventListener('click', () => {
+          selectAgent(agent.id);
+          window.soundFX.playBlip();
+        });
+        agentsGrid.appendChild(card);
+      }
 
-      const card = document.createElement('div');
-      card.className = `agent-card ${isSelected ? 'selected' : ''} ${isAlert ? 'alert' : ''}`;
-      card.id = `card-${agent.id}`;
-      
+      card.classList.toggle('selected', agent.id === currentActiveTab);
+      card.classList.toggle('alert', isAlert);
+
+      const sessions = agent.hookSessions || 0;
+      const signature = [agent.role, agent.status, agent.externalPid, sessions, agent.version, agent.title, agent.name].join('|');
+      if (cardSignatures[agent.id] === signature) return;
+      cardSignatures[agent.id] = signature;
+
+      const config = window.MASCOT_CONFIGS[agent.id] || window.MASCOT_CONFIGS.antigravity;
       const roleName = agent.role === 'lead' ? '👑 LEAD' :
                        agent.role === 'architect' ? '📐 ARCHITECT' :
                        agent.role === 'tester' ? '🧪 QA/TEST' : '🛡️ SENTRY';
 
-      const sessions = agent.hookSessions || 0;
       const sessionLabel = sessions > 1 ? ` ×${sessions}` : '';
       let statusText = 'SLEEPING';
       if (isAlert) statusText = `NEEDS YOU (!)${sessionLabel}`;
@@ -136,7 +152,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           <span class="role-badge ${agent.role}">${roleName}</span>
           <span class="status-tag ${agent.status}">
             <span class="status-dot"></span>
-            <span>${statusText}</span>
+            <span>${escapeHtml(statusText)}</span>
           </span>
         </div>
         
@@ -149,19 +165,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         <div class="agent-card-bottom">
           <div style="display: flex; justify-content: space-between; align-items: baseline;">
-            <span class="agent-name">${agent.name}</span>
-            <span style="font-size: 9px; color: var(--text-dim);">${agent.version || ''}</span>
+            <span class="agent-name">${escapeHtml(agent.name)}</span>
+            <span style="font-size: 9px; color: var(--text-dim);">${escapeHtml(agent.version || '')}</span>
           </div>
-          <span class="agent-title" title="${agent.title}">${agent.title}</span>
+          <span class="agent-title" title="${escapeAttr(agent.title)}">${escapeHtml(agent.title)}</span>
         </div>
       `;
-
-      card.addEventListener('click', () => {
-        selectAgent(agent.id);
-        window.soundFX.playBlip();
-      });
-
-      agentsGrid.appendChild(card);
     });
 
     // Update summary in header
@@ -172,7 +181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (workingCount > 0) {
       stageSummary.innerHTML = `<span style="color: var(--success-green);">⚡ ${workingCount} Agent${workingCount > 1 ? 's' : ''} Coding</span>`;
     } else {
-      stageSummary.innerHTML = `<span>4 Agents Ready</span>`;
+      stageSummary.innerHTML = `<span>${Object.keys(agents).length} Agents Ready</span>`;
     }
   }
 
@@ -180,9 +189,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   function selectAgent(agentId) {
     currentActiveTab = agentId;
 
-    document.querySelectorAll('.agent-card').forEach(c => c.classList.remove('selected'));
-    const activeCard = document.getElementById(`card-${agentId}`);
-    if (activeCard) activeCard.classList.add('selected');
+    document.querySelectorAll('.agent-card').forEach(c => {
+      c.classList.toggle('selected', c.id === `card-${agentId}`);
+    });
 
     document.querySelectorAll('.terminal-tab').forEach(t => {
       t.classList.toggle('active', t.dataset.agent === agentId);
@@ -639,7 +648,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function escapeHtml(text) {
     if (!text) return '';
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;');
   }
 
   renderStage();
