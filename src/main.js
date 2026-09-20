@@ -2,9 +2,13 @@ const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
 const path = require('path');
 const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
+const { HookServer, DEFAULT_PORT } = require('./hook-server');
+const hooksInstaller = require('./hooks-installer');
 
 let mainWindow = null;
 let agentRunner = null;
+let hookServer = null;
+let hookServerError = null;
 
 // While developing (npm start) the log lives in the project folder so an agent
 // working in this repo can find it at logs/latest.log. A packaged build can't
@@ -120,6 +124,34 @@ ipcMain.on('log:write', (_, { level, message, data } = {}) => {
   logger.log(['debug', 'info', 'warn', 'error'].includes(level) ? level : 'info', 'renderer', String(message), data);
 });
 
+// Agent hooks (Claude Code reports its activity to the local HookServer)
+function hookInfo() {
+  const claude = hooksInstaller.status();
+  return {
+    listening: !!(hookServer && hookServer.url),
+    url: hookServer && hookServer.url,
+    error: hookServerError,
+    claude: { ...claude, hookUrl: hookServer && hookServer.url ? hookServer.hookUrl('claude') : null }
+  };
+}
+
+handle('hooks:status', () => hookInfo());
+
+handle('hooks:install', ({ agentId }) => {
+  if (agentId !== 'claude') throw new Error(`Hooks are not supported for ${agentId} yet`);
+  if (!hookServer || !hookServer.url) throw new Error(`Hook listener is not running${hookServerError ? `: ${hookServerError}` : ''}`);
+  const result = hooksInstaller.install({ hookUrl: hookServer.hookUrl('claude') });
+  logger.info('app', 'installed Claude Code hooks', { file: result.file, events: result.events });
+  return hookInfo();
+});
+
+handle('hooks:uninstall', ({ agentId }) => {
+  if (agentId !== 'claude') throw new Error(`Hooks are not supported for ${agentId} yet`);
+  const result = hooksInstaller.uninstall();
+  logger.info('app', 'removed Claude Code hooks', { file: result.file });
+  return hookInfo();
+});
+
 handle('logs:open-folder', async () => {
   const result = await shell.openPath(logsDir);
   if (result) logger.warn('app', 'could not open logs folder', { error: result });
@@ -156,6 +188,26 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  const port = Number(process.env.AGENT_DAYCARE_HOOK_PORT) || DEFAULT_PORT;
+  hookServer = new HookServer({
+    port,
+    logger,
+    onEvent: (agentId, event) => agentRunner.handleHookEvent(agentId, event)
+  });
+  hookServer.start().catch((err) => {
+    hookServerError = err.code === 'EADDRINUSE'
+      ? `port ${port} is already in use (set AGENT_DAYCARE_HOOK_PORT to change it)`
+      : err.message;
+    hookServer = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('agent:team-message', {
+        agentId: null, agentName: 'System', type: 'alert',
+        text: `⚠️ Agent hooks are offline: ${hookServerError}`,
+        timestamp: new Date().toLocaleTimeString()
+      });
+    }
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -175,5 +227,6 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   if (agentRunner) agentRunner.shutdown();
   logger.info('app', 'quitting');
-  logger.close().finally(() => app.quit());
+  const stopHooks = hookServer ? hookServer.stop() : Promise.resolve();
+  stopHooks.then(() => logger.close()).finally(() => app.quit());
 });

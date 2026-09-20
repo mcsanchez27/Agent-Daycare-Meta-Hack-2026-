@@ -33,6 +33,21 @@ npm start
 
 ---
 
+## 🪝 Connect Claude Code (recommended)
+
+Out of the box the bots only know about sessions launched from inside this window. Click **🔍 Scan Agents → Connect Claude Code** and the app adds a small hook to Claude Code's settings (`~/.claude/settings.json`, backed up first). From then on, every Claude Code session you run anywhere on this PC reports in:
+
+| Claude does… | The bot… |
+|---|---|
+| starts a session / finishes a turn | sits ready (`READY FOR YOU`) |
+| runs tools | works |
+| **asks for permission or your input** | **stands at attention with the `!`** — no guessing |
+| ends the session | goes back to sleep |
+
+Restart any Claude sessions that were already open so they pick up the hook. **Disconnect** removes it again. The listener only accepts connections from this PC (`127.0.0.1:48211`; set `AGENT_DAYCARE_HOOK_PORT` if that port is taken).
+
+---
+
 ## 📄 Logs (for debugging with an agent)
 
 Every launch writes a fresh **`logs/latest.log`** in the project folder (older runs are kept alongside it with a date in the name). It records what each agent printed, when it was launched or stopped, when the `!` alert fired and why, and any crash or error inside the app itself. Colour codes are stripped and obvious API keys are masked.

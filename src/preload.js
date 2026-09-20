@@ -18,6 +18,11 @@ contextBridge.exposeInMainWorld('api', {
   // Inter-Agent Messaging / Forwarding
   forwardToAgent: (fromAgentId, toAgentId, text) => ipcRenderer.invoke('agent:forward', { fromAgentId, toAgentId, text }),
 
+  // Agent hooks (Claude Code -> local listener -> mascots)
+  getHookStatus: () => ipcRenderer.invoke('hooks:status'),
+  installHooks: (agentId) => ipcRenderer.invoke('hooks:install', { agentId }),
+  uninstallHooks: (agentId) => ipcRenderer.invoke('hooks:uninstall', { agentId }),
+
   // Logging (goes to logs/latest.log in the main process)
   log: (level, message, data) => ipcRenderer.send('log:write', { level, message, data }),
   openLogsFolder: () => ipcRenderer.invoke('logs:open-folder'),

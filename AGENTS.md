@@ -33,12 +33,20 @@ Other fields (`exe`, `args`, `code`, `snippet`, `ipc`, ...) are attached where t
 4. `"msg":"prompt detected, alerting user"` records every time the `!` alert fired and the `snippet` that triggered it — the place to look when the alert fires wrongly or not at all.
 5. `"msg":"process exited"` with a non-zero `code` means the agent's process failed; the preceding `stderr` lines from the same `run` usually say why.
 
+## Hook events (how the app knows what Claude Code is doing)
+
+`src/hook-server.js` listens on `http://127.0.0.1:48211` (override with `AGENT_DAYCARE_HOOK_PORT`). `src/hooks-installer.js` adds a `curl` command to `~/.claude/settings.json` for the events `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SessionEnd`; each POSTs Claude Code's hook JSON to `/agent-daycare/hook/claude`. `AgentRunner.handleHookEvent` maps them to per-session states and derives the agent's status: any session `needs_input` → `needs_input`; else any `working` → `working`; else `idle`; no sessions → sleeping (or whatever a locally spawned process says).
+
+Every received event is logged as `"msg":"hook: <EventName>"` with `session`, `cwd`, `tool`, `notificationType` and `message`. If the bot's state looks wrong, grep those lines first: `grep '"hook: ' logs/latest.log`. A rejected request (wrong host, non-JSON body) is logged as `"msg":"hook request rejected"`. A healthy listener answers `GET http://127.0.0.1:48211/` with `{"ok":true,...}`.
+
 ## Project layout
 
 - `src/main.js` — Electron main process: window, IPC, logger setup, crash capture
 - `src/agent-runner.js` — launches agent CLIs, streams their output, detects prompts
 - `src/logger.js` — the log writer described above (unit tests in `test/`)
+- `src/hook-server.js` — local HTTP listener for agent hook events
+- `src/hooks-installer.js` — adds/removes our entries in `~/.claude/settings.json`
 - `src/preload.js` — the bridge (`window.api`) between the UI and the main process
 - `src/renderer/` — the UI: `app.js` (behaviour), `mascots.js` (pixel-art sprites), `audio.js`, `styles.css`, `index.html`
 
-Run `npm test` after changing `src/logger.js`.
+Run `npm test` after changing anything in `src/` that has a test in `test/`.

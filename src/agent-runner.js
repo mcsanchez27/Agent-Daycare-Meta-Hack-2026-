@@ -71,6 +71,8 @@ class AgentRunner {
     this.promptTimers = new Map();
     this.runCounts = new Map();
     this.scanErrorLogged = false;
+    // Sessions reported by the agent's own hooks (see hook-server.js), keyed by session id.
+    this.hookSessions = { antigravity: new Map(), claude: new Map(), codex: new Map(), grok: new Map() };
 
     // Default verified agent definitions on this PC
     this.agents = {
@@ -168,21 +170,23 @@ class AgentRunner {
     setTimeout(() => this.checkExternalProcesses(), 500);
   }
 
+  // Returns Map<lowercased image name, pid>. Windows only; tests replace this.
+  listProcesses() {
+    const output = execSync('tasklist /FO CSV /NH', { encoding: 'utf8', timeout: 3000 });
+    const activeFilters = new Map();
+    output.split('\n').forEach(line => {
+      if (!line.trim()) return;
+      const parts = line.split('","').map(p => p.replace(/^"|"$/g, ''));
+      if (parts.length >= 2) {
+        activeFilters.set(parts[0].toLowerCase(), parts[1]);
+      }
+    });
+    return activeFilters;
+  }
+
   checkExternalProcesses() {
     try {
-      const output = execSync('tasklist /FO CSV /NH', { encoding: 'utf8', timeout: 3000 });
-      const lines = output.split('\n');
-
-      const activeFilters = new Map();
-      lines.forEach(line => {
-        if (!line.trim()) return;
-        const parts = line.split('","').map(p => p.replace(/^"|"$/g, ''));
-        if (parts.length >= 2) {
-          const procName = parts[0].toLowerCase();
-          const pid = parts[1];
-          activeFilters.set(procName, pid);
-        }
-      });
+      const activeFilters = this.listProcesses();
 
       let changed = false;
 
@@ -193,9 +197,11 @@ class AgentRunner {
         const wasExternal = agent.externalPid !== null;
         const isExternal = !!foundPid && !this.processes.has(agent.id);
 
+        const hasHookSessions = this.hookSessions[agent.id].size > 0;
+
         if (isExternal && agent.externalPid !== foundPid) {
           agent.externalPid = foundPid;
-          if (agent.status === 'sleeping' || agent.status === 'idle') {
+          if (!hasHookSessions && (agent.status === 'sleeping' || agent.status === 'idle')) {
             agent.status = 'working';
           }
           changed = true;
@@ -207,6 +213,11 @@ class AgentRunner {
           });
         } else if (!isExternal && wasExternal) {
           agent.externalPid = null;
+          if (hasHookSessions && !foundPid) {
+            // Terminal closed without a SessionEnd hook: forget its sessions.
+            this.log.info(agent.id, 'process gone; clearing hook sessions', { sessions: this.hookSessions[agent.id].size });
+            this.hookSessions[agent.id].clear();
+          }
           if (!this.processes.has(agent.id)) {
             agent.status = 'sleeping';
           }
@@ -219,6 +230,8 @@ class AgentRunner {
           });
         }
       });
+
+      if (this.expireHookSessions()) changed = true;
 
       if (changed) {
         this.broadcastAllStatus();
@@ -275,7 +288,8 @@ class AgentRunner {
         version: version,
         path: verifiedPath,
         externalPid: agent.externalPid,
-        status: agent.status
+        status: agent.status,
+        hookSessions: this.hookSessions[agent.id].size
       });
     });
 
@@ -551,6 +565,147 @@ class AgentRunner {
     }
   }
 
+  // ---- Hook-reported activity -------------------------------------------
+  //
+  // Claude Code (and later others) POST their lifecycle events to HookServer,
+  // which calls this. The agent's status is then computed from what its
+  // sessions actually said rather than guessed from terminal text.
+
+  static HOOK_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
+
+  handleHookEvent(agentId, event) {
+    const agent = this.agents[agentId];
+    if (!agent) {
+      this.log.warn('app', 'hook event for unknown agent', { agentId });
+      return false;
+    }
+
+    const name = event.hook_event_name || 'unknown';
+    const sid = String(event.session_id || 'unknown');
+    const sessions = this.hookSessions[agentId];
+    const now = Date.now();
+
+    let session = sessions.get(sid);
+    const isNew = !session;
+    if (isNew) {
+      session = { id: sid, state: 'working', cwd: event.cwd || null, startedAt: now };
+      sessions.set(sid, session);
+    }
+    session.updatedAt = now;
+    session.lastEvent = name;
+    if (event.cwd) session.cwd = event.cwd;
+
+    const cwdLabel = session.cwd ? ` in ${session.cwd}` : '';
+    let alert = null;
+
+    switch (name) {
+      case 'SessionStart':
+        session.state = 'idle';
+        this.emitOutput(agentId, `\x1b[36m[Hook] ${agent.name} session started${cwdLabel}\x1b[0m\r\n`);
+        this.broadcastTeamMessage({ agentId, agentName: agent.name, type: 'start', text: `🔗 ${agent.name} session started${cwdLabel}` });
+        break;
+      case 'UserPromptSubmit':
+        session.state = 'working';
+        if (event.prompt) this.emitOutput(agentId, `\x1b[90m[Hook] prompt: ${String(event.prompt).slice(0, 200)}\x1b[0m\r\n`);
+        break;
+      case 'PreToolUse':
+        session.state = 'working';
+        session.lastTool = event.tool_name || null;
+        break;
+      case 'Notification':
+        session.state = 'needs_input';
+        session.prompt = event.message || event.title || 'needs your attention';
+        session.notificationType = event.notification_type || null;
+        alert = session;
+        this.emitOutput(agentId, `\x1b[33m[Hook] ${agent.name} needs you: ${session.prompt}\x1b[0m\r\n`);
+        break;
+      case 'Stop':
+        session.state = 'idle';
+        this.emitOutput(agentId, `\x1b[32m[Hook] ${agent.name} finished its turn and is waiting for you\x1b[0m\r\n`);
+        this.broadcastTeamMessage({ agentId, agentName: agent.name, type: 'exit', text: `✅ ${agent.name} finished a turn${cwdLabel}` });
+        break;
+      case 'SessionEnd':
+        sessions.delete(sid);
+        this.emitOutput(agentId, `\x1b[90m[Hook] ${agent.name} session ended\x1b[0m\r\n`);
+        this.broadcastTeamMessage({ agentId, agentName: agent.name, type: 'exit', text: `${agent.name} session ended${cwdLabel}` });
+        break;
+      default:
+        this.log.debug(agentId, 'unhandled hook event', { event: name });
+    }
+
+    this.log.info(agentId, `hook: ${name}`, {
+      session: sid,
+      newSession: isNew,
+      cwd: session.cwd,
+      tool: event.tool_name,
+      notificationType: event.notification_type,
+      message: event.message
+    });
+
+    this.refreshHookStatus(agentId, alert);
+    return true;
+  }
+
+  // Recomputes an agent's status from its hook sessions and broadcasts it.
+  refreshHookStatus(agentId, alertSession = null) {
+    const agent = this.agents[agentId];
+    const sessions = [...this.hookSessions[agentId].values()];
+    let next;
+    if (sessions.some(s => s.state === 'needs_input')) next = 'needs_input';
+    else if (sessions.some(s => s.state === 'working')) next = 'working';
+    else if (sessions.length) next = 'idle';
+    else if (this.processes.has(agentId)) next = agent.status;   // our own spawned process decides
+    else next = agent.externalPid ? 'working' : 'sleeping';
+
+    agent.status = next;
+    if (next === 'needs_input') {
+      const waiting = alertSession || sessions.find(s => s.state === 'needs_input');
+      agent.unreadPrompt = waiting.prompt;
+    } else {
+      agent.unreadPrompt = null;
+    }
+
+    this.broadcastStatus(agentId, next);
+
+    if (alertSession) {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send('agent:prompt', {
+          agentId,
+          agentName: agent.name,
+          promptSnippet: alertSession.prompt
+        });
+      }
+      this.broadcastTeamMessage({
+        agentId,
+        agentName: agent.name,
+        type: 'alert',
+        text: `🚨 ${agent.name} needs your input: "${alertSession.prompt}"`
+      });
+    }
+  }
+
+  // Drops sessions that haven't reported in a long time (terminal killed, hook
+  // never fired). Returns true if anything changed.
+  expireHookSessions() {
+    const cutoff = Date.now() - AgentRunner.HOOK_SESSION_TTL_MS;
+    let changed = false;
+    for (const [agentId, sessions] of Object.entries(this.hookSessions)) {
+      let dropped = 0;
+      for (const [sid, session] of sessions) {
+        if (session.updatedAt < cutoff) {
+          sessions.delete(sid);
+          dropped++;
+        }
+      }
+      if (dropped) {
+        this.log.info(agentId, 'expired stale hook sessions', { dropped });
+        this.refreshHookStatus(agentId);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   forwardToAgent(fromAgentId, toAgentId, text) {
     const fromAgent = this.agents[fromAgentId];
     const toAgent = this.agents[toAgentId];
@@ -583,7 +738,8 @@ class AgentRunner {
         status, 
         role: agent?.role, 
         title: agent?.title,
-        externalPid: agent?.externalPid
+        externalPid: agent?.externalPid,
+        hookSessions: agent ? this.hookSessions[agent.id].size : 0
       });
     }
   }

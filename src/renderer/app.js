@@ -122,11 +122,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                        agent.role === 'architect' ? '📐 ARCHITECT' :
                        agent.role === 'tester' ? '🧪 QA/TEST' : '🛡️ SENTRY';
 
+      const sessions = agent.hookSessions || 0;
+      const sessionLabel = sessions > 1 ? ` ×${sessions}` : '';
       let statusText = 'SLEEPING';
-      if (isAlert) statusText = 'NEEDS YOU (!)';
+      if (isAlert) statusText = `NEEDS YOU (!)${sessionLabel}`;
+      else if (isWorking && sessions) statusText = `WORKING${sessionLabel}`;
       else if (isLinked) statusText = `ACTIVE (PID: ${agent.externalPid})`;
       else if (isWorking) statusText = 'WORKING';
-      else if (agent.status === 'idle') statusText = 'IDLE';
+      else if (agent.status === 'idle') statusText = sessions ? `READY FOR YOU${sessionLabel}` : 'IDLE';
 
       card.innerHTML = `
         <div class="agent-card-top">
@@ -435,7 +438,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     diagnosticsModal.classList.remove('hidden');
     diagnosticsList.innerHTML = '<div style="color: var(--text-dim);">Scanning Windows processes and executables...</div>';
     
-    const results = await window.api.scanAgents();
+    const [results, hooks] = await Promise.all([
+      window.api.scanAgents(),
+      window.api.getHookStatus().catch(err => ({ listening: false, error: err.message, claude: { installed: false } }))
+    ]);
     diagnosticsList.innerHTML = '';
 
     results.forEach(res => {
@@ -466,8 +472,59 @@ document.addEventListener('DOMContentLoaded', async () => {
         </div>
       `;
 
+      if (res.id === 'claude') {
+        item.appendChild(renderHookRow(hooks));
+      }
+
       diagnosticsList.appendChild(item);
     });
+  }
+
+  // "Connect" installs a tiny hook into Claude Code's settings so it reports
+  // its activity straight to this app. "Disconnect" removes it again.
+  function renderHookRow(hooks) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 4px; gap: 8px;';
+
+    const claude = hooks.claude || {};
+    let text;
+    if (!hooks.listening) {
+      text = `<span style="color: #ef476f;">⚠ Hook listener offline${hooks.error ? ': ' + escapeHtml(hooks.error) : ''}</span>`;
+    } else if (claude.error) {
+      text = `<span style="color: #ef476f;">⚠ Can't read ${escapeHtml(claude.file)}: ${escapeHtml(claude.error)}</span>`;
+    } else if (claude.installed) {
+      text = `<span style="color: #06d6a0;">🪝 Hooks connected</span> <span style="color: var(--text-dim);">— Claude Code reports to this app (${claude.events.length} events)</span>`;
+    } else {
+      text = `<span style="color: var(--text-muted);">🪝 Hooks not connected</span> <span style="color: var(--text-dim);">— the bot only sees sessions launched from here</span>`;
+    }
+
+    const label = document.createElement('span');
+    label.style.fontSize = '11px';
+    label.innerHTML = text;
+    row.appendChild(label);
+
+    if (hooks.listening && !claude.error) {
+      const btn = document.createElement('button');
+      btn.className = 'send-btn';
+      btn.style.cssText = 'padding: 3px 10px; font-size: 10px;';
+      btn.textContent = claude.installed ? 'Disconnect' : 'Connect Claude Code';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const updated = claude.installed
+            ? await window.api.uninstallHooks('claude')
+            : await window.api.installHooks('claude');
+          window.soundFX.playSuccess();
+          appendLog('team', `<div style="color: #ffd166;">🪝 Claude Code hooks ${updated.claude.installed ? 'connected' : 'disconnected'} (${escapeHtml(updated.claude.file)}). Restart any open Claude sessions to pick this up.</div>`);
+          await showDiagnostics();
+        } catch (err) {
+          btn.disabled = false;
+          appendLog('team', `<div style="color: #ff5555;">Could not update hooks: ${escapeHtml(err.message)}</div>`);
+        }
+      });
+      row.appendChild(btn);
+    }
+    return row;
   }
 
   // Manage Roles Modal
@@ -535,6 +592,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (data.role) agents[data.agentId].role = data.role;
       if (data.title) agents[data.agentId].title = data.title;
       if (data.externalPid !== undefined) agents[data.agentId].externalPid = data.externalPid;
+      if (data.hookSessions !== undefined) agents[data.agentId].hookSessions = data.hookSessions;
       
       updateTabAlertBadge(data.agentId, data.status === 'needs_input');
       renderStage();
