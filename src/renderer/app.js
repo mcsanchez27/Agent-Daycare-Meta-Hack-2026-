@@ -440,7 +440,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     const [results, hooks] = await Promise.all([
       window.api.scanAgents(),
-      window.api.getHookStatus().catch(err => ({ listening: false, error: err.message, claude: { installed: false } }))
+      window.api.getHookStatus().catch(err => ({ listening: false, error: err.message, agents: {} }))
     ]);
     diagnosticsList.innerHTML = '';
 
@@ -472,28 +472,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         </div>
       `;
 
-      if (res.id === 'claude') {
-        item.appendChild(renderHookRow(hooks));
+      if (hooks.agents && hooks.agents[res.id]) {
+        item.appendChild(renderHookRow(res, hooks));
       }
 
       diagnosticsList.appendChild(item);
     });
   }
 
-  // "Connect" installs a tiny hook into Claude Code's settings so it reports
+  // "Connect" installs a tiny hook into the agent's own settings so it reports
   // its activity straight to this app. "Disconnect" removes it again.
-  function renderHookRow(hooks) {
+  function renderHookRow(res, hooks) {
     const row = document.createElement('div');
     row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 4px; gap: 8px;';
 
-    const claude = hooks.claude || {};
+    const info = hooks.agents[res.id] || {};
+    const detail = res.id === 'codex'
+      ? 'Codex reports when it finishes a turn'
+      : `${res.name} reports to this app (${(info.events || []).length} events)`;
     let text;
     if (!hooks.listening) {
       text = `<span style="color: #ef476f;">⚠ Hook listener offline${hooks.error ? ': ' + escapeHtml(hooks.error) : ''}</span>`;
-    } else if (claude.error) {
-      text = `<span style="color: #ef476f;">⚠ Can't read ${escapeHtml(claude.file)}: ${escapeHtml(claude.error)}</span>`;
-    } else if (claude.installed) {
-      text = `<span style="color: #06d6a0;">🪝 Hooks connected</span> <span style="color: var(--text-dim);">— Claude Code reports to this app (${claude.events.length} events)</span>`;
+    } else if (info.error) {
+      text = `<span style="color: #ef476f;">⚠ Can't read ${escapeHtml(info.file)}: ${escapeHtml(info.error)}</span>`;
+    } else if (info.conflict) {
+      text = `<span style="color: #ffd166;">⚠ ${escapeHtml(res.name)} already has a notify command</span> <span style="color: var(--text-dim);">— remove it from ${escapeHtml(info.file)} to connect</span>`;
+    } else if (info.installed) {
+      text = `<span style="color: #06d6a0;">🪝 Hooks connected</span> <span style="color: var(--text-dim);">— ${detail}</span>`;
     } else {
       text = `<span style="color: var(--text-muted);">🪝 Hooks not connected</span> <span style="color: var(--text-dim);">— the bot only sees sessions launched from here</span>`;
     }
@@ -503,19 +508,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     label.innerHTML = text;
     row.appendChild(label);
 
-    if (hooks.listening && !claude.error) {
+    if (hooks.listening && !info.error && !info.conflict) {
       const btn = document.createElement('button');
       btn.className = 'send-btn';
-      btn.style.cssText = 'padding: 3px 10px; font-size: 10px;';
-      btn.textContent = claude.installed ? 'Disconnect' : 'Connect Claude Code';
+      btn.style.cssText = 'padding: 3px 10px; font-size: 10px; white-space: nowrap;';
+      btn.textContent = info.installed ? 'Disconnect' : `Connect ${res.name}`;
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         try {
-          const updated = claude.installed
-            ? await window.api.uninstallHooks('claude')
-            : await window.api.installHooks('claude');
+          const updated = info.installed
+            ? await window.api.uninstallHooks(res.id)
+            : await window.api.installHooks(res.id);
+          const now = updated.agents[res.id];
           window.soundFX.playSuccess();
-          appendLog('team', `<div style="color: #ffd166;">🪝 Claude Code hooks ${updated.claude.installed ? 'connected' : 'disconnected'} (${escapeHtml(updated.claude.file)}). Restart any open Claude sessions to pick this up.</div>`);
+          appendLog('team', `<div style="color: #ffd166;">🪝 ${escapeHtml(res.name)} hooks ${now.installed ? 'connected' : 'disconnected'} (${escapeHtml(now.file)}). Restart any open ${escapeHtml(res.name)} sessions to pick this up.</div>`);
           await showDiagnostics();
         } catch (err) {
           btn.disabled = false;

@@ -4,6 +4,10 @@ const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
 const { HookServer, DEFAULT_PORT } = require('./hook-server');
 const hooksInstaller = require('./hooks-installer');
+const codexNotify = require('./codex-notify');
+
+// Which agents can report in, and how their hook gets installed.
+const HOOK_INSTALLERS = { claude: hooksInstaller, codex: codexNotify };
 
 let mainWindow = null;
 let agentRunner = null;
@@ -126,29 +130,33 @@ ipcMain.on('log:write', (_, { level, message, data } = {}) => {
 
 // Agent hooks (Claude Code reports its activity to the local HookServer)
 function hookInfo() {
-  const claude = hooksInstaller.status();
-  return {
-    listening: !!(hookServer && hookServer.url),
-    url: hookServer && hookServer.url,
-    error: hookServerError,
-    claude: { ...claude, hookUrl: hookServer && hookServer.url ? hookServer.hookUrl('claude') : null }
-  };
+  const listening = !!(hookServer && hookServer.url);
+  const info = { listening, url: hookServer && hookServer.url, error: hookServerError, agents: {} };
+  for (const [agentId, installer] of Object.entries(HOOK_INSTALLERS)) {
+    info.agents[agentId] = { ...installer.status(), hookUrl: listening ? hookServer.hookUrl(agentId) : null };
+  }
+  return info;
+}
+
+function installerFor(agentId) {
+  const installer = HOOK_INSTALLERS[agentId];
+  if (!installer) throw new Error(`Hooks are not supported for ${agentId} yet`);
+  return installer;
 }
 
 handle('hooks:status', () => hookInfo());
 
 handle('hooks:install', ({ agentId }) => {
-  if (agentId !== 'claude') throw new Error(`Hooks are not supported for ${agentId} yet`);
+  const installer = installerFor(agentId);
   if (!hookServer || !hookServer.url) throw new Error(`Hook listener is not running${hookServerError ? `: ${hookServerError}` : ''}`);
-  const result = hooksInstaller.install({ hookUrl: hookServer.hookUrl('claude') });
-  logger.info('app', 'installed Claude Code hooks', { file: result.file, events: result.events });
+  const result = installer.install({ hookUrl: hookServer.hookUrl(agentId) });
+  logger.info(agentId, 'installed hooks', { file: result.file, events: result.events });
   return hookInfo();
 });
 
 handle('hooks:uninstall', ({ agentId }) => {
-  if (agentId !== 'claude') throw new Error(`Hooks are not supported for ${agentId} yet`);
-  const result = hooksInstaller.uninstall();
-  logger.info('app', 'removed Claude Code hooks', { file: result.file });
+  const result = installerFor(agentId).uninstall();
+  logger.info(agentId, 'removed hooks', { file: result.file });
   return hookInfo();
 });
 

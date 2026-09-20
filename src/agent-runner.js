@@ -580,8 +580,7 @@ class AgentRunner {
       return false;
     }
 
-    const name = event.hook_event_name || 'unknown';
-    const sid = String(event.session_id || 'unknown');
+    const { name, sid, message } = AgentRunner.normalizeHookEvent(event);
     const sessions = this.hookSessions[agentId];
     const now = Date.now();
 
@@ -622,6 +621,7 @@ class AgentRunner {
       case 'Stop':
         session.state = 'idle';
         this.emitOutput(agentId, `\x1b[32m[Hook] ${agent.name} finished its turn and is waiting for you\x1b[0m\r\n`);
+        if (message) this.emitOutput(agentId, `\x1b[90m${message.slice(0, 400)}\x1b[0m\r\n`);
         this.broadcastTeamMessage({ agentId, agentName: agent.name, type: 'exit', text: `✅ ${agent.name} finished a turn${cwdLabel}` });
         break;
       case 'SessionEnd':
@@ -644,6 +644,22 @@ class AgentRunner {
 
     this.refreshHookStatus(agentId, alert);
     return true;
+  }
+
+  // Claude Code sends { hook_event_name, session_id, ... }. Codex's notify sends
+  // { type: "agent-turn-complete", "turn-id", "thread-id"?, "last-assistant-message" }.
+  static normalizeHookEvent(event) {
+    if (event.hook_event_name) {
+      return { name: event.hook_event_name, sid: String(event.session_id || 'unknown'), message: null };
+    }
+    if (event.type === 'agent-turn-complete') {
+      return {
+        name: 'Stop',
+        sid: String(event['thread-id'] || event.thread_id || 'codex'),
+        message: event['last-assistant-message'] || event.last_assistant_message || null
+      };
+    }
+    return { name: event.type || 'unknown', sid: String(event.session_id || event['thread-id'] || 'unknown'), message: null };
   }
 
   // Recomputes an agent's status from its hook sessions and broadcasts it.

@@ -33,9 +33,11 @@ npm start
 
 ---
 
-## 🪝 Connect Claude Code (recommended)
+## 🪝 Connect your agents (recommended)
 
-Out of the box the bots only know about sessions launched from inside this window. Click **🔍 Scan Agents → Connect Claude Code** and the app adds a small hook to Claude Code's settings (`~/.claude/settings.json`, backed up first). From then on, every Claude Code session you run anywhere on this PC reports in:
+Out of the box the bots only know about sessions launched from inside this window. Click **🔍 Scan Agents** and press **Connect** next to an agent; the app adds a small hook to that agent's own settings (backed up first). From then on, every session you run anywhere on this PC reports in.
+
+**Claude Code** (`~/.claude/settings.json`) reports everything:
 
 | Claude does… | The bot… |
 |---|---|
@@ -44,7 +46,9 @@ Out of the box the bots only know about sessions launched from inside this windo
 | **asks for permission or your input** | **stands at attention with the `!`** — no guessing |
 | ends the session | goes back to sleep |
 
-Restart any Claude sessions that were already open so they pick up the hook. **Disconnect** removes it again. The listener only accepts connections from this PC (`127.0.0.1:48211`; set `AGENT_DAYCARE_HOOK_PORT` if that port is taken).
+**Codex** (`~/.codex/config.toml`) can only say *"I finished a turn"*, so its bot sits **READY FOR YOU** with the last thing Codex said whenever it's waiting on you. Codex allows one notify command; if you already have one the app tells you instead of replacing it.
+
+Restart any sessions that were already open so they pick up the hook. **Disconnect** removes it again. The listener only accepts connections from this PC (`127.0.0.1:48211`; set `AGENT_DAYCARE_HOOK_PORT` if that port is taken).
 
 ---
 

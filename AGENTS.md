@@ -35,7 +35,7 @@ Other fields (`exe`, `args`, `code`, `snippet`, `ipc`, ...) are attached where t
 
 ## Hook events (how the app knows what Claude Code is doing)
 
-`src/hook-server.js` listens on `http://127.0.0.1:48211` (override with `AGENT_DAYCARE_HOOK_PORT`). `src/hooks-installer.js` adds a `curl` command to `~/.claude/settings.json` for the events `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SessionEnd`; each POSTs Claude Code's hook JSON to `/agent-daycare/hook/claude`. `AgentRunner.handleHookEvent` maps them to per-session states and derives the agent's status: any session `needs_input` → `needs_input`; else any `working` → `working`; else `idle`; no sessions → sleeping (or whatever a locally spawned process says).
+`src/hook-server.js` listens on `http://127.0.0.1:48211` (override with `AGENT_DAYCARE_HOOK_PORT`). `src/hooks-installer.js` adds a `curl` command to `~/.claude/settings.json` for the events `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SessionEnd`; each POSTs Claude Code's hook JSON to `/agent-daycare/hook/claude`. `src/codex-notify.js` sets the top-level `notify = [...]` line in `~/.codex/config.toml`; Codex appends its `{"type":"agent-turn-complete",...}` JSON as the last argv, which lands in `--data-binary` and is POSTed to `/agent-daycare/hook/codex` (`AgentRunner.normalizeHookEvent` maps it to `Stop`). `AgentRunner.handleHookEvent` maps them to per-session states and derives the agent's status: any session `needs_input` → `needs_input`; else any `working` → `working`; else `idle`; no sessions → sleeping (or whatever a locally spawned process says).
 
 Every received event is logged as `"msg":"hook: <EventName>"` with `session`, `cwd`, `tool`, `notificationType` and `message`. If the bot's state looks wrong, grep those lines first: `grep '"hook: ' logs/latest.log`. A rejected request (wrong host, non-JSON body) is logged as `"msg":"hook request rejected"`. A healthy listener answers `GET http://127.0.0.1:48211/` with `{"ok":true,...}`.
 
@@ -46,6 +46,7 @@ Every received event is logged as `"msg":"hook: <EventName>"` with `session`, `c
 - `src/logger.js` — the log writer described above (unit tests in `test/`)
 - `src/hook-server.js` — local HTTP listener for agent hook events
 - `src/hooks-installer.js` — adds/removes our entries in `~/.claude/settings.json`
+- `src/codex-notify.js` — adds/removes our `notify` line in `~/.codex/config.toml`
 - `src/preload.js` — the bridge (`window.api`) between the UI and the main process
 - `src/renderer/` — the UI: `app.js` (behaviour), `mascots.js` (pixel-art sprites), `audio.js`, `styles.css`, `index.html`
 

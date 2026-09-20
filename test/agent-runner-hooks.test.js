@@ -102,3 +102,16 @@ test('the process scanner respects hook-reported state and clears sessions when 
   runner.checkExternalProcesses();
   assert.equal(runner.agents.codex.status, 'working');
 });
+
+test('a Codex notify payload maps to a finished turn with the last message shown', () => {
+  const { runner, sent } = makeRunner();
+  runner.handleHookEvent('codex', {
+    type: 'agent-turn-complete', 'turn-id': 't1', 'thread-id': 'th1',
+    'input-messages': ['run the tests'], 'last-assistant-message': 'All 12 tests pass.'
+  });
+  assert.equal(runner.agents.codex.status, 'idle');
+  assert.equal(runner.hookSessions.codex.size, 1);
+  assert.ok(runner.hookSessions.codex.has('th1'));
+  const out = sent.filter(m => m.ch === 'agent:output').map(m => m.d.raw).join('');
+  assert.ok(out.includes('All 12 tests pass.'));
+});
