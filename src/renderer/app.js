@@ -1,5 +1,14 @@
 // Mission Control Orchestrator v1.1
 
+// Any error in this window ends up in logs/latest.log (source: "renderer").
+window.addEventListener('error', (e) => {
+  window.api.log('error', e.message, { file: e.filename, line: e.lineno, stack: e.error && e.error.stack });
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason || {};
+  window.api.log('error', r.message || String(e.reason), { stack: r.stack, phase: 'unhandledrejection' });
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
   // State
   let agents = {};
@@ -29,6 +38,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const demoAlertBtn = document.getElementById('demoAlertBtn');
   const manageRolesBtn = document.getElementById('manageRolesBtn');
   const scanAgentsBtn = document.getElementById('scanAgentsBtn');
+  const openLogsBtn = document.getElementById('openLogsBtn');
   const roleModal = document.getElementById('roleModal');
   const roleModalBody = document.getElementById('roleModalBody');
   const closeModalBtn = document.getElementById('closeModalBtn');
@@ -393,6 +403,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       badge.classList.toggle('hidden', !show);
     }
   }
+
+  // Open the folder that holds logs/latest.log
+  openLogsBtn.addEventListener('click', async () => {
+    window.soundFX.playBlip();
+    const result = await window.api.openLogsFolder();
+    if (result && result.error) {
+      appendLog('team', `<div style="color: #ff5555;">Could not open logs folder (${escapeHtml(result.path)}): ${escapeHtml(result.error)}</div>`);
+    } else if (result) {
+      appendLog('team', `<div style="color: #6272a4;">📄 Logs folder: ${escapeHtml(result.path)}</div>`);
+    }
+  });
 
   // Diagnostics Modal
   scanAgentsBtn.addEventListener('click', async () => {

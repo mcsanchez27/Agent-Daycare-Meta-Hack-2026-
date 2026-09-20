@@ -1,6 +1,6 @@
 const { spawn, execSync } = require('child_process');
-const path = require('path');
 const fs = require('fs');
+const { StringDecoder } = require('string_decoder');
 
 // Built-in lightweight ANSI to styled HTML converter
 function ansiToHtml(text) {
@@ -64,11 +64,13 @@ function ansiToHtml(text) {
 }
 
 class AgentRunner {
-  constructor(mainWindow) {
+  constructor(mainWindow, logger) {
     this.mainWindow = mainWindow;
+    this.log = logger;
     this.processes = new Map();
     this.promptTimers = new Map();
-    this.externalProcesses = new Map();
+    this.runCounts = new Map();
+    this.scanErrorLogged = false;
 
     // Default verified agent definitions on this PC
     this.agents = {
@@ -146,12 +148,17 @@ class AgentRunner {
     this.startProcessScanner();
   }
 
-  logToFile(agentId, level, text) {
-    try {
-      const logPath = path.join(__dirname, '..', 'agent-daycare.log');
-      const timestamp = new Date().toISOString();
-      fs.appendFileSync(logPath, `[${timestamp}] [${(agentId || 'SYS').toUpperCase()}] [${level}] ${text}\n`);
-    } catch (_) {}
+  // Each agent launch gets a run number so log lines from a restart are distinguishable.
+  currentRun(agentId) {
+    return this.runCounts.get(agentId) || 0;
+  }
+
+  shutdown() {
+    clearInterval(this.scanInterval);
+    for (const timer of this.promptTimers.values()) clearTimeout(timer);
+    this.promptTimers.clear();
+    for (const agentId of [...this.processes.keys()]) this.stopAgent(agentId);
+    this.log.info('app', 'agent runner shut down');
   }
 
   startProcessScanner() {
@@ -216,7 +223,12 @@ class AgentRunner {
       if (changed) {
         this.broadcastAllStatus();
       }
-    } catch (_) {}
+    } catch (err) {
+      if (!this.scanErrorLogged) {
+        this.scanErrorLogged = true;
+        this.log.warn('app', 'external process scan failed (will not retry logging)', { error: err.message });
+      }
+    }
   }
 
   scanAgents() {
@@ -233,8 +245,9 @@ class AgentRunner {
           execSync(`where ${agent.command}`, { stdio: 'pipe' });
           isInstalled = true;
           verifiedPath = agent.command;
-        } catch (_) {
+        } catch (err) {
           isInstalled = false;
+          this.log.debug(agent.id, 'not found on PATH', { path: agent.path, error: err.message });
         }
       }
 
@@ -242,10 +255,12 @@ class AgentRunner {
         try {
           const vOut = execSync(`"${verifiedPath}" --version`, { encoding: 'utf8', timeout: 2500 }).trim();
           version = vOut.split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
-        } catch (_) {
+        } catch (err) {
           version = 'Installed';
+          this.log.debug(agent.id, '--version check failed', { path: verifiedPath, error: err.message });
         }
       }
+      this.log.info(agent.id, 'scan result', { installed: isInstalled, version, path: verifiedPath });
 
       agent.installed = isInstalled;
       agent.version = version;
@@ -323,8 +338,11 @@ class AgentRunner {
       }
     }
 
+    const run = this.currentRun(agentId) + 1;
+    this.runCounts.set(agentId, run);
+
     this.emitOutput(agentId, `\x1b[36m> [Mission Control] Launching ${agent.name}...\x1b[0m\r\n\r\n`);
-    this.logToFile(agentId, 'LAUNCH', `Starting ${exe} with args: ${JSON.stringify(args)}`);
+    this.log.info(agentId, 'launching', { run, exe, args, cwd: workingDir, promptMode: isPromptMode });
 
     let child;
     try {
@@ -341,7 +359,7 @@ class AgentRunner {
 
       child = spawn(exe, args, spawnOptions);
     } catch (err) {
-      this.logToFile(agentId, 'ERROR', `Launch error: ${err.message}`);
+      this.log.exception(agentId, err, { run, phase: 'spawn' });
       this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
       return false;
     }
@@ -358,18 +376,23 @@ class AgentRunner {
       text: `${agent.name} started working on: "${initialPrompt || 'Interactive Session'}"`
     });
 
+    // StringDecoder keeps multi-byte characters intact when they straddle two chunks.
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    const stdoutSink = this.log.createLineSink(agentId, { run, stream: 'stdout' });
+    const stderrSink = this.log.createLineSink(agentId, { run, stream: 'stderr', level: 'warn' });
+
     if (child.stdout) {
       child.stdout.on('data', (data) => {
-        const rawText = data.toString('utf8');
-        this.logToFile(agentId, 'STDOUT', rawText);
-        this.handleOutput(agentId, rawText);
+        stdoutSink.push(data);
+        this.handleOutput(agentId, stdoutDecoder.write(data));
       });
     }
 
     if (child.stderr) {
       child.stderr.on('data', (data) => {
-        const rawText = data.toString('utf8');
-        this.logToFile(agentId, 'STDERR', rawText);
+        stderrSink.push(data);
+        const rawText = stderrDecoder.write(data);
 
         // Filter out Codex's verbose startup banner & metadata from the UI
         if (agentId === 'codex') {
@@ -392,7 +415,9 @@ class AgentRunner {
       this.promptTimers.delete(agentId);
 
       this.processes.delete(agentId);
-      this.logToFile(agentId, 'EXIT', `Process finished with code ${code}`);
+      stdoutSink.flush();
+      stderrSink.flush();
+      this.log[code === 0 ? 'info' : 'warn'](agentId, 'process exited', { run, code });
       agent.status = agent.externalPid ? 'working' : 'sleeping';
       agent.unreadPrompt = null;
       this.broadcastStatus(agentId, agent.status);
@@ -409,6 +434,7 @@ class AgentRunner {
     child.on('error', (err) => {
       clearTimeout(this.promptTimers.get(agentId));
       this.promptTimers.delete(agentId);
+      this.log.exception(agentId, err, { run, phase: 'process' });
       this.emitOutput(agentId, `\x1b[31m[Process error]: ${err.message}\x1b[0m\r\n`);
       agent.status = 'idle';
       this.broadcastStatus(agentId, 'idle');
@@ -422,9 +448,12 @@ class AgentRunner {
     this.promptTimers.delete(agentId);
     const child = this.processes.get(agentId);
     if (child) {
+      this.log.info(agentId, 'stopping process', { run: this.currentRun(agentId), pid: child.pid });
       try {
         child.kill('SIGTERM');
-      } catch (_) {}
+      } catch (err) {
+        this.log.warn(agentId, 'kill failed', { run: this.currentRun(agentId), error: err.message });
+      }
       this.processes.delete(agentId);
     }
     const agent = this.agents[agentId];
@@ -453,13 +482,17 @@ class AgentRunner {
     if (child && child.stdin && child.stdin.writable && !child.stdin.destroyed) {
       try {
         child.stdin.write(input + '\r\n');
+        this.log.info(agentId, 'input sent to running process', { run: this.currentRun(agentId), input });
         this.emitOutput(agentId, `\x1b[36m> ${input}\x1b[0m\r\n`);
         return true;
-      } catch (_) {}
+      } catch (err) {
+        this.log.warn(agentId, 'stdin write failed, relaunching instead', { run: this.currentRun(agentId), error: err.message });
+      }
     }
 
     // Auto-launch with prompt
     if (agent) {
+      this.log.info(agentId, 'no writable stdin; launching a new process for this input', { input });
       return this.startAgent(agentId, input);
     }
 
@@ -495,6 +528,7 @@ class AgentRunner {
       const timer = setTimeout(() => {
         agent.status = 'needs_input';
         agent.unreadPrompt = rawText.trim().slice(-120);
+        this.log.info(agentId, 'prompt detected, alerting user', { run: this.currentRun(agentId), snippet: agent.unreadPrompt });
         this.broadcastStatus(agentId, 'needs_input');
         
         if (this.mainWindow && !this.mainWindow.isDestroyed()) {

@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('api', {
   // Inter-Agent Messaging / Forwarding
   forwardToAgent: (fromAgentId, toAgentId, text) => ipcRenderer.invoke('agent:forward', { fromAgentId, toAgentId, text }),
 
+  // Logging (goes to logs/latest.log in the main process)
+  log: (level, message, data) => ipcRenderer.send('log:write', { level, message, data }),
+  openLogsFolder: () => ipcRenderer.invoke('logs:open-folder'),
+
   // Window Controls
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),

@@ -4,7 +4,8 @@
   "description": "Agent Daycare (Batcave Predecessor) - Retro 16-Bit Multi-Agent Mission Control & Desk Pets",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test"
   },
   "keywords": [
     "agents",

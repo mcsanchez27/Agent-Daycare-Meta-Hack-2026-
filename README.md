@@ -33,6 +33,14 @@ npm start
 
 ---
 
+## 📄 Logs (for debugging with an agent)
+
+Every launch writes a fresh **`logs/latest.log`** in the project folder (older runs are kept alongside it with a date in the name). It records what each agent printed, when it was launched or stopped, when the `!` alert fired and why, and any crash or error inside the app itself. Colour codes are stripped and obvious API keys are masked.
+
+Click **📄 Logs** in the top bar to open the folder. When something goes wrong, tell whichever agent you're working with to read `logs/latest.log` — see `AGENTS.md` for the format. Run `npm test` to check the logger.
+
+---
+
 ## 🎮 Controls & Shortcuts
 
 * **🔊 / 🔇 Sound**: Toggle retro 8-bit audio on and off in the top bar.
