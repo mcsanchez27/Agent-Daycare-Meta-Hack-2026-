@@ -469,24 +469,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const isLinked = !!res.externalPid;
       const statusBadge = isLinked 
-        ? `<span style="background: rgba(0,245,212,0.2); color: #00f5d4; padding: 2px 6px; border-radius: 3px; font-size: 10px;">🔗 Active Terminal PID: ${res.externalPid}</span>`
+        ? `<span style="background: rgba(0,245,212,0.2); color: #00f5d4; padding: 2px 6px; border-radius: 3px; font-size: 10px;">🔗 Active Terminal PID: ${escapeHtml(res.externalPid)}</span>`
         : res.installed 
           ? `<span style="background: rgba(6,214,160,0.2); color: #06d6a0; padding: 2px 6px; border-radius: 3px; font-size: 10px;">✔ Installed</span>`
           : `<span style="background: rgba(239,71,111,0.2); color: #ef476f; padding: 2px 6px; border-radius: 3px; font-size: 10px;">✕ Not Found</span>`;
 
       item.innerHTML = `
         <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
-          <strong style="color: #fff; font-size: 13px;">${res.name}</strong>
+          <strong style="color: #fff; font-size: 13px;">${escapeHtml(res.name)}</strong>
           ${statusBadge}
         </div>
         <div style="font-size: 11px; color: var(--text-muted);">
-          <span>Version: <strong>${res.version}</strong></span> | 
-          <span>Role: <strong>${res.role.toUpperCase()}</strong></span>
+          <span>Version: <strong>${escapeHtml(res.version)}</strong></span> |
+          <span>Role: <strong>${escapeHtml(res.role.toUpperCase())}</strong></span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center; width: 100%;">
           <span style="font-size: 10px; color: var(--text-dim);">Path:</span>
-          <input type="text" class="terminal-input agent-path-input" data-agent="${res.id}" value="${escapeAttr(res.path)}" spellcheck="false" style="flex: 1; font-size: 10px; padding: 2px 6px;">
-          <button class="send-btn agent-path-browse" data-agent="${res.id}" style="padding: 2px 8px; font-size: 10px;">Browse…</button>
+          <input type="text" class="terminal-input agent-path-input" data-agent="${escapeAttr(res.id)}" value="${escapeAttr(res.path)}" spellcheck="false" style="flex: 1; font-size: 10px; padding: 2px 6px;">
+          <button class="send-btn agent-path-browse" data-agent="${escapeAttr(res.id)}" style="padding: 2px 8px; font-size: 10px;">Browse…</button>
         </div>
       `;
 
