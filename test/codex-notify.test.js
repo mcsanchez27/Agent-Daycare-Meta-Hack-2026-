@@ -65,3 +65,21 @@ test('a notify key inside a table is not treated as top-level', () => {
   codex.install({ hookUrl: URL, file });
   assert.ok(fs.readFileSync(file, 'utf8').startsWith('notify = ["curl"'));
 });
+
+test('readLines propagates non-ENOENT errors (e.g. EACCES)', () => {
+  const original = fs.readFileSync;
+  let called = false;
+  fs.readFileSync = (file, encoding) => {
+    called = true;
+    const err = new Error('EACCES: permission denied');
+    err.code = 'EACCES';
+    throw err;
+  };
+  try {
+    const file = tmpConfig();
+    assert.throws(() => codex.install({ hookUrl: URL, file }), { code: 'EACCES' });
+    assert.ok(called);
+  } finally {
+    fs.readFileSync = original;
+  }
+});
