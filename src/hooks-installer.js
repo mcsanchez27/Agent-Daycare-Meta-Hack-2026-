@@ -31,10 +31,10 @@ function isOurs(hook) {
   return hook && typeof hook.command === 'string' && hook.command.includes(MARKER);
 }
 
-function readSettings(file) {
+async function readSettings(file) {
   let raw;
   try {
-    raw = fs.readFileSync(file, 'utf8');
+    raw = await fs.promises.readFile(file, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') return {};
     throw err;
@@ -47,12 +47,12 @@ function readSettings(file) {
   return parsed;
 }
 
-function writeSettings(file, settings) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+async function writeSettings(file, settings) {
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
   if (fs.existsSync(file)) {
-    fs.copyFileSync(file, `${file}.agent-daycare.bak`);
+    await fs.promises.copyFile(file, `${file}.agent-daycare.bak`);
   }
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+  await fs.promises.writeFile(file, JSON.stringify(settings, null, 2) + '\n');
 }
 
 // Removes our entries from every event; drops groups/events left empty.
@@ -78,10 +78,10 @@ function stripOurs(settings) {
  * Returns { installed: boolean, events: string[], file } describing whether our
  * hooks are present (for any URL — a port change still counts as installed).
  */
-function status({ file = defaultClaudeSettingsPath() } = {}) {
+async function status({ file = defaultClaudeSettingsPath() } = {}) {
   let settings;
   try {
-    settings = readSettings(file);
+    settings = await readSettings(file);
   } catch (err) {
     return { installed: false, events: [], file, error: err.message };
   }
@@ -97,9 +97,9 @@ function status({ file = defaultClaudeSettingsPath() } = {}) {
 /**
  * Adds (or refreshes) our hook for every event in CLAUDE_EVENTS.
  */
-function install({ hookUrl, file = defaultClaudeSettingsPath() }) {
+async function install({ hookUrl, file = defaultClaudeSettingsPath() }) {
   if (!hookUrl) throw new Error('hookUrl is required');
-  const settings = stripOurs(readSettings(file));
+  const settings = stripOurs(await readSettings(file));
   settings.hooks = settings.hooks || {};
   const command = buildCommand(hookUrl);
   for (const event of CLAUDE_EVENTS) {
@@ -107,22 +107,22 @@ function install({ hookUrl, file = defaultClaudeSettingsPath() }) {
     groups.push({ hooks: [{ type: 'command', command, timeout: 5 }] });
     settings.hooks[event] = groups;
   }
-  writeSettings(file, settings);
-  return status({ file });
+  await writeSettings(file, settings);
+  return await status({ file });
 }
 
-function uninstall({ file = defaultClaudeSettingsPath() } = {}) {
+async function uninstall({ file = defaultClaudeSettingsPath() } = {}) {
   let settings;
   try {
-    settings = readSettings(file);
+    settings = await readSettings(file);
   } catch (err) {
-    if (err.code === 'ENOENT') return status({ file });
+    if (err.code === 'ENOENT') return await status({ file });
     throw err;
   }
   const before = JSON.stringify(settings);
   stripOurs(settings);
-  if (JSON.stringify(settings) !== before) writeSettings(file, settings);
-  return status({ file });
+  if (JSON.stringify(settings) !== before) await writeSettings(file, settings);
+  return await status({ file });
 }
 
 module.exports = { install, uninstall, status, buildCommand, defaultClaudeSettingsPath, CLAUDE_EVENTS, MARKER };
