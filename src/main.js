@@ -134,11 +134,11 @@ ipcMain.on('log:write', (_, { level, message, data } = {}) => {
 });
 
 // Agent hooks (Claude Code reports its activity to the local HookServer)
-function hookInfo() {
+async function hookInfo() {
   const listening = !!(hookServer && hookServer.url);
   const info = { listening, url: hookServer && hookServer.url, error: hookServerError, agents: {} };
   for (const [agentId, installer] of Object.entries(HOOK_INSTALLERS)) {
-    info.agents[agentId] = { ...installer.status(), hookUrl: listening ? hookServer.hookUrl(agentId) : null };
+    info.agents[agentId] = { ...(await installer.status()), hookUrl: listening ? hookServer.hookUrl(agentId) : null };
   }
   return info;
 }
@@ -149,20 +149,20 @@ function installerFor(agentId) {
   return installer;
 }
 
-handle('hooks:status', () => hookInfo());
+handle('hooks:status', async () => await hookInfo());
 
-handle('hooks:install', ({ agentId }) => {
+handle('hooks:install', async ({ agentId }) => {
   const installer = installerFor(agentId);
   if (!hookServer || !hookServer.url) throw new Error(`Hook listener is not running${hookServerError ? `: ${hookServerError}` : ''}`);
-  const result = installer.install({ hookUrl: hookServer.hookUrl(agentId) });
+  const result = await installer.install({ hookUrl: hookServer.hookUrl(agentId) });
   logger.info(agentId, 'installed hooks', { file: result.file, events: result.events });
-  return hookInfo();
+  return await hookInfo();
 });
 
-handle('hooks:uninstall', ({ agentId }) => {
-  const result = installerFor(agentId).uninstall();
+handle('hooks:uninstall', async ({ agentId }) => {
+  const result = await installerFor(agentId).uninstall();
   logger.info(agentId, 'removed hooks', { file: result.file });
-  return hookInfo();
+  return await hookInfo();
 });
 
 // User settings (executable paths, working folder)
