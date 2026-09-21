@@ -281,6 +281,7 @@ class AgentRunner {
     return null;
   }
 
+
   // Start agent with precise argument formatting & shell: false
   startAgent(agentId, initialPrompt = '') {
     const agent = this.agents[agentId];
@@ -290,29 +291,10 @@ class AgentRunner {
       this.stopAgent(agentId);
     }
 
-    let exe = agent.path;
-    if (!fs.existsSync(exe)) {
-      exe = agent.command;
-    }
-
+    const exe = this._getExecutable(agent);
     const workingDir = this.workingDir || process.cwd();
-    let args = [];
     const isPromptMode = !!(initialPrompt && initialPrompt.trim());
-
-    if (isPromptMode) {
-      const p = initialPrompt.trim();
-      if (agentId === 'antigravity') {
-        args = ['-p', p];
-      } else if (agentId === 'claude') {
-        args = ['-p', p];
-      } else if (agentId === 'codex') {
-        args = ['exec', '--skip-git-repo-check', p];
-      } else if (agentId === 'grok') {
-        args = ['-p', p, '--output-format', 'plain'];
-      } else {
-        args = [p];
-      }
-    }
+    const args = this._buildAgentArgs(agentId, isPromptMode, initialPrompt);
 
     const run = this.currentRun(agentId) + 1;
     this.runCounts.set(agentId, run);
@@ -320,25 +302,8 @@ class AgentRunner {
     this.emitOutput(agentId, `\x1b[36m> [Mission Control] Launching ${agent.name}...\x1b[0m\r\n\r\n`);
     this.log.info(agentId, 'launching', { run, exe, args, cwd: workingDir, promptMode: isPromptMode });
 
-    let child;
-    try {
-      const spawnOptions = {
-        cwd: workingDir,
-        shell: false,
-        env: { ...process.env, FORCE_COLOR: '1' }
-      };
-
-      if (isPromptMode) {
-        // Closes stdin stream explicitly so Claude and Codex do not wait on stdin
-        spawnOptions.stdio = ['ignore', 'pipe', 'pipe'];
-      }
-
-      child = spawn(exe, args, spawnOptions);
-    } catch (err) {
-      this.log.exception(agentId, err, { run, phase: 'spawn' });
-      this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
-      return false;
-    }
+    const child = this._spawnAgentProcess(agentId, agent, exe, args, workingDir, isPromptMode, run);
+    if (!child) return false;
 
     this.processes.set(agentId, child);
     agent.status = 'working';
@@ -352,6 +317,58 @@ class AgentRunner {
       text: `${agent.name} started working on: "${initialPrompt || 'Interactive Session'}"`
     });
 
+    this._attachProcessStreams(agentId, agent, child, run);
+
+    return true;
+  }
+
+  _getExecutable(agent) {
+    let exe = agent.path;
+    if (!fs.existsSync(exe)) {
+      exe = agent.command;
+    }
+    return exe;
+  }
+
+  _buildAgentArgs(agentId, isPromptMode, initialPrompt) {
+    if (!isPromptMode) return [];
+
+    const p = initialPrompt.trim();
+    if (agentId === 'antigravity') {
+      return ['-p', p];
+    } else if (agentId === 'claude') {
+      return ['-p', p];
+    } else if (agentId === 'codex') {
+      return ['exec', '--skip-git-repo-check', p];
+    } else if (agentId === 'grok') {
+      return ['-p', p, '--output-format', 'plain'];
+    } else {
+      return [p];
+    }
+  }
+
+  _spawnAgentProcess(agentId, agent, exe, args, workingDir, isPromptMode, run) {
+    try {
+      const spawnOptions = {
+        cwd: workingDir,
+        shell: false,
+        env: { ...process.env, FORCE_COLOR: '1' }
+      };
+
+      if (isPromptMode) {
+        // Closes stdin stream explicitly so Claude and Codex do not wait on stdin
+        spawnOptions.stdio = ['ignore', 'pipe', 'pipe'];
+      }
+
+      return spawn(exe, args, spawnOptions);
+    } catch (err) {
+      this.log.exception(agentId, err, { run, phase: 'spawn' });
+      this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
+      return null;
+    }
+  }
+
+  _attachProcessStreams(agentId, agent, child, run) {
     // StringDecoder keeps multi-byte characters intact when they straddle two chunks.
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
@@ -415,8 +432,6 @@ class AgentRunner {
       agent.status = 'idle';
       this.broadcastStatus(agentId, 'idle');
     });
-
-    return true;
   }
 
   stopAgent(agentId) {
