@@ -192,13 +192,11 @@ class AgentRunner {
   listProcesses() {
     const output = execSync('tasklist /FO CSV /NH', { encoding: 'utf8', timeout: 3000 });
     const activeFilters = new Map();
-    output.split('\n').forEach(line => {
-      if (!line.trim()) return;
-      const parts = line.split('","').map(p => p.replace(/^"|"$/g, ''));
-      if (parts.length >= 2) {
-        activeFilters.set(parts[0].toLowerCase(), parts[1]);
-      }
-    });
+    const regex = /^"([^"]+)","([^"]+)"/gm;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+      activeFilters.set(match[1].toLowerCase(), match[2]);
+    }
     return activeFilters;
   }
 
