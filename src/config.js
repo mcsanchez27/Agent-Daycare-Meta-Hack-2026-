@@ -14,10 +14,25 @@ function defaultAgentPaths() {
   const home = os.homedir();
   const win = process.platform === 'win32';
   const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  let codexPath = win ? path.join(local, 'OpenAI', 'Codex', 'bin', 'codex.exe') : path.join(home, '.local', 'bin', 'codex');
+  if (win && !fs.existsSync(codexPath)) {
+    const codexBinDir = path.join(local, 'OpenAI', 'Codex', 'bin');
+    if (fs.existsSync(codexBinDir)) {
+      try {
+        for (const sub of fs.readdirSync(codexBinDir)) {
+          const candidate = path.join(codexBinDir, sub, 'codex.exe');
+          if (fs.existsSync(candidate)) {
+            codexPath = candidate;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+  }
   return {
     antigravity: { command: win ? 'agy.exe' : 'agy', path: win ? path.join(local, 'agy', 'bin', 'agy.exe') : path.join(home, '.local', 'bin', 'agy') },
     claude: { command: win ? 'claude.exe' : 'claude', path: path.join(home, '.local', 'bin', win ? 'claude.exe' : 'claude') },
-    codex: { command: win ? 'codex.exe' : 'codex', path: win ? path.join(local, 'OpenAI', 'Codex', 'bin', 'codex.exe') : path.join(home, '.local', 'bin', 'codex') },
+    codex: { command: win ? 'codex.exe' : 'codex', path: codexPath },
     grok: { command: win ? 'grok.exe' : 'grok', path: path.join(home, '.grok', 'bin', win ? 'grok.exe' : 'grok') }
   };
 }
