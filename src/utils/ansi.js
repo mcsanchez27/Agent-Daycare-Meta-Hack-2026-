@@ -2,9 +2,14 @@ function parseAnsi(text) {
   if (!text) return '';
 
   // Strip OSC (Operating System Commands like title updates, colors) e.g. \x1b]0;...\x07
+  // and every CSI sequence except plain SGR (ESC[<digits;>m), which is styled
+  // below. CSI = ESC [ params (0x30-0x3F) intermediates (0x20-0x2F) final
+  // (0x40-0x7E); this covers cursor, erase and private forms like ESC[?25l,
+  // ESC[>4;2m and ESC[=c. This runs BEFORE HTML escaping so a private param
+  // such as '>' cannot be escaped into text that the strip no longer matches.
   let cleaned = text
     .replace(/\x1b\][0-9]+;[^\x07\x1b]*(\x07|\x1b\\)/g, '')
-    .replace(/\x1b\[\?[0-9;]*[a-zA-Z]/g, ''); // cursor & private mode codes
+    .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, (seq) => (/^\x1b\[[0-9;]+m$/.test(seq) ? seq : ''));
 
   // Escape HTML characters
   let html = cleaned
@@ -52,8 +57,9 @@ function parseAnsi(text) {
     return `<span style="${styles.join(' ')}">`;
   });
 
-  // Strip any remaining unhandled control sequences
-  html = html.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+  // Drop any bare ESC[ left by a chunk cut mid-sequence so nothing downstream
+  // mistakes this output for unparsed text and runs it through here twice.
+  html = html.replace(/\x1b\[[0-9;]*/g, '');
 
   return html;
 }

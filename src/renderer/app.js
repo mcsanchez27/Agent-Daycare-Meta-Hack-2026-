@@ -239,12 +239,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     terminalOutput.scrollTop = terminalOutput.scrollHeight;
   }
 
-  function appendLog(agentId, htmlOrText) {
+  // `isHtml` marks text that is already safe HTML (e.g. converted by the main
+  // process); it is never re-parsed, since parseAnsi escapes HTML and running it
+  // twice would corrupt entities and tags.
+  function appendLog(agentId, htmlOrText, { isHtml = false } = {}) {
     if (!logs[agentId]) logs[agentId] = '';
-    
+
     // Parse ANSI codes if any exist in the incoming string
     let html = htmlOrText;
-    if (typeof html === 'string' && html.includes('\x1b[')) {
+    if (!isHtml && typeof html === 'string' && html.includes('\x1b[')) {
       html = parseAnsi(html);
     }
 
@@ -616,7 +619,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Real-time IPC Event Handlers
   window.api.onAgentOutput((data) => {
-    appendLog(data.agentId, data.html || escapeHtml(data.raw));
+    appendLog(data.agentId, data.html || escapeHtml(data.raw), { isHtml: true });
   });
 
   window.api.onAgentStatus((data) => {
