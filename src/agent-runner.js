@@ -1,6 +1,29 @@
-const { spawn, execSync, execFileSync } = require('child_process');
+const { spawn, execSync, execFile } = require('child_process');
+const { promisify } = require('util');
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
+
+const execFileAsync = promisify(execFile);
+
+// Windows will not spawn a .cmd/.bat shim (how npm installs claude, grok, ...)
+// without a shell, so `--version` on one fails with EINVAL and the scan can
+// only say "Installed". For those we go through cmd.exe with a fixed, fully
+// quoted command line. The path must pass this allow-list first: no quotes,
+// no cmd metacharacters (& | < > ^ % !), so nothing in it can reach the shell.
+// Everything else is run directly, as the command-injection fix intended.
+const SAFE_BATCH_PATH = /^[A-Za-z]:\\[A-Za-z0-9 _.\-\\()~@+,=]+\.(cmd|bat)$/i;
+
+function versionCommand(exe, platform = process.platform, env = process.env) {
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(exe)) {
+    if (!SAFE_BATCH_PATH.test(exe)) return null;
+    return {
+      file: env.ComSpec || 'cmd.exe',
+      args: ['/d', '/s', '/c', `""${exe}" --version"`],
+      options: { windowsVerbatimArguments: true, windowsHide: true }
+    };
+  }
+  return { file: exe, args: ['--version'], options: {} };
+}
 
 const { parseAnsi } = require('./utils/ansi.js');
 
@@ -202,23 +225,23 @@ class AgentRunner {
   }
 
   async scanAgents() {
-    const { execFile } = require('child_process');
-    const util = require('util');
-    const execFileAsync = util.promisify(execFile);
-
     const agentList = Object.values(this.agents);
     const results = await Promise.all(agentList.map(async agent => {
       let isInstalled = false;
       let version = 'Unknown';
       let verifiedPath = agent.path;
+      // The file the version check actually runs: the configured path, or the
+      // first hit `where` reports (which may be a .cmd shim, see versionCommand).
+      let versionTarget = agent.path;
 
       if (fs.existsSync(agent.path)) {
         isInstalled = true;
       } else {
         try {
-          await execFileAsync('where', [agent.command], { stdio: 'pipe' });
+          const { stdout } = await execFileAsync('where', [agent.command], { encoding: 'utf8', timeout: 2500 });
           isInstalled = true;
           verifiedPath = agent.command;
+          versionTarget = String(stdout).split(/\r?\n/)[0].trim() || agent.command;
         } catch (err) {
           isInstalled = false;
           this.log.debug(agent.id, 'not found on PATH', { path: agent.path, error: err.message });
@@ -226,13 +249,19 @@ class AgentRunner {
       }
 
       if (isInstalled) {
-        try {
-          const { stdout } = await execFileAsync(verifiedPath, ['--version'], { encoding: 'utf8', timeout: 2500 });
-          const vOut = stdout.trim();
-          version = vOut.split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
-        } catch (err) {
+        const cmd = versionCommand(versionTarget);
+        if (!cmd) {
           version = 'Installed';
-          this.log.debug(agent.id, '--version check failed', { path: verifiedPath, error: err.message });
+          this.log.debug(agent.id, '--version skipped: batch file path contains shell metacharacters', { path: versionTarget });
+        } else {
+          try {
+            const { stdout } = await execFileAsync(cmd.file, cmd.args, { ...cmd.options, encoding: 'utf8', timeout: 2500 });
+            const vOut = stdout.trim();
+            version = vOut.split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
+          } catch (err) {
+            version = 'Installed';
+            this.log.debug(agent.id, '--version check failed', { path: versionTarget, error: err.message });
+          }
         }
       }
       this.log.info(agent.id, 'scan result', { installed: isInstalled, version, path: verifiedPath });
@@ -752,5 +781,7 @@ class AgentRunner {
     }
   }
 }
+
+AgentRunner.versionCommand = versionCommand;
 
 module.exports = AgentRunner;

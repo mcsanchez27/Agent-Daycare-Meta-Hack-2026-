@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Discord-free / GUI-free Sentry smoke: inits via the shared helper with
-// @sentry/node (transitive of @sentry/electron), captures a unique exception,
+// @sentry/node (declared alongside @sentry/electron), captures a unique exception,
 // flushes, prints the event id. Requires SENTRY_DSN in the environment.
 //
-// Usage: SENTRY_DSN=... node scripts/sentry-smoke.js
+// Usage: SENTRY_DSN=... node scripts/sentry-smoke.js (or put it in .env)
 
+require('../src/env').load();
 const Sentry = require('@sentry/node');
 const { initSentry } = require('../src/sentry');
 

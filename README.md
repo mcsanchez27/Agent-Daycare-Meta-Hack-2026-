@@ -81,7 +81,7 @@ Click **📄 Logs** in the top bar to open the folder. When something goes wrong
 
 ## 📡 Error reporting (Sentry)
 
-Optional. Set `SENTRY_DSN` in your environment (or a local `.env` you keep out of git — see `.env.example`) before `npm start`. The main process initializes `@sentry/electron` for **errors + default tracing only** (no session replay, profiling, metrics, or logging). If the variable is unset, Sentry is skipped.
+Optional. Set `SENTRY_DSN` in your environment, or copy `.env.example` to a `.env` next to `package.json` (git-ignored; loaded automatically by `npm start` and the smoke script, with shell variables taking precedence). The main process initializes `@sentry/electron` for **errors + default tracing only** (no session replay, profiling, metrics, or logging). If the variable is unset, Sentry is skipped.
 
 Smoke (no GUI): `SENTRY_DSN=... npm run sentry:smoke`
 

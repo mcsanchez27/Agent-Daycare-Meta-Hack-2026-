@@ -44,3 +44,22 @@ test('sendInput logs a warning if stdin.write throws', () => {
     assert.equal(warnLogs[0].data.error, 'Fake write error');
     assert.equal(warnLogs[0].agentId, 'claude');
 });
+
+test('versionCommand runs executables directly and only routes safe Windows batch shims through cmd.exe', () => {
+  const vc = AgentRunner.versionCommand;
+  assert.deepEqual(vc('C:\\tools\\claude.exe', 'win32'), { file: 'C:\\tools\\claude.exe', args: ['--version'], options: {} });
+  assert.deepEqual(vc('claude', 'win32'), { file: 'claude', args: ['--version'], options: {} });
+  assert.deepEqual(vc('/home/me/claude.cmd', 'linux'), { file: '/home/me/claude.cmd', args: ['--version'], options: {} });
+
+  const shim = 'C:\\Users\\Matt Sanchez\\AppData\\Roaming\\npm\\claude.cmd';
+  const viaCmd = vc(shim, 'win32', { ComSpec: 'C:\\Windows\\system32\\cmd.exe' });
+  assert.equal(viaCmd.file, 'C:\\Windows\\system32\\cmd.exe');
+  assert.deepEqual(viaCmd.args, ['/d', '/s', '/c', `""${shim}" --version"`]);
+  assert.equal(viaCmd.options.windowsVerbatimArguments, true);
+  assert.equal(vc(shim, 'win32', {}).file, 'cmd.exe');
+
+  // Anything cmd.exe could interpret is refused rather than escaped.
+  for (const bad of ['C:\\x\\a&b.cmd', 'C:\\x\\a|b.cmd', 'C:\\x\\%TEMP%\\a.cmd', 'C:\\x\\a"b.cmd', 'C:\\x\\a^b.cmd', 'C:\\x\\a!b.cmd', 'relative\\a.cmd']) {
+    assert.equal(vc(bad, 'win32'), null, bad);
+  }
+});
