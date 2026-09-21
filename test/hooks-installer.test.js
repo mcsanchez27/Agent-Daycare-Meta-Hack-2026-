@@ -93,3 +93,16 @@ test('uninstall on a file without our hooks is a no-op', () => {
   assert.equal(fs.readFileSync(file, 'utf8'), before);
   assert.ok(!fs.existsSync(`${file}.agent-daycare.bak`));
 });
+
+test('status reports error message when file read fails with EACCES', () => {
+  const file = tmpSettings('{}');
+  fs.chmodSync(file, 0o000); // make unreadable
+  try {
+    const st = installer.status({ file });
+    assert.equal(st.installed, false);
+    assert.ok(st.error);
+    assert.ok(st.error.includes('EACCES'));
+  } finally {
+    fs.chmodSync(file, 0o644); // restore so it can be cleaned up
+  }
+});
