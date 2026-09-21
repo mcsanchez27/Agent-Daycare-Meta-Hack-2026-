@@ -1,4 +1,4 @@
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
 
@@ -273,7 +273,7 @@ class AgentRunner {
         isInstalled = true;
       } else {
         try {
-          execSync(`where ${agent.command}`, { stdio: 'pipe' });
+          execFileSync('where', [agent.command], { stdio: 'pipe' });
           isInstalled = true;
           verifiedPath = agent.command;
         } catch (err) {
@@ -284,7 +284,7 @@ class AgentRunner {
 
       if (isInstalled) {
         try {
-          const vOut = execSync(`"${verifiedPath}" --version`, { encoding: 'utf8', timeout: 2500 }).trim();
+          const vOut = execFileSync(verifiedPath, ['--version'], { encoding: 'utf8', timeout: 2500 }).trim();
           version = vOut.split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
         } catch (err) {
           version = 'Installed';
