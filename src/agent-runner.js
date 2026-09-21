@@ -175,9 +175,17 @@ class AgentRunner {
 
   shutdown() {
     clearInterval(this.scanInterval);
-    for (const timer of this.promptTimers.values()) clearTimeout(timer);
-    this.promptTimers.clear();
-    for (const agentId of [...this.processes.keys()]) this.stopAgent(agentId);
+    const activeAgents = [...this.processes.keys()];
+    for (const agentId of activeAgents) {
+      this.stopAgent(agentId);
+    }
+
+    // Clear any timers not associated with processes (edge case)
+    if (this.promptTimers.size > 0) {
+      for (const timer of this.promptTimers.values()) clearTimeout(timer);
+      this.promptTimers.clear();
+    }
+
     this.log.info('app', 'agent runner shut down');
   }
 
