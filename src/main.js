@@ -168,8 +168,8 @@ handle('hooks:uninstall', ({ agentId }) => {
 // User settings (executable paths, working folder)
 handle('config:get', () => ({ file: configFile, config }));
 
-handle('config:save', ({ config: incoming }) => {
-  config = userConfig.save(configFile, incoming);
+handle('config:save', async ({ config: incoming }) => {
+  config = await userConfig.save(configFile, incoming);
   agentRunner.applyConfig(config);
   logger.info('app', 'config saved', { file: configFile });
   return { file: configFile, config };
@@ -210,9 +210,9 @@ ipcMain.on('window:close', () => {
   if (mainWindow) mainWindow.close();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   logger.open();
-  const loaded = userConfig.load(configFile);
+  const loaded = await userConfig.load(configFile);
   config = loaded.config;
   if (loaded.error) logger.warn('app', 'config problem', { file: configFile, error: loaded.error });
   else logger.info('app', loaded.created ? 'config created with defaults' : 'config loaded', { file: configFile });
