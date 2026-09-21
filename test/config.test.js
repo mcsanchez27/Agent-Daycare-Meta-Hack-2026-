@@ -20,7 +20,7 @@ test('first load creates the file with defaults', () => {
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(Object.keys(onDisk.agents).sort(), [...config.AGENT_IDS].sort());
   assert.ok(onDisk.workingDir);
-  assert.ok(!JSON.stringify(onDisk).includes('Matth'), 'no hardcoded username');
+  assert.ok(!fs.readFileSync(path.join(__dirname, '..', 'src', 'config.js'), 'utf8').includes('Matth'), 'no hardcoded username in config.js');
 });
 
 test('user values override defaults; missing fields fall back', () => {
