@@ -5,7 +5,8 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test"
+    "test": "node --test",
+    "sentry:smoke": "node scripts/sentry-smoke.js"
   },
   "keywords": [
     "agents",
@@ -22,5 +23,8 @@
   "license": "MIT",
   "devDependencies": {
     "electron": "^34.5.8"
+  },
+  "dependencies": {
+    "@sentry/electron": "^7.19.0"
   }
 }

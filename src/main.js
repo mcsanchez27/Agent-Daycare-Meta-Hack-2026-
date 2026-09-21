@@ -1,3 +1,7 @@
+// Sentry must init before other app work so early crashes are captured.
+// Skips silently when SENTRY_DSN is unset (see README / .env.example).
+require('./sentry').initMain();
+
 const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
 const path = require('path');
 const AgentRunner = require('./agent-runner');
