@@ -262,9 +262,13 @@ class AgentRunner {
     }
   }
 
-  scanAgents() {
-    const results = [];
-    Object.values(this.agents).forEach(agent => {
+  async scanAgents() {
+    const { execFile } = require('child_process');
+    const util = require('util');
+    const execFileAsync = util.promisify(execFile);
+
+    const agentList = Object.values(this.agents);
+    const results = await Promise.all(agentList.map(async agent => {
       let isInstalled = false;
       let version = 'Unknown';
       let verifiedPath = agent.path;
@@ -273,7 +277,7 @@ class AgentRunner {
         isInstalled = true;
       } else {
         try {
-          execFileSync('where', [agent.command], { stdio: 'pipe' });
+          await execFileAsync('where', [agent.command], { stdio: 'pipe' });
           isInstalled = true;
           verifiedPath = agent.command;
         } catch (err) {
@@ -284,7 +288,8 @@ class AgentRunner {
 
       if (isInstalled) {
         try {
-          const vOut = execFileSync(verifiedPath, ['--version'], { encoding: 'utf8', timeout: 2500 }).trim();
+          const { stdout } = await execFileAsync(verifiedPath, ['--version'], { encoding: 'utf8', timeout: 2500 });
+          const vOut = stdout.trim();
           version = vOut.split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
         } catch (err) {
           version = 'Installed';
@@ -297,7 +302,7 @@ class AgentRunner {
       agent.version = version;
       agent.path = verifiedPath;
 
-      results.push({
+      return {
         id: agent.id,
         name: agent.name,
         role: agent.role,
@@ -307,9 +312,9 @@ class AgentRunner {
         path: verifiedPath,
         externalPid: agent.externalPid,
         status: agent.status,
-        hookSessions: this.hookSessions[agent.id].size
-      });
-    });
+        hookSessions: this.hookSessions[agent.id] ? this.hookSessions[agent.id].size : 0
+      };
+    }));
 
     return results;
   }
