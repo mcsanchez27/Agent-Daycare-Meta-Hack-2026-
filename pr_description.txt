@@ -1,8 +1,0 @@
-💡 **What:**
-Refactored `scanAgents()` in `src/agent-runner.js` to be an asynchronous method. Replaced synchronous `execSync` calls with `util.promisify(require('child_process').exec)` and parallelized the execution across all configured agents using `Promise.all` and `Array.prototype.map`.
-
-🎯 **Why:**
-The previous implementation used `execSync` for commands like `where` and `--version`, which blocked the Node.js main thread until the spawned processes completed. In environments with many agents or slow I/O, this caused the UI to freeze (since IPC calls are handled on the main thread). By switching to non-blocking asynchronous execution, the event loop remains unblocked and multiple agents are scanned in parallel.
-
-📊 **Measured Improvement:**
-On a Linux test environment (which mimics worst-case fallback behaviors for the `where` command), scanning an array of 10 dummy agents synchronously took **~79ms** of pure event loop blocking time. By moving to the asynchronous `exec` and concurrent Promises, total execution time for the same block dropped to **~48ms**, representing a roughly **40% speedup** while entirely eliminating main thread blocking. On systems like Windows where the `where` command properly resolves or searches over a longer duration, the parallel speedup and responsiveness gains will be far more pronounced (e.g. going from N*latency to 1*latency while keeping the UI thread active).

@@ -1,3 +1,6 @@
+// A git-ignored .env next to package.json can hold SENTRY_DSN (see
+// .env.example); shell variables take precedence. Must run before Sentry.
+require('./env').load();
 // Sentry must init before other app work so early crashes are captured.
 // Skips silently when SENTRY_DSN is unset (see README / .env.example).
 require('./sentry').initMain();

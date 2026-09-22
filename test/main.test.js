@@ -148,15 +148,12 @@ test('main.js tests', async (t) => {
   });
 
   await t.test('hooks:status returns hook info', async () => {
-    try {
-      const result = await electronMock.ipcMain.invoke('hooks:status');
-      assert.ok(result);
-      assert.ok(result.agents.claude);
-    } catch (e) {
-      if (!e.message.includes("Hook listener is not running")) {
-        throw e;
-      }
-    }
+    const result = await electronMock.ipcMain.invoke('hooks:status');
+    // The mocked HookServer never sets a url, so the listener reports offline
+    // and no hookUrl is handed out; installer status still comes through.
+    assert.equal(result.listening, false);
+    assert.deepEqual(result.agents.claude, { installed: true, hookUrl: null });
+    assert.deepEqual(result.agents.codex, { installed: true, hookUrl: null });
   });
 
   // Restore Module._load

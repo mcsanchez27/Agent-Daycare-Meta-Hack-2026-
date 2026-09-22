@@ -25,6 +25,7 @@
     "electron": "^34.5.8"
   },
   "dependencies": {
-    "@sentry/electron": "^7.19.0"
+    "@sentry/electron": "^7.19.0",
+    "@sentry/node": "^10.74.0"
   }
 }
