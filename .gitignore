@@ -4,3 +4,6 @@ dist/
 *.log
 logs/
 config.json
+
+.env
+.env.local

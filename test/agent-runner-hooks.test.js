@@ -124,3 +124,67 @@ test('applyConfig sets the working folder and per-agent executable paths', () =>
   assert.equal(runner.agents.claude.processFilter, 'claude');
   assert.equal(runner.agents.codex.path, 'codex.exe');
 });
+
+test('startAgent catches spawn error and emits output', () => {
+  const cp = require('child_process');
+  const originalSpawn = cp.spawn;
+  const originalExistsSync = require('fs').existsSync;
+  let spawnCalled = false;
+
+  // mock existsSync to return true for our fake exe so it doesn't fall back to command
+  require('fs').existsSync = (path) => {
+    if (path === 'my-fake-exe') return true;
+    return originalExistsSync(path);
+  };
+
+  const mockChildProcess = {
+    ...cp,
+    spawn: (exe, args, options) => {
+      if (exe === 'my-fake-exe') {
+        spawnCalled = true;
+        throw new Error('mock EACCES error');
+      }
+      return originalSpawn(exe, args, options);
+    }
+  };
+
+  require.cache[require.resolve('child_process')] = {
+    id: 'child_process',
+    filename: 'child_process',
+    loaded: true,
+    exports: mockChildProcess
+  };
+
+  try {
+    delete require.cache[require.resolve('../src/agent-runner')];
+    const AgentRunnerFresh = require('../src/agent-runner');
+
+    const sent = [];
+    const win = { isDestroyed: () => false, webContents: { send: (ch, d) => sent.push({ ch, d }) } };
+    const runner = new AgentRunnerFresh(win, quietLogger);
+    clearInterval(runner.scanInterval);
+
+    runner.agents.claude.path = 'my-fake-exe';
+
+    let exceptionCalled = false;
+    runner.log.exception = (agentId, err, metadata) => {
+      exceptionCalled = true;
+      assert.equal(agentId, 'claude');
+      assert.equal(err.message, 'mock EACCES error');
+      assert.equal(metadata.phase, 'spawn');
+    };
+
+    const result = runner.startAgent('claude', 'fix it');
+    assert.equal(spawnCalled, true, 'mock spawn should be called');
+    assert.equal(result, false, 'startAgent should return false when spawn fails');
+    assert.ok(exceptionCalled, 'logger.exception should be called');
+
+    const outputMessages = sent.filter(m => m.ch === 'agent:output' && m.d.agentId === 'claude');
+    assert.ok(outputMessages.some(m => m.d.raw.includes('Error launching Claude')), 'should emit error output');
+    assert.ok(outputMessages.some(m => m.d.raw.includes('mock EACCES error')), 'should include error message');
+  } finally {
+    delete require.cache[require.resolve('child_process')];
+    delete require.cache[require.resolve('../src/agent-runner')];
+    require('fs').existsSync = originalExistsSync;
+  }
+});
