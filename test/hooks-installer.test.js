@@ -94,21 +94,21 @@ test('uninstall on a file without our hooks is a no-op', async () => {
   assert.ok(!fs.existsSync(`${file}.agent-daycare.bak`));
 });
 
-test('readSettings propagates unexpected fs errors (e.g. EACCES)', (t) => {
+test('readSettings propagates unexpected fs errors (e.g. EACCES)', async (t) => {
   const file = tmpSettings();
-  const originalReadFileSync = fs.readFileSync;
-  t.mock.method(fs, 'readFileSync', (path, options) => {
+  const originalReadFile = fs.promises.readFile;
+  t.mock.method(fs.promises, 'readFile', (path, options) => {
     if (path === file) {
       const err = new Error('EACCES: permission denied');
       err.code = 'EACCES';
-      throw err;
+      return Promise.reject(err);
     }
-    return originalReadFileSync(path, options);
+    return originalReadFile(path, options);
   });
 
-  assert.throws(() => installer.install({ hookUrl: URL, file }), { code: 'EACCES' });
-  assert.throws(() => installer.uninstall({ file }), { code: 'EACCES' });
-  const st = installer.status({ file });
+  await assert.rejects(() => installer.install({ hookUrl: URL, file }), { code: 'EACCES' });
+  await assert.rejects(() => installer.uninstall({ file }), { code: 'EACCES' });
+  const st = await installer.status({ file });
   assert.equal(st.installed, false);
   assert.equal(st.error, 'EACCES: permission denied');
 });
