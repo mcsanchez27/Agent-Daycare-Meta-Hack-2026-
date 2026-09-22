@@ -93,3 +93,21 @@ test('uninstall on a file without our hooks is a no-op', async () => {
   assert.equal(fs.readFileSync(file, 'utf8'), before);
   assert.ok(!fs.existsSync(`${file}.agent-daycare.bak`));
 });
+
+test('status reports error message when file read fails with EACCES', async (t) => {
+  // Stubbed rather than chmod 000: root and Windows both ignore that mode.
+  const file = tmpSettings('{}');
+  const originalReadFile = fs.promises.readFile;
+  t.mock.method(fs.promises, 'readFile', (p, options) => {
+    if (p === file) {
+      const err = new Error('EACCES: permission denied');
+      err.code = 'EACCES';
+      return Promise.reject(err);
+    }
+    return originalReadFile(p, options);
+  });
+  const st = await installer.status({ file });
+  assert.equal(st.installed, false);
+  assert.ok(st.error);
+  assert.ok(st.error.includes('EACCES'));
+});
