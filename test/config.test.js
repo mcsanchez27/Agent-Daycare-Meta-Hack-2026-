@@ -50,3 +50,22 @@ test('save round-trips and strips blanks/unknowns', async () => {
   assert.equal(saved.agents.claude.path, 'C:\\c\\claude.exe');
   assert.deepEqual((await config.load(file)).config, saved);
 });
+
+test('save fallback error is caught and reported when file is missing', async () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-config-')), 'new-config.json');
+  const originalWriteFile = fs.promises.writeFile;
+  let wasCalled = false;
+  fs.promises.writeFile = async () => {
+    wasCalled = true;
+    throw new Error('mock write error');
+  };
+  try {
+    const r = await config.load(file);
+    assert.equal(wasCalled, true);
+    assert.match(r.error, /could not create config: mock write error/);
+    assert.equal(r.config.workingDir, (await config.defaults()).workingDir);
+    assert.ok(!fs.existsSync(file), 'no config file is left behind');
+  } finally {
+    fs.promises.writeFile = originalWriteFile;
+  }
+});
