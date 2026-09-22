@@ -130,3 +130,21 @@ test('readSettings propagates unexpected fs errors (e.g. EACCES)', async (t) => 
   assert.equal(st.installed, false);
   assert.equal(st.error, 'EACCES: permission denied');
 });
+
+test('uninstall throws if readSettings fails with a non-ENOENT error', async () => {
+  const file = tmpSettings('{}');
+  const originalReadFile = fs.promises.readFile;
+  try {
+    fs.promises.readFile = (p, enc) => {
+      if (p === file) {
+        const err = new Error('Permission denied');
+        err.code = 'EACCES';
+        return Promise.reject(err);
+      }
+      return originalReadFile(p, enc);
+    };
+    await assert.rejects(() => installer.uninstall({ file }), { code: 'EACCES' });
+  } finally {
+    fs.promises.readFile = originalReadFile;
+  }
+});
