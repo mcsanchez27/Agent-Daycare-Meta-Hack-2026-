@@ -79,7 +79,7 @@ test('stale sessions expire and the agent goes back to sleep', () => {
   assert.equal(runner.expireHookSessions(), false);
 });
 
-test('the process scanner respects hook-reported state and clears sessions when the process vanishes', () => {
+test('the process scanner respects hook-reported state and clears sessions when the process vanishes', async () => {
   const { runner } = makeRunner();
   let procs = new Map([['claude.exe', '4242']]);
   runner.listProcesses = () => procs;
@@ -87,19 +87,19 @@ test('the process scanner respects hook-reported state and clears sessions when 
   runner.handleHookEvent('claude', { hook_event_name: 'Stop', session_id: 's' });
   assert.equal(runner.agents.claude.status, 'idle');
 
-  runner.checkExternalProcesses();
+  await runner.checkExternalProcesses();
   assert.equal(runner.agents.claude.externalPid, '4242');
   assert.equal(runner.agents.claude.status, 'idle', 'hook state wins over "process exists"');
 
   procs = new Map();
-  runner.checkExternalProcesses();
+  await runner.checkExternalProcesses();
   assert.equal(runner.agents.claude.externalPid, null);
   assert.equal(runner.hookSessions.claude.size, 0, 'sessions cleared when the process is gone');
   assert.equal(runner.agents.claude.status, 'sleeping');
 
   // Without hook sessions the scanner behaves as before: a found process means working.
   procs = new Map([['codex.exe', '7']]);
-  runner.checkExternalProcesses();
+  await runner.checkExternalProcesses();
   assert.equal(runner.agents.codex.status, 'working');
 });
 
