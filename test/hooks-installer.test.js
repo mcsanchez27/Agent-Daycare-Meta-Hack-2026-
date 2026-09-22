@@ -94,20 +94,20 @@ test('uninstall on a file without our hooks is a no-op', async () => {
   assert.ok(!fs.existsSync(`${file}.agent-daycare.bak`));
 });
 
-test('uninstall throws if readSettings fails with a non-ENOENT error', () => {
+test('uninstall throws if readSettings fails with a non-ENOENT error', async () => {
   const file = tmpSettings('{}');
-  const originalReadFileSync = fs.readFileSync;
+  const originalReadFile = fs.promises.readFile;
   try {
-    fs.readFileSync = (p, enc) => {
+    fs.promises.readFile = (p, enc) => {
       if (p === file) {
         const err = new Error('Permission denied');
         err.code = 'EACCES';
-        throw err;
+        return Promise.reject(err);
       }
-      return originalReadFileSync(p, enc);
+      return originalReadFile(p, enc);
     };
-    assert.throws(() => installer.uninstall({ file }), { code: 'EACCES' });
+    await assert.rejects(() => installer.uninstall({ file }), { code: 'EACCES' });
   } finally {
-    fs.readFileSync = originalReadFileSync;
+    fs.promises.readFile = originalReadFile;
   }
 });
