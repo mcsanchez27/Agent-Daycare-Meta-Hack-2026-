@@ -1,67 +1,31 @@
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFile } = require('child_process');
+const { promisify } = require('util');
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
 
-// Built-in lightweight ANSI to styled HTML converter
-function ansiToHtml(text) {
-  if (!text) return '';
-  
-  // Strip OSC (Operating System Commands like title updates, colors) e.g. \x1b]0;...\x07
-  let cleaned = text
-    .replace(/\x1b\][0-9]+;[^\x07\x1b]*(\x07|\x1b\\)/g, '')
-    .replace(/\x1b\[\?[0-9;]*[a-zA-Z]/g, ''); // cursor & private mode codes
+const execFileAsync = promisify(execFile);
 
-  // Escape HTML characters
-  let html = cleaned
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+// Windows will not spawn a .cmd/.bat shim (how npm installs claude, grok, ...)
+// without a shell, so `--version` on one fails with EINVAL and the scan can
+// only say "Installed". For those we go through cmd.exe with a fixed, fully
+// quoted command line. The path must pass this allow-list first: no quotes,
+// no cmd metacharacters (& | < > ^ % !), so nothing in it can reach the shell.
+// Everything else is run directly, as the command-injection fix intended.
+const SAFE_BATCH_PATH = /^[A-Za-z]:\\[A-Za-z0-9 _.\-\\()~@+,=]+\.(cmd|bat)$/i;
 
-  const colorMap = {
-    '30': '#4a4a4a',
-    '31': '#ff5555',
-    '32': '#50fa7b',
-    '33': '#f1fa8c',
-    '34': '#bd93f9',
-    '35': '#ff79c6',
-    '36': '#8be9fd',
-    '37': '#f8f8f2',
-    '90': '#6272a4',
-    '91': '#ff6e6e',
-    '92': '#69ff94',
-    '93': '#ffffa5',
-    '94': '#d6acff',
-    '95': '#ff92df',
-    '96': '#a4ffff',
-    '97': '#ffffff'
-  };
-
-  html = html.replace(/\x1b\[([0-9;]+)m/g, (match, codes) => {
-    const codeList = codes.split(';');
-    let styles = [];
-    
-    for (const code of codeList) {
-      if (code === '0') {
-        return '</span>';
-      } else if (code === '1') {
-        styles.push('font-weight: bold;');
-      } else if (code === '2') {
-        styles.push('opacity: 0.7;');
-      } else if (code === '4') {
-        styles.push('text-decoration: underline;');
-      } else if (colorMap[code]) {
-        styles.push(`color: ${colorMap[code]};`);
-      }
-    }
-    
-    return `<span style="${styles.join(' ')}">`;
-  });
-
-  // Strip any remaining unhandled control sequences
-  html = html.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
-
-  return html;
+function versionCommand(exe, platform = process.platform, env = process.env) {
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(exe)) {
+    if (!SAFE_BATCH_PATH.test(exe)) return null;
+    return {
+      file: env.ComSpec || 'cmd.exe',
+      args: ['/d', '/s', '/c', `""${exe}" --version"`],
+      options: { windowsVerbatimArguments: true, windowsHide: true }
+    };
+  }
+  return { file: exe, args: ['--version'], options: {} };
 }
+
+const { parseAnsi } = require('./utils/ansi.js');
 
 class AgentRunner {
   constructor(mainWindow, logger, config = null) {
@@ -175,9 +139,17 @@ class AgentRunner {
 
   shutdown() {
     clearInterval(this.scanInterval);
-    for (const timer of this.promptTimers.values()) clearTimeout(timer);
-    this.promptTimers.clear();
-    for (const agentId of [...this.processes.keys()]) this.stopAgent(agentId);
+    const activeAgents = [...this.processes.keys()];
+    for (const agentId of activeAgents) {
+      this.stopAgent(agentId);
+    }
+
+    // Clear any timers not associated with processes (edge case)
+    if (this.promptTimers.size > 0) {
+      for (const timer of this.promptTimers.values()) clearTimeout(timer);
+      this.promptTimers.clear();
+    }
+
     this.log.info('app', 'agent runner shut down');
   }
 
@@ -192,13 +164,11 @@ class AgentRunner {
   listProcesses() {
     const output = execSync('tasklist /FO CSV /NH', { encoding: 'utf8', timeout: 3000 });
     const activeFilters = new Map();
-    output.split('\n').forEach(line => {
-      if (!line.trim()) return;
-      const parts = line.split('","').map(p => p.replace(/^"|"$/g, ''));
-      if (parts.length >= 2) {
-        activeFilters.set(parts[0].toLowerCase(), parts[1]);
-      }
-    });
+    const regex = /^"([^"]+)","([^"]+)"/gm;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+      activeFilters.set(match[1].toLowerCase(), match[2]);
+    }
     return activeFilters;
   }
 
@@ -262,20 +232,24 @@ class AgentRunner {
     }
   }
 
-  scanAgents() {
-    const results = [];
-    Object.values(this.agents).forEach(agent => {
+  async scanAgents() {
+    const agentList = Object.values(this.agents);
+    const results = await Promise.all(agentList.map(async agent => {
       let isInstalled = false;
       let version = 'Unknown';
       let verifiedPath = agent.path;
+      // The file the version check actually runs: the configured path, or the
+      // first hit `where` reports (which may be a .cmd shim, see versionCommand).
+      let versionTarget = agent.path;
 
       if (fs.existsSync(agent.path)) {
         isInstalled = true;
       } else {
         try {
-          execSync(`where ${agent.command}`, { stdio: 'pipe' });
+          const { stdout } = await execFileAsync('where', [agent.command], { encoding: 'utf8', timeout: 2500 });
           isInstalled = true;
           verifiedPath = agent.command;
+          versionTarget = String(stdout).split(/\r?\n/)[0].trim() || agent.command;
         } catch (err) {
           isInstalled = false;
           this.log.debug(agent.id, 'not found on PATH', { path: agent.path, error: err.message });
@@ -283,12 +257,19 @@ class AgentRunner {
       }
 
       if (isInstalled) {
-        try {
-          const vOut = execSync(`"${verifiedPath}" --version`, { encoding: 'utf8', timeout: 2500 }).trim();
-          version = vOut.split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
-        } catch (err) {
+        const cmd = versionCommand(versionTarget);
+        if (!cmd) {
           version = 'Installed';
-          this.log.debug(agent.id, '--version check failed', { path: verifiedPath, error: err.message });
+          this.log.debug(agent.id, '--version skipped: batch file path contains shell metacharacters', { path: versionTarget });
+        } else {
+          try {
+            const { stdout } = await execFileAsync(cmd.file, cmd.args, { ...cmd.options, encoding: 'utf8', timeout: 2500 });
+            const vOut = stdout.trim();
+            version = vOut.split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
+          } catch (err) {
+            version = 'Installed';
+            this.log.debug(agent.id, '--version check failed', { path: versionTarget, error: err.message });
+          }
         }
       }
       this.log.info(agent.id, 'scan result', { installed: isInstalled, version, path: verifiedPath });
@@ -297,7 +278,7 @@ class AgentRunner {
       agent.version = version;
       agent.path = verifiedPath;
 
-      results.push({
+      return {
         id: agent.id,
         name: agent.name,
         role: agent.role,
@@ -307,9 +288,9 @@ class AgentRunner {
         path: verifiedPath,
         externalPid: agent.externalPid,
         status: agent.status,
-        hookSessions: this.hookSessions[agent.id].size
-      });
-    });
+        hookSessions: this.hookSessions[agent.id] ? this.hookSessions[agent.id].size : 0
+      };
+    }));
 
     return results;
   }
@@ -337,6 +318,7 @@ class AgentRunner {
     return null;
   }
 
+
   // Start agent with precise argument formatting & shell: false
   startAgent(agentId, initialPrompt = '') {
     const agent = this.agents[agentId];
@@ -346,29 +328,10 @@ class AgentRunner {
       this.stopAgent(agentId);
     }
 
-    let exe = agent.path;
-    if (!fs.existsSync(exe)) {
-      exe = agent.command;
-    }
-
+    const exe = this._getExecutable(agent);
     const workingDir = this.workingDir || process.cwd();
-    let args = [];
     const isPromptMode = !!(initialPrompt && initialPrompt.trim());
-
-    if (isPromptMode) {
-      const p = initialPrompt.trim();
-      if (agentId === 'antigravity') {
-        args = ['-p', p];
-      } else if (agentId === 'claude') {
-        args = ['-p', p];
-      } else if (agentId === 'codex') {
-        args = ['exec', '--skip-git-repo-check', p];
-      } else if (agentId === 'grok') {
-        args = ['-p', p, '--output-format', 'plain'];
-      } else {
-        args = [p];
-      }
-    }
+    const args = this._buildAgentArgs(agentId, isPromptMode, initialPrompt);
 
     const run = this.currentRun(agentId) + 1;
     this.runCounts.set(agentId, run);
@@ -376,25 +339,8 @@ class AgentRunner {
     this.emitOutput(agentId, `\x1b[36m> [Mission Control] Launching ${agent.name}...\x1b[0m\r\n\r\n`);
     this.log.info(agentId, 'launching', { run, exe, args, cwd: workingDir, promptMode: isPromptMode });
 
-    let child;
-    try {
-      const spawnOptions = {
-        cwd: workingDir,
-        shell: false,
-        env: { ...process.env, FORCE_COLOR: '1' }
-      };
-
-      if (isPromptMode) {
-        // Closes stdin stream explicitly so Claude and Codex do not wait on stdin
-        spawnOptions.stdio = ['ignore', 'pipe', 'pipe'];
-      }
-
-      child = spawn(exe, args, spawnOptions);
-    } catch (err) {
-      this.log.exception(agentId, err, { run, phase: 'spawn' });
-      this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
-      return false;
-    }
+    const child = this._spawnAgentProcess(agentId, agent, exe, args, workingDir, isPromptMode, run);
+    if (!child) return false;
 
     this.processes.set(agentId, child);
     agent.status = 'working';
@@ -408,6 +354,58 @@ class AgentRunner {
       text: `${agent.name} started working on: "${initialPrompt || 'Interactive Session'}"`
     });
 
+    this._attachProcessStreams(agentId, agent, child, run);
+
+    return true;
+  }
+
+  _getExecutable(agent) {
+    let exe = agent.path;
+    if (!fs.existsSync(exe)) {
+      exe = agent.command;
+    }
+    return exe;
+  }
+
+  _buildAgentArgs(agentId, isPromptMode, initialPrompt) {
+    if (!isPromptMode) return [];
+
+    const p = initialPrompt.trim();
+    if (agentId === 'antigravity') {
+      return ['-p', p];
+    } else if (agentId === 'claude') {
+      return ['-p', p];
+    } else if (agentId === 'codex') {
+      return ['exec', '--skip-git-repo-check', p];
+    } else if (agentId === 'grok') {
+      return ['-p', p, '--output-format', 'plain'];
+    } else {
+      return [p];
+    }
+  }
+
+  _spawnAgentProcess(agentId, agent, exe, args, workingDir, isPromptMode, run) {
+    try {
+      const spawnOptions = {
+        cwd: workingDir,
+        shell: false,
+        env: { ...process.env, FORCE_COLOR: '1' }
+      };
+
+      if (isPromptMode) {
+        // Closes stdin stream explicitly so Claude and Codex do not wait on stdin
+        spawnOptions.stdio = ['ignore', 'pipe', 'pipe'];
+      }
+
+      return spawn(exe, args, spawnOptions);
+    } catch (err) {
+      this.log.exception(agentId, err, { run, phase: 'spawn' });
+      this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
+      return null;
+    }
+  }
+
+  _attachProcessStreams(agentId, agent, child, run) {
     // StringDecoder keeps multi-byte characters intact when they straddle two chunks.
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
@@ -471,8 +469,6 @@ class AgentRunner {
       agent.status = 'idle';
       this.broadcastStatus(agentId, 'idle');
     });
-
-    return true;
   }
 
   stopAgent(agentId) {
@@ -759,7 +755,7 @@ class AgentRunner {
 
   emitOutput(agentId, rawText) {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      const html = ansiToHtml(rawText);
+      const html = parseAnsi(rawText);
       this.mainWindow.webContents.send('agent:output', { agentId, raw: rawText, html });
     }
   }
@@ -793,5 +789,7 @@ class AgentRunner {
     }
   }
 }
+
+AgentRunner.versionCommand = versionCommand;
 
 module.exports = AgentRunner;

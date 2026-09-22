@@ -43,25 +43,26 @@ function findNotifyLine(lines) {
   return null;
 }
 
-function readLines(file) {
+async function readLines(file) {
   try {
-    return fs.readFileSync(file, 'utf8').split(/\r?\n/);
+    const raw = await fs.promises.readFile(file, 'utf8');
+    return raw.split(/\r?\n/);
   } catch (err) {
     if (err.code === 'ENOENT') return null;
     throw err;
   }
 }
 
-function writeLines(file, lines) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.agent-daycare.bak`);
-  fs.writeFileSync(file, lines.join('\n'));
+async function writeLines(file, lines) {
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  if (fs.existsSync(file)) await fs.promises.copyFile(file, `${file}.agent-daycare.bak`);
+  await fs.promises.writeFile(file, lines.join('\n'));
 }
 
-function status({ file = defaultCodexConfigPath() } = {}) {
+async function status({ file = defaultCodexConfigPath() } = {}) {
   let lines;
   try {
-    lines = readLines(file);
+    lines = await readLines(file);
   } catch (err) {
     return { installed: false, events: [], file, error: err.message };
   }
@@ -72,9 +73,9 @@ function status({ file = defaultCodexConfigPath() } = {}) {
   return { installed: false, events: [], file, conflict: found.line.trim() };
 }
 
-function install({ hookUrl, file = defaultCodexConfigPath() }) {
+async function install({ hookUrl, file = defaultCodexConfigPath() }) {
   if (!hookUrl) throw new Error('hookUrl is required');
-  const lines = readLines(file) || [];
+  const lines = (await readLines(file)) || [];
   const found = findNotifyLine(lines);
   if (found && !found.ours) {
     throw new Error(`Codex already has a notify command configured (${found.line.trim()}). Remove it from ${file} first.`);
@@ -86,19 +87,19 @@ function install({ hookUrl, file = defaultCodexConfigPath() }) {
     lines.unshift(ourLine);
   }
   if (lines[lines.length - 1] !== '') lines.push('');
-  writeLines(file, lines);
-  return status({ file });
+  await writeLines(file, lines);
+  return await status({ file });
 }
 
-function uninstall({ file = defaultCodexConfigPath() } = {}) {
-  const lines = readLines(file);
-  if (!lines) return status({ file });
+async function uninstall({ file = defaultCodexConfigPath() } = {}) {
+  const lines = await readLines(file);
+  if (!lines) return await status({ file });
   const found = findNotifyLine(lines);
   if (found && found.ours) {
     lines.splice(found.index, 1);
-    writeLines(file, lines);
+    await writeLines(file, lines);
   }
-  return status({ file });
+  return await status({ file });
 }
 
 module.exports = { install, uninstall, status, buildNotifyArgv, defaultCodexConfigPath, MARKER };

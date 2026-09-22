@@ -239,12 +239,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     terminalOutput.scrollTop = terminalOutput.scrollHeight;
   }
 
-  function appendLog(agentId, htmlOrText) {
+  // `isHtml` marks text that is already safe HTML (e.g. converted by the main
+  // process); it is never re-parsed, since parseAnsi escapes HTML and running it
+  // twice would corrupt entities and tags.
+  function appendLog(agentId, htmlOrText, { isHtml = false } = {}) {
     if (!logs[agentId]) logs[agentId] = '';
-    
+
     // Parse ANSI codes if any exist in the incoming string
     let html = htmlOrText;
-    if (typeof html === 'string' && html.includes('\x1b[')) {
+    if (!isHtml && typeof html === 'string' && html.includes('\x1b[')) {
       html = parseAnsi(html);
     }
 
@@ -254,27 +257,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       terminalOutput.insertAdjacentHTML('beforeend', html);
       terminalOutput.scrollTop = terminalOutput.scrollHeight;
     }
-  }
-
-  function parseAnsi(text) {
-    if (!text) return '';
-    const colorMap = {
-      '30': '#4a4a4a', '31': '#ff5555', '32': '#50fa7b', '33': '#f1fa8c',
-      '34': '#bd93f9', '35': '#ff79c6', '36': '#8be9fd', '37': '#f8f8f2',
-      '90': '#6272a4', '91': '#ff6e6e', '92': '#69ff94', '93': '#ffffa5',
-      '94': '#d6acff', '95': '#ff92df', '96': '#a4ffff', '97': '#ffffff'
-    };
-    let html = text.replace(/\x1b\[([0-9;]+)m/g, (_, codes) => {
-      const list = codes.split(';');
-      let styles = [];
-      for (const c of list) {
-        if (c === '0') return '</span>';
-        if (c === '1') styles.push('font-weight: bold;');
-        if (colorMap[c]) styles.push(`color: ${colorMap[c]};`);
-      }
-      return `<span style="${styles.join(' ')}">`;
-    });
-    return html.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
   }
 
   // Tab click listeners
@@ -469,24 +451,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const isLinked = !!res.externalPid;
       const statusBadge = isLinked 
-        ? `<span style="background: rgba(0,245,212,0.2); color: #00f5d4; padding: 2px 6px; border-radius: 3px; font-size: 10px;">🔗 Active Terminal PID: ${res.externalPid}</span>`
+        ? `<span style="background: rgba(0,245,212,0.2); color: #00f5d4; padding: 2px 6px; border-radius: 3px; font-size: 10px;">🔗 Active Terminal PID: ${escapeHtml(res.externalPid)}</span>`
         : res.installed 
           ? `<span style="background: rgba(6,214,160,0.2); color: #06d6a0; padding: 2px 6px; border-radius: 3px; font-size: 10px;">✔ Installed</span>`
           : `<span style="background: rgba(239,71,111,0.2); color: #ef476f; padding: 2px 6px; border-radius: 3px; font-size: 10px;">✕ Not Found</span>`;
 
       item.innerHTML = `
         <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
-          <strong style="color: #fff; font-size: 13px;">${res.name}</strong>
+          <strong style="color: #fff; font-size: 13px;">${escapeHtml(res.name)}</strong>
           ${statusBadge}
         </div>
         <div style="font-size: 11px; color: var(--text-muted);">
-          <span>Version: <strong>${res.version}</strong></span> | 
-          <span>Role: <strong>${res.role.toUpperCase()}</strong></span>
+          <span>Version: <strong>${escapeHtml(res.version)}</strong></span> |
+          <span>Role: <strong>${escapeHtml(res.role.toUpperCase())}</strong></span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center; width: 100%;">
           <span style="font-size: 10px; color: var(--text-dim);">Path:</span>
-          <input type="text" class="terminal-input agent-path-input" data-agent="${res.id}" value="${escapeAttr(res.path)}" spellcheck="false" style="flex: 1; font-size: 10px; padding: 2px 6px;">
-          <button class="send-btn agent-path-browse" data-agent="${res.id}" style="padding: 2px 8px; font-size: 10px;">Browse…</button>
+          <input type="text" class="terminal-input agent-path-input" data-agent="${escapeAttr(res.id)}" value="${escapeAttr(res.path)}" spellcheck="false" style="flex: 1; font-size: 10px; padding: 2px 6px;">
+          <button class="send-btn agent-path-browse" data-agent="${escapeAttr(res.id)}" style="padding: 2px 8px; font-size: 10px;">Browse…</button>
         </div>
       `;
 
@@ -637,7 +619,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Real-time IPC Event Handlers
   window.api.onAgentOutput((data) => {
-    appendLog(data.agentId, data.html || escapeHtml(data.raw));
+    appendLog(data.agentId, data.html || escapeHtml(data.raw), { isHtml: true });
   });
 
   window.api.onAgentStatus((data) => {
