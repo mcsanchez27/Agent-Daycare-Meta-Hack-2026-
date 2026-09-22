@@ -83,3 +83,13 @@ test('readLines propagates non-ENOENT errors (e.g. EACCES)', async () => {
     fs.promises.readFile = original;
   }
 });
+
+// Ported from Jules PR #5.
+test('status reports read errors like EISDIR instead of throwing', async () => {
+  const dir = path.dirname(tmpConfig());
+  const st = await codex.status({ file: dir }); // a directory, not a file
+  assert.equal(st.installed, false);
+  assert.deepEqual(st.events, []);
+  assert.equal(st.file, dir);
+  assert.ok(st.error.includes('EISDIR'), st.error);
+});
