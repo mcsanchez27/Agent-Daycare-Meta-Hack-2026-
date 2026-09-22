@@ -18,9 +18,9 @@ function read(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-test('install creates the settings file with one hook per event', () => {
+test('install creates the settings file with one hook per event', async () => {
   const file = tmpSettings();
-  const result = installer.install({ hookUrl: URL, file });
+  const result = await installer.install({ hookUrl: URL, file });
   assert.equal(result.installed, true);
   assert.deepEqual(result.events.sort(), [...installer.CLAUDE_EVENTS].sort());
 
@@ -32,7 +32,7 @@ test('install creates the settings file with one hook per event', () => {
   }
 });
 
-test('install preserves unrelated settings and hooks; uninstall removes only ours', () => {
+test('install preserves unrelated settings and hooks; uninstall removes only ours', async () => {
   const file = tmpSettings(JSON.stringify({
     model: 'opus',
     hooks: {
@@ -41,7 +41,7 @@ test('install preserves unrelated settings and hooks; uninstall removes only our
     }
   }));
 
-  installer.install({ hookUrl: URL, file });
+  await installer.install({ hookUrl: URL, file });
   let s = read(file);
   assert.equal(s.model, 'opus');
   assert.equal(s.hooks.Stop.length, 2);
@@ -50,7 +50,7 @@ test('install preserves unrelated settings and hooks; uninstall removes only our
   assert.equal(s.hooks.PreToolUse[0].matcher, 'Bash');
   assert.ok(fs.existsSync(`${file}.agent-daycare.bak`), 'backup written');
 
-  const result = installer.uninstall({ file });
+  const result = await installer.uninstall({ file });
   assert.equal(result.installed, false);
   s = read(file);
   assert.deepEqual(s, {
@@ -62,11 +62,11 @@ test('install preserves unrelated settings and hooks; uninstall removes only our
   });
 });
 
-test('install is idempotent and refreshes the URL when the port changes', () => {
+test('install is idempotent and refreshes the URL when the port changes', async () => {
   const file = tmpSettings();
-  installer.install({ hookUrl: URL, file });
-  installer.install({ hookUrl: URL, file });
-  installer.install({ hookUrl: 'http://127.0.0.1:50000/agent-daycare/hook/claude', file });
+  await installer.install({ hookUrl: URL, file });
+  await installer.install({ hookUrl: URL, file });
+  await installer.install({ hookUrl: 'http://127.0.0.1:50000/agent-daycare/hook/claude', file });
   const s = read(file);
   for (const ev of installer.CLAUDE_EVENTS) {
     assert.equal(s.hooks[ev].length, 1, `${ev} should have exactly one group`);
@@ -74,22 +74,22 @@ test('install is idempotent and refreshes the URL when the port changes', () => 
   }
 });
 
-test('status reports not-installed for a missing file and errors for corrupt JSON without touching it', () => {
+test('status reports not-installed for a missing file and errors for corrupt JSON without touching it', async () => {
   const missing = tmpSettings();
-  assert.deepEqual(installer.status({ file: missing }), { installed: false, events: [], file: missing });
+  assert.deepEqual(await installer.status({ file: missing }), { installed: false, events: [], file: missing });
 
   const corrupt = tmpSettings('{ not json');
-  const st = installer.status({ file: corrupt });
+  const st = await installer.status({ file: corrupt });
   assert.equal(st.installed, false);
   assert.ok(st.error);
-  assert.throws(() => installer.install({ hookUrl: URL, file: corrupt }));
+  await assert.rejects(async () => await installer.install({ hookUrl: URL, file: corrupt }));
   assert.equal(fs.readFileSync(corrupt, 'utf8'), '{ not json');
 });
 
-test('uninstall on a file without our hooks is a no-op', () => {
+test('uninstall on a file without our hooks is a no-op', async () => {
   const file = tmpSettings('{"model":"x"}\n');
   const before = fs.readFileSync(file, 'utf8');
-  installer.uninstall({ file });
+  await installer.uninstall({ file });
   assert.equal(fs.readFileSync(file, 'utf8'), before);
   assert.ok(!fs.existsSync(`${file}.agent-daycare.bak`));
 });

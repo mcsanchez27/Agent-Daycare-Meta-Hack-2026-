@@ -10,18 +10,18 @@ const path = require('path');
 
 const AGENT_IDS = ['antigravity', 'claude', 'codex', 'grok'];
 
-function defaultAgentPaths() {
+async function defaultAgentPaths() {
   const home = os.homedir();
   const win = process.platform === 'win32';
   const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
   let codexPath = win ? path.join(local, 'OpenAI', 'Codex', 'bin', 'codex.exe') : path.join(home, '.local', 'bin', 'codex');
-  if (win && !fs.existsSync(codexPath)) {
+  if (win && !(await fs.promises.access(codexPath).then(() => true).catch(() => false))) {
     const codexBinDir = path.join(local, 'OpenAI', 'Codex', 'bin');
-    if (fs.existsSync(codexBinDir)) {
+    if (await fs.promises.access(codexBinDir).then(() => true).catch(() => false)) {
       try {
-        for (const sub of fs.readdirSync(codexBinDir)) {
+        for (const sub of await fs.promises.readdir(codexBinDir)) {
           const candidate = path.join(codexBinDir, sub, 'codex.exe');
-          if (fs.existsSync(candidate)) {
+          if (await fs.promises.access(candidate).then(() => true).catch(() => false)) {
             codexPath = candidate;
             break;
           }
@@ -37,14 +37,14 @@ function defaultAgentPaths() {
   };
 }
 
-function defaultWorkingDir() {
+async function defaultWorkingDir() {
   // The folder the prototype used; fall back to the home folder if it's gone.
   const legacy = path.join(os.homedir(), '.gemini', 'antigravity', 'scratch', 'cli-companions');
-  return fs.existsSync(legacy) ? legacy : os.homedir();
+  return await fs.promises.access(legacy).then(() => true).catch(() => false) ? legacy : os.homedir();
 }
 
-function defaults() {
-  return { workingDir: defaultWorkingDir(), agents: defaultAgentPaths() };
+async function defaults() {
+  return { workingDir: await defaultWorkingDir(), agents: await defaultAgentPaths() };
 }
 
 // Keeps only the fields we know, with sane types. Unknown agents are dropped.
@@ -69,15 +69,15 @@ function sanitize(input, base) {
  * defaults if missing. A corrupt file is left untouched and reported via
  * `error`, with defaults used for this run.
  */
-function load(file) {
-  const base = defaults();
+async function load(file) {
+  const base = await defaults();
   let raw;
   try {
-    raw = fs.readFileSync(file, 'utf8');
+    raw = await fs.promises.readFile(file, 'utf8');
   } catch (err) {
     if (err.code !== 'ENOENT') return { config: base, file, error: err.message };
     try {
-      save(file, base);
+      await save(file, base);
     } catch (writeErr) {
       return { config: base, file, error: `could not create config: ${writeErr.message}` };
     }
@@ -91,10 +91,10 @@ function load(file) {
   }
 }
 
-function save(file, config) {
-  const clean = sanitize(config, defaults());
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(clean, null, 2) + '\n');
+async function save(file, config) {
+  const clean = sanitize(config, await defaults());
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  await fs.promises.writeFile(file, JSON.stringify(clean, null, 2) + '\n');
   return clean;
 }
 
