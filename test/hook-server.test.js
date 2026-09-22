@@ -69,15 +69,53 @@ test('an exception inside onEvent is logged, not fatal', async () => {
   const logged = [];
   const server = new HookServer({
     port: 0,
-    logger: { ...quietLogger, exception: (src, err) => logged.push(err.message) },
+    logger: { ...quietLogger, exception: (src, err, meta) => logged.push({ src, err: err.message, meta }) },
     onEvent: () => { throw new Error('handler blew up'); }
   });
   await server.start();
   try {
     const res = await post(server.hookUrl('claude'), '{}');
     assert.equal(res.status, 204);
-    assert.deepEqual(logged, ['handler blew up']);
+    assert.deepEqual(logged, [{ src: 'app', err: 'handler blew up', meta: { phase: 'hook onEvent', agentId: 'claude' } }]);
   } finally {
     await server.stop();
   }
 });
+
+test('server listener failure is rejected', async () => {
+  const s1 = http.createServer();
+  await new Promise(r => s1.listen(0, '127.0.0.1', r));
+  const port = s1.address().port;
+
+  const server = new HookServer({ port, logger: quietLogger, onEvent: () => {} });
+  try {
+    await server.start();
+    assert.fail('should have rejected');
+  } catch (err) {
+    assert.equal(err.code, 'EADDRINUSE');
+  } finally {
+    s1.close();
+  }
+});
+
+test('rejects body that is too large', () => withServer(async (server) => {
+  const url = server.hookUrl('claude');
+  const largeBody = 'x'.repeat(64 * 1024 + 1);
+
+  const res = await new Promise((resolve, reject) => {
+    const req = http.request(url, { method: 'POST' }, (r) => {
+      resolve(r);
+    });
+    req.on('error', (err) => {
+      if (err.code === 'ECONNRESET') resolve({ statusCode: 413 });
+      else reject(err);
+    });
+    req.write(largeBody);
+    req.end();
+  });
+
+  assert.equal(res.statusCode, 413);
+
+  const res2 = await post(url, '{}');
+  assert.equal(res2.status, 204);
+}));

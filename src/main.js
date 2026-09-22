@@ -1,3 +1,10 @@
+// A git-ignored .env next to package.json can hold SENTRY_DSN (see
+// .env.example); shell variables take precedence. Must run before Sentry.
+require('./env').load();
+// Sentry must init before other app work so early crashes are captured.
+// Skips silently when SENTRY_DSN is unset (see README / .env.example).
+require('./sentry').initMain();
+
 const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
 const path = require('path');
 const AgentRunner = require('./agent-runner');
@@ -134,11 +141,11 @@ ipcMain.on('log:write', (_, { level, message, data } = {}) => {
 });
 
 // Agent hooks (Claude Code reports its activity to the local HookServer)
-function hookInfo() {
+async function hookInfo() {
   const listening = !!(hookServer && hookServer.url);
   const info = { listening, url: hookServer && hookServer.url, error: hookServerError, agents: {} };
   for (const [agentId, installer] of Object.entries(HOOK_INSTALLERS)) {
-    info.agents[agentId] = { ...installer.status(), hookUrl: listening ? hookServer.hookUrl(agentId) : null };
+    info.agents[agentId] = { ...(await installer.status()), hookUrl: listening ? hookServer.hookUrl(agentId) : null };
   }
   return info;
 }
@@ -149,27 +156,27 @@ function installerFor(agentId) {
   return installer;
 }
 
-handle('hooks:status', () => hookInfo());
+handle('hooks:status', async () => await hookInfo());
 
-handle('hooks:install', ({ agentId }) => {
+handle('hooks:install', async ({ agentId }) => {
   const installer = installerFor(agentId);
   if (!hookServer || !hookServer.url) throw new Error(`Hook listener is not running${hookServerError ? `: ${hookServerError}` : ''}`);
-  const result = installer.install({ hookUrl: hookServer.hookUrl(agentId) });
+  const result = await installer.install({ hookUrl: hookServer.hookUrl(agentId) });
   logger.info(agentId, 'installed hooks', { file: result.file, events: result.events });
-  return hookInfo();
+  return await hookInfo();
 });
 
-handle('hooks:uninstall', ({ agentId }) => {
-  const result = installerFor(agentId).uninstall();
+handle('hooks:uninstall', async ({ agentId }) => {
+  const result = await installerFor(agentId).uninstall();
   logger.info(agentId, 'removed hooks', { file: result.file });
-  return hookInfo();
+  return await hookInfo();
 });
 
 // User settings (executable paths, working folder)
 handle('config:get', () => ({ file: configFile, config }));
 
-handle('config:save', ({ config: incoming }) => {
-  config = userConfig.save(configFile, incoming);
+handle('config:save', async ({ config: incoming }) => {
+  config = await userConfig.save(configFile, incoming);
   agentRunner.applyConfig(config);
   logger.info('app', 'config saved', { file: configFile });
   return { file: configFile, config };
@@ -210,9 +217,9 @@ ipcMain.on('window:close', () => {
   if (mainWindow) mainWindow.close();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   logger.open();
-  const loaded = userConfig.load(configFile);
+  const loaded = await userConfig.load(configFile);
   config = loaded.config;
   if (loaded.error) logger.warn('app', 'config problem', { file: configFile, error: loaded.error });
   else logger.info('app', loaded.created ? 'config created with defaults' : 'config loaded', { file: configFile });
