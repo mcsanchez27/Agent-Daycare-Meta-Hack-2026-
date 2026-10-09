@@ -1,5 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const Module = require('node:module');
+
+// Intercept requires using Module._load before requiring preload
+const originalLoad = Module._load;
 
 // Mock electron
 const invocations = [];
@@ -27,12 +31,11 @@ const electronMock = {
   }
 };
 
-const electronPath = require.resolve('electron');
-require.cache[electronPath] = {
-  id: electronPath,
-  filename: electronPath,
-  loaded: true,
-  exports: electronMock
+Module._load = function(request, parent, isMain) {
+  if (request === 'electron') {
+    return electronMock;
+  }
+  return originalLoad.call(this, request, parent, isMain);
 };
 
 // Require the preload script to execute the mock exposure
@@ -212,4 +215,9 @@ test('onTeamMessage registers listener and passes data', () => {
   // Simulate the event from main process
   eventListeners['agent:team-message']({}, 'team-message-data');
   assert.equal(cbData, 'team-message-data');
+});
+
+// Cleanup Module._load
+test('cleanup', () => {
+  Module._load = originalLoad;
 });
