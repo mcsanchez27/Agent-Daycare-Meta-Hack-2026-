@@ -1,4 +1,4 @@
-const { spawn, execSync, execFile } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
@@ -36,6 +36,7 @@ class AgentRunner {
     this.promptTimers = new Map();
     this.runCounts = new Map();
     this.scanErrorLogged = false;
+    this.scanInFlight = false; // one tasklist at a time, see checkExternalProcesses
     // Sessions reported by the agent's own hooks (see hook-server.js), keyed by session id.
     this.hookSessions = { antigravity: new Map(), claude: new Map(), codex: new Map(), grok: new Map() };
 
@@ -161,8 +162,10 @@ class AgentRunner {
   }
 
   // Returns Map<lowercased image name, pid>. Windows only; tests replace this.
-  listProcesses() {
-    const output = execSync('tasklist /FO CSV /NH', { encoding: 'utf8', timeout: 3000 });
+  // Async so the 2.5 s scan never stalls the main thread: tasklist takes
+  // 10-30 ms on a busy PC and used to block every IPC call for that long.
+  async listProcesses() {
+    const { stdout: output } = await execFileAsync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
     const activeFilters = new Map();
     const regex = /^"([^"]+)","([^"]+)"/gm;
     let match;
@@ -172,9 +175,12 @@ class AgentRunner {
     return activeFilters;
   }
 
-  checkExternalProcesses() {
+  async checkExternalProcesses() {
+    // A slow tasklist must not pile up overlapping scans; skip this tick instead.
+    if (this.scanInFlight) return;
+    this.scanInFlight = true;
     try {
-      const activeFilters = this.listProcesses();
+      const activeFilters = await this.listProcesses();
 
       let changed = false;
 
@@ -229,6 +235,8 @@ class AgentRunner {
         this.scanErrorLogged = true;
         this.log.warn('app', 'external process scan failed (will not retry logging)', { error: err.message });
       }
+    } finally {
+      this.scanInFlight = false;
     }
   }
 

@@ -133,3 +133,24 @@ test('stopAgent logs a warning if child.kill throws and still clears the process
   assert.equal(runner.processes.has('claude'), false, 'the dead handle is dropped anyway');
   assert.equal(runner.agents.claude.status, 'sleeping');
 });
+
+test('overlapping scans are skipped while a slow listProcesses is still running', async () => {
+  const { runner } = makeRunner();
+  let calls = 0;
+  let release;
+  runner.listProcesses = () => {
+    calls++;
+    if (calls > 1) return Promise.resolve(new Map());
+    return new Promise(resolve => { release = () => resolve(new Map()); }); // only the first scan stalls
+  };
+
+  const first = runner.checkExternalProcesses();
+  await runner.checkExternalProcesses(); // first is still in flight: this tick is skipped
+  assert.equal(calls, 1);
+
+  release();
+  await first;
+  assert.equal(runner.scanInFlight, false);
+  await runner.checkExternalProcesses();
+  assert.equal(calls, 2);
+});
