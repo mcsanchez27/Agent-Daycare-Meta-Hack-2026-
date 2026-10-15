@@ -587,8 +587,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       const row = document.createElement('div');
       row.className = 'role-row';
       row.innerHTML = `
-        <span class="role-row-agent">${agent.name}</span>
-        <select class="role-select" data-agent="${agent.id}">
+        <span class="role-row-agent">${escapeHtml(agent.name)}</span>
+        <select class="role-select" data-agent="${escapeAttr(agent.id)}">
           ${rolesList.map(r => `
             <option value="${r.key}" ${agent.role === r.key ? 'selected' : ''}>${r.label}</option>
           `).join('')}
