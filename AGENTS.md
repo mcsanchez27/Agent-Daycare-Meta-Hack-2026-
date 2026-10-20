@@ -28,12 +28,14 @@
 ## Settings
 `config.json` (project root while developing, git-ignored) holds `workingDir` and `agents.<id>.{path,command}`. It is created with defaults on first run.
 
+The default `workingDir` is the dedicated chat folder `~/AgentDaycare/chat` (created at start-up). A config still pointing at an old dashboard default (the home folder or `~/.gemini/antigravity/scratch/cli-companions`) is moved there and saved; the log says `"msg":"working folder moved to the chat folder"`. Any other folder is left alone.
+
 ## Layout
 - `src/main.js`: Electron main process, window, IPC, logger setup
 - `src/agent-runner.js`: launches the agent CLIs and streams their output
 - `src/config.js`: user settings
 - `src/logger.js`: the log writer
 - `src/preload.js`: the `window.api` bridge between the UI and the main process
-- `src/renderer/`: the UI (placeholder until Batch 1 builds the chat)
+- `src/renderer/`: the chat window. `thread.js` is the shared thread as plain data (tested in `test/`), `app.js` draws it (textContent only, never innerHTML), `styles.css`, `index.html`. Sending only adds Matt's message until Batch 2 connects the agents.
 
 Run `npm test` after any change in `src/`.

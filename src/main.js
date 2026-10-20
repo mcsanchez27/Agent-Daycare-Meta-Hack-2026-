@@ -121,6 +121,7 @@ handle('config:get', () => ({ file: configFile, config }));
 
 handle('config:save', async ({ config: incoming }) => {
   config = await userConfig.save(configFile, incoming);
+  await userConfig.ensureWorkingDir(config.workingDir);
   agentRunner.applyConfig(config);
   logger.info('app', 'config saved', { file: configFile });
   return { file: configFile, config };
@@ -148,6 +149,12 @@ app.whenReady().then(async () => {
   config = loaded.config;
   if (loaded.error) logger.warn('app', 'config problem', { file: configFile, error: loaded.error });
   else logger.info('app', loaded.created ? 'config created with defaults' : 'config loaded', { file: configFile });
+  if (loaded.migratedFrom) logger.info('app', 'working folder moved to the chat folder', { from: loaded.migratedFrom, to: config.workingDir });
+  try {
+    await userConfig.ensureWorkingDir(config.workingDir);
+  } catch (err) {
+    logger.warn('app', 'could not create working folder', { dir: config.workingDir, error: err.message });
+  }
   logger.info('app', 'starting', {
     version: app.getVersion(),
     electron: process.versions.electron,
