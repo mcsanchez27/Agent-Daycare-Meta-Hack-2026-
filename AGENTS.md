@@ -1,58 +1,39 @@
-# Notes for AI agents working in this repo
+# Agent Daycare: notes for AI agents
 
-## Where the logs are
+## Read this first
+- **Active version:** V1, a simple chat window for Antigravity, Claude and Codex. Ticket: **TM-47** in Notion Task Master.
+- **Where work happens:** branch `tm-47/v1-simple-chat` until it merges into `master`. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
+- **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
+- **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
-The app writes a flight-recorder log every time it runs:
+## How it works
+- Each message to an agent is a **one-shot launch** of its CLI with stdin closed:
+  - Antigravity: `agy -p "<prompt>"`
+  - Claude: `claude -p "<prompt>"`
+  - Codex: `codex exec --skip-git-repo-check "<prompt>"`
+- There is no memory between launches. The shared chat transcript must be added to each prompt (TM-47 Batch 2).
+- Agents talk to each other by **relay**: Matt sends a reply to another agent. No automatic agent-to-agent hops in V1.
 
-- **`logs/latest.log`** — the most recent (or currently running) launch. Read this first.
-- `logs/agent-daycare_<date>_<time>.log` — earlier launches, newest last. At most 10 are kept.
+## Known facts from the headless check (TM-47 Batch 0, Matt's PC)
+- All three answer headless and none hang. Claude ~7s, Codex ~7s, Antigravity ~30s (show a "thinking" state).
+- Claude and Antigravity refuse file writes in headless mode. **Codex writes files without asking**, so agents must run in a dedicated chat folder, never a real project.
+- Codex on Matt's PC is an npm install (`codex.cmd`). `startAgent` cannot launch `.cmd` shims yet; fix this before Codex works in the app (Batch 3).
+- Codex prints its whole session plus MCP login errors to stderr. Show stdout as the reply; `CODEX_STDERR_NOISE` filters the rest.
 
-The folder is git-ignored. If `logs/` doesn't exist, the app hasn't been started since the logger was added.
-
-## Format
-
-One JSON object per line (JSONL). Every line has:
-
-| field | meaning |
-|---|---|
-| `ts` | ISO-8601 timestamp |
-| `level` | `debug`, `info`, `warn`, or `error` |
-| `source` | `app` (Electron main process), `renderer` (the UI window), or an agent id: `antigravity`, `claude`, `codex`, `grok` |
-| `msg` | the message; terminal colour codes are stripped and obvious secrets replaced with `[REDACTED]` |
-| `run` | present on agent lines: increments each time that agent is (re)launched during this app session |
-| `stream` | present on agent output lines: `stdout` or `stderr` |
-| `stack` | present on `error` lines that came from a thrown `Error` |
-
-Other fields (`exe`, `args`, `code`, `snippet`, `ipc`, ...) are attached where they help.
-
-## How to use it when diagnosing a problem
-
-1. Look at `error` and `warn` lines first: `grep '"level":"error"' logs/latest.log`
-2. Lines with `source: "app"` or `"renderer"` are bugs **in this app**. Lines with an agent id are what that CLI agent printed — usually not this app's fault, but useful context.
-3. `"msg":"launching"` lines show the exact executable, arguments and working directory used to start an agent. If an agent misbehaves, compare these to how it works when run by hand.
-4. `"msg":"prompt detected, alerting user"` records every time the `!` alert fired and the `snippet` that triggered it — the place to look when the alert fires wrongly or not at all.
-5. `"msg":"process exited"` with a non-zero `code` means the agent's process failed; the preceding `stderr` lines from the same `run` usually say why.
+## Logs
+- `logs/latest.log` is the current run; older runs are `logs/agent-daycare_<date>_<time>.log` (10 kept, git-ignored).
+- One JSON object per line: `ts`, `level`, `source` (`app`, `renderer`, or an agent id), `msg`, plus `run` and `stream` on agent lines. Colour codes are stripped and obvious secrets are `[REDACTED]`.
+- Start with `grep '"level":"error"' logs/latest.log`. `"msg":"launching"` shows the exact command, arguments and folder; `"msg":"process exited"` with a non-zero `code` means the CLI failed.
 
 ## Settings
+`config.json` (project root while developing, git-ignored) holds `workingDir` and `agents.<id>.{path,command}`. It is created with defaults on first run.
 
-`config.json` (project root while developing, `userData` when packaged; git-ignored) holds `workingDir` and `agents.<id>.{path,command}`. `AgentRunner.applyConfig` applies it at start and on save. `"msg":"config applied"` in the log shows the effective paths; `"msg":"launching"` shows the `cwd` actually used.
+## Layout
+- `src/main.js`: Electron main process, window, IPC, logger setup
+- `src/agent-runner.js`: launches the agent CLIs and streams their output
+- `src/config.js`: user settings
+- `src/logger.js`: the log writer
+- `src/preload.js`: the `window.api` bridge between the UI and the main process
+- `src/renderer/`: the UI (placeholder until Batch 1 builds the chat)
 
-## Hook events (how the app knows what Claude Code is doing)
-
-`src/hook-server.js` listens on `http://127.0.0.1:48211` (override with `AGENT_DAYCARE_HOOK_PORT`). `src/hooks-installer.js` adds a `curl` command to `~/.claude/settings.json` for the events `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `SessionEnd`; each POSTs Claude Code's hook JSON to `/agent-daycare/hook/claude`. `src/codex-notify.js` sets the top-level `notify = [...]` line in `~/.codex/config.toml`; Codex appends its `{"type":"agent-turn-complete",...}` JSON as the last argv, which lands in `--data-binary` and is POSTed to `/agent-daycare/hook/codex` (`AgentRunner.normalizeHookEvent` maps it to `Stop`). `AgentRunner.handleHookEvent` maps them to per-session states and derives the agent's status: any session `needs_input` → `needs_input`; else any `working` → `working`; else `idle`; no sessions → sleeping (or whatever a locally spawned process says).
-
-Every received event is logged as `"msg":"hook: <EventName>"` with `session`, `cwd`, `tool`, `notificationType` and `message`. If the bot's state looks wrong, grep those lines first: `grep '"hook: ' logs/latest.log`. A rejected request (wrong host, non-JSON body) is logged as `"msg":"hook request rejected"`. A healthy listener answers `GET http://127.0.0.1:48211/` with `{"ok":true,...}`.
-
-## Project layout
-
-- `src/main.js` — Electron main process: window, IPC, logger setup, crash capture
-- `src/agent-runner.js` — launches agent CLIs, streams their output, detects prompts
-- `src/config.js` — user settings (`config.json`: agent executable paths, working folder); created with defaults on first run
-- `src/logger.js` — the log writer described above (unit tests in `test/`)
-- `src/hook-server.js` — local HTTP listener for agent hook events
-- `src/hooks-installer.js` — adds/removes our entries in `~/.claude/settings.json`
-- `src/codex-notify.js` — adds/removes our `notify` line in `~/.codex/config.toml`
-- `src/preload.js` — the bridge (`window.api`) between the UI and the main process
-- `src/renderer/` — the UI: `app.js` (behaviour), `mascots.js` (pixel-art sprites), `audio.js`, `styles.css`, `index.html`
-
-Run `npm test` after changing anything in `src/` that has a test in `test/`.
+Run `npm test` after any change in `src/`.

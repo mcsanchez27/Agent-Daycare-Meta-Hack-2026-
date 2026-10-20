@@ -1,26 +1,11 @@
-// A git-ignored .env next to package.json can hold SENTRY_DSN (see
-// .env.example); shell variables take precedence. Must run before Sentry.
-require('./env').load();
-// Sentry must init before other app work so early crashes are captured.
-// Skips silently when SENTRY_DSN is unset (see README / .env.example).
-require('./sentry').initMain();
-
 const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
 const path = require('path');
 const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
-const { HookServer, DEFAULT_PORT } = require('./hook-server');
-const hooksInstaller = require('./hooks-installer');
-const codexNotify = require('./codex-notify');
 const userConfig = require('./config');
-
-// Which agents can report in, and how their hook gets installed.
-const HOOK_INSTALLERS = { claude: hooksInstaller, codex: codexNotify };
 
 let mainWindow = null;
 let agentRunner = null;
-let hookServer = null;
-let hookServerError = null;
 
 // While developing (npm start) the log lives in the project folder so an agent
 // working in this repo can find it at logs/latest.log. A packaged build can't
@@ -37,13 +22,7 @@ const logger = new Logger({
   dir: logsDir,
   onError: (err) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('agent:team-message', {
-        agentId: null,
-        agentName: 'System',
-        type: 'alert',
-        text: `⚠️ Logging stopped: ${err.message}`,
-        timestamp: new Date().toLocaleTimeString()
-      });
+      mainWindow.webContents.send('app:notice', { text: `Logging stopped: ${err.message}` });
     }
   }
 });
@@ -72,7 +51,6 @@ function createWindow() {
     y: y + 50,
     minWidth: 850,
     minHeight: 600,
-    frame: false,
     backgroundColor: '#0f111a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -132,44 +110,10 @@ handle('agent:stop', ({ agentId }) => agentRunner.stopAgent(agentId));
 handle('agent:send-input', ({ agentId, input }) => agentRunner.sendInput(agentId, input));
 handle('agent:get-configs', () => agentRunner.getConfigs());
 handle('agent:scan', () => agentRunner.scanAgents());
-handle('agent:update-role', ({ agentId, role, title }) => agentRunner.updateRole(agentId, role, title));
-handle('agent:forward', ({ fromAgentId, toAgentId, text }) => agentRunner.forwardToAgent(fromAgentId, toAgentId, text));
 
 // Renderer-side logging (window.onerror, unhandled promise rejections, explicit calls)
 ipcMain.on('log:write', (_, { level, message, data } = {}) => {
   logger.log(['debug', 'info', 'warn', 'error'].includes(level) ? level : 'info', 'renderer', String(message), data);
-});
-
-// Agent hooks (Claude Code reports its activity to the local HookServer)
-async function hookInfo() {
-  const listening = !!(hookServer && hookServer.url);
-  const info = { listening, url: hookServer && hookServer.url, error: hookServerError, agents: {} };
-  for (const [agentId, installer] of Object.entries(HOOK_INSTALLERS)) {
-    info.agents[agentId] = { ...(await installer.status()), hookUrl: listening ? hookServer.hookUrl(agentId) : null };
-  }
-  return info;
-}
-
-function installerFor(agentId) {
-  const installer = HOOK_INSTALLERS[agentId];
-  if (!installer) throw new Error(`Hooks are not supported for ${agentId} yet`);
-  return installer;
-}
-
-handle('hooks:status', async () => await hookInfo());
-
-handle('hooks:install', async ({ agentId }) => {
-  const installer = installerFor(agentId);
-  if (!hookServer || !hookServer.url) throw new Error(`Hook listener is not running${hookServerError ? `: ${hookServerError}` : ''}`);
-  const result = await installer.install({ hookUrl: hookServer.hookUrl(agentId) });
-  logger.info(agentId, 'installed hooks', { file: result.file, events: result.events });
-  return await hookInfo();
-});
-
-handle('hooks:uninstall', async ({ agentId }) => {
-  const result = await installerFor(agentId).uninstall();
-  logger.info(agentId, 'removed hooks', { file: result.file });
-  return await hookInfo();
 });
 
 // User settings (executable paths, working folder)
@@ -198,25 +142,6 @@ handle('logs:open-folder', async () => {
   return { path: logsDir, error: result || null };
 });
 
-// Window controls
-ipcMain.on('window:minimize', () => {
-  if (mainWindow) mainWindow.minimize();
-});
-
-ipcMain.on('window:maximize', () => {
-  if (mainWindow) {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow.maximize();
-    }
-  }
-});
-
-ipcMain.on('window:close', () => {
-  if (mainWindow) mainWindow.close();
-});
-
 app.whenReady().then(async () => {
   logger.open();
   const loaded = await userConfig.load(configFile);
@@ -231,26 +156,6 @@ app.whenReady().then(async () => {
   });
 
   createWindow();
-
-  const port = Number(process.env.AGENT_DAYCARE_HOOK_PORT) || DEFAULT_PORT;
-  hookServer = new HookServer({
-    port,
-    logger,
-    onEvent: (agentId, event) => agentRunner.handleHookEvent(agentId, event)
-  });
-  hookServer.start().catch((err) => {
-    hookServerError = err.code === 'EADDRINUSE'
-      ? `port ${port} is already in use (set AGENT_DAYCARE_HOOK_PORT to change it)`
-      : err.message;
-    hookServer = null;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('agent:team-message', {
-        agentId: null, agentName: 'System', type: 'alert',
-        text: `⚠️ Agent hooks are offline: ${hookServerError}`,
-        timestamp: new Date().toLocaleTimeString()
-      });
-    }
-  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -271,6 +176,5 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   if (agentRunner) agentRunner.shutdown();
   logger.info('app', 'quitting');
-  const stopHooks = hookServer ? hookServer.stop() : Promise.resolve();
-  stopHooks.then(() => logger.close()).finally(() => app.quit());
+  logger.close().finally(() => app.quit());
 });

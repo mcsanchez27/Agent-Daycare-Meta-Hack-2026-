@@ -44,9 +44,9 @@ test('a corrupt file is reported, not overwritten, and defaults are used', async
 
 test('save round-trips and strips blanks/unknowns', async () => {
   const file = tmpFile();
-  const saved = await config.save(file, { workingDir: '  /w  ', agents: { grok: { path: '  ' }, claude: { path: 'C:\\c\\claude.exe' } } });
+  const saved = await config.save(file, { workingDir: '  /w  ', agents: { codex: { path: '  ' }, claude: { path: 'C:\\c\\claude.exe' } } });
   assert.equal(saved.workingDir, '/w');
-  assert.equal(saved.agents.grok.path, (await config.defaults()).agents.grok.path);
+  assert.equal(saved.agents.codex.path, (await config.defaults()).agents.codex.path);
   assert.equal(saved.agents.claude.path, 'C:\\c\\claude.exe');
   assert.deepEqual((await config.load(file)).config, saved);
 });

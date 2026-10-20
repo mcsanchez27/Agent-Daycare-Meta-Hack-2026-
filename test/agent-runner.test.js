@@ -17,32 +17,33 @@ function makeRunner() {
   };
 
   const runner = new AgentRunner(win, testLogger);
-  clearInterval(runner.scanInterval);
   return { runner, sent, logEvents };
 }
 
-test('sendInput logs a warning if stdin.write throws', () => {
-    const { runner, logEvents } = makeRunner();
-    runner.processes.set('claude', {
-        stdin: {
-            writable: true,
-            destroyed: false,
-            write: () => {
-                throw new Error('Fake write error');
-            }
-        }
-    });
+test('sendInput launches a new one-shot process with the message', () => {
+  const { runner } = makeRunner();
+  const calls = [];
+  runner.startAgent = (id, prompt) => { calls.push([id, prompt]); return true; };
+  assert.equal(runner.sendInput('claude', 'hello'), true);
+  assert.deepEqual(calls, [['claude', 'hello']]);
+  assert.equal(runner.sendInput('nobody', 'hello'), false);
+});
 
-    // We mock startAgent so it doesn't actually launch anything when fallback occurs
-    runner.startAgent = () => true;
+test('startAgent refuses an empty prompt', () => {
+  const { runner } = makeRunner();
+  assert.throws(() => runner.startAgent('claude', '   '), /prompt is required/);
+});
 
-    runner.sendInput('claude', 'test input');
+test('only the three V1 agents exist', () => {
+  const { runner } = makeRunner();
+  assert.deepEqual(Object.keys(runner.agents), ['antigravity', 'claude', 'codex']);
+});
 
-    const warnLogs = logEvents.filter(l => l.level === 'warn');
-    assert.equal(warnLogs.length, 1);
-    assert.equal(warnLogs[0].msg, 'stdin write failed, relaunching instead');
-    assert.equal(warnLogs[0].data.error, 'Fake write error');
-    assert.equal(warnLogs[0].agentId, 'claude');
+test('agent arguments: -p for antigravity and claude, exec for codex', () => {
+  const { runner } = makeRunner();
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), ['-p', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), ['-p', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), ['exec', '--skip-git-repo-check', 'hi']);
 });
 
 test('versionCommand runs executables directly and only routes safe Windows batch shims through cmd.exe', () => {
@@ -75,8 +76,7 @@ test('scanAgents falls back to "Installed" when the --version check fails', asyn
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-scan-'));
   const notExe = path.join(dir, 'not-an-executable.txt');
   fs.writeFileSync(notExe, 'hello');
-  runner.agents = { testagent: { id: 'testagent', name: 'Test Agent', role: 'tester', title: 't', path: notExe, command: 'testagent', status: 'idle', externalPid: null } };
-  runner.hookSessions = { testagent: new Map() };
+  runner.agents = { testagent: { id: 'testagent', name: 'Test Agent', path: notExe, command: 'testagent', status: 'idle' } };
 
   const results = await runner.scanAgents();
 
@@ -90,8 +90,7 @@ test('scanAgents falls back to "Installed" when the --version check fails', asyn
 
 test('scanAgents reports an agent missing from PATH as not installed and logs why', async () => {
   const { runner, logEvents } = makeRunner();
-  runner.agents = { 'fake-agent': { id: 'fake-agent', name: 'Fake Agent', role: 'tester', title: 't', path: '/definitely/does/not/exist/fake-agent-bin', command: 'this_command_does_not_exist_at_all_12345', status: 'sleeping', externalPid: null } };
-  runner.hookSessions['fake-agent'] = new Map();
+  runner.agents = { 'fake-agent': { id: 'fake-agent', name: 'Fake Agent', path: '/definitely/does/not/exist/fake-agent-bin', command: 'this_command_does_not_exist_at_all_12345', status: 'idle' } };
 
   const results = await runner.scanAgents();
 
@@ -105,21 +104,6 @@ test('scanAgents reports an agent missing from PATH as not installed and logs wh
   assert.ok(dbg.data.error.length > 0, 'the underlying error message is captured');
 });
 
-test('checkExternalProcesses catches a listProcesses failure and warns exactly once', async () => {
-  const { runner, logEvents } = makeRunner();
-  runner.listProcesses = () => { throw new Error('Simulated tasklist failure'); };
-  const warns = () => logEvents.filter(l => l.level === 'warn');
-
-  assert.equal(runner.scanErrorLogged, false);
-  await runner.checkExternalProcesses();
-  assert.equal(runner.scanErrorLogged, true);
-  assert.equal(warns().length, 1);
-  assert.equal(warns()[0].data.error, 'Simulated tasklist failure');
-
-  await runner.checkExternalProcesses(); // should not log again
-  assert.equal(warns().length, 1);
-});
-
 test('stopAgent logs a warning if child.kill throws and still clears the process', () => {
   const { runner, logEvents } = makeRunner();
   runner.processes.set('claude', { pid: 4242, kill() { throw new Error('kill failed hard'); } });
@@ -131,26 +115,5 @@ test('stopAgent logs a warning if child.kill throws and still clears the process
   assert.equal(warn.agentId, 'claude');
   assert.equal(warn.data.error, 'kill failed hard');
   assert.equal(runner.processes.has('claude'), false, 'the dead handle is dropped anyway');
-  assert.equal(runner.agents.claude.status, 'sleeping');
-});
-
-test('overlapping scans are skipped while a slow listProcesses is still running', async () => {
-  const { runner } = makeRunner();
-  let calls = 0;
-  let release;
-  runner.listProcesses = () => {
-    calls++;
-    if (calls > 1) return Promise.resolve(new Map());
-    return new Promise(resolve => { release = () => resolve(new Map()); }); // only the first scan stalls
-  };
-
-  const first = runner.checkExternalProcesses();
-  await runner.checkExternalProcesses(); // first is still in flight: this tick is skipped
-  assert.equal(calls, 1);
-
-  release();
-  await first;
-  assert.equal(runner.scanInFlight, false);
-  await runner.checkExternalProcesses();
-  assert.equal(calls, 2);
+  assert.equal(runner.agents.claude.status, 'idle');
 });

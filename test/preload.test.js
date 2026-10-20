@@ -81,41 +81,6 @@ test('scanAgents invokes agent:scan', () => {
   assert.deepEqual(invocations[0], { channel: 'agent:scan', data: undefined });
 });
 
-test('updateAgentRole invokes agent:update-role', () => {
-  invocations.length = 0;
-  const res = global.api.updateAgentRole('claude', 'lead', 'Lead Dev');
-  assert.equal(res, 'result-agent:update-role');
-  assert.deepEqual(invocations[0], { channel: 'agent:update-role', data: { agentId: 'claude', role: 'lead', title: 'Lead Dev' } });
-});
-
-test('forwardToAgent invokes agent:forward', () => {
-  invocations.length = 0;
-  const res = global.api.forwardToAgent('claude', 'grok', 'hello');
-  assert.equal(res, 'result-agent:forward');
-  assert.deepEqual(invocations[0], { channel: 'agent:forward', data: { fromAgentId: 'claude', toAgentId: 'grok', text: 'hello' } });
-});
-
-test('getHookStatus invokes hooks:status', () => {
-  invocations.length = 0;
-  const res = global.api.getHookStatus();
-  assert.equal(res, 'result-hooks:status');
-  assert.deepEqual(invocations[0], { channel: 'hooks:status', data: undefined });
-});
-
-test('installHooks invokes hooks:install', () => {
-  invocations.length = 0;
-  const res = global.api.installHooks('claude');
-  assert.equal(res, 'result-hooks:install');
-  assert.deepEqual(invocations[0], { channel: 'hooks:install', data: { agentId: 'claude' } });
-});
-
-test('uninstallHooks invokes hooks:uninstall', () => {
-  invocations.length = 0;
-  const res = global.api.uninstallHooks('claude');
-  assert.equal(res, 'result-hooks:uninstall');
-  assert.deepEqual(invocations[0], { channel: 'hooks:uninstall', data: { agentId: 'claude' } });
-});
-
 test('getConfig invokes config:get', () => {
   invocations.length = 0;
   const res = global.api.getConfig();
@@ -158,25 +123,6 @@ test('log sends log:write', () => {
   assert.deepEqual(sends[0], { channel: 'log:write', data: { level: 'info', message: 'msg', data: { extra: 'data' } } });
 });
 
-test('minimizeWindow sends window:minimize', () => {
-  sends.length = 0;
-  global.api.minimizeWindow();
-  assert.deepEqual(sends[0], { channel: 'window:minimize', data: undefined });
-});
-
-test('maximizeWindow sends window:maximize', () => {
-  sends.length = 0;
-  global.api.maximizeWindow();
-  assert.deepEqual(sends[0], { channel: 'window:maximize', data: undefined });
-});
-
-test('closeWindow sends window:close', () => {
-  sends.length = 0;
-  global.api.closeWindow();
-  assert.deepEqual(sends[0], { channel: 'window:close', data: undefined });
-});
-
-// Event Listeners
 test('onAgentOutput registers listener and passes data', () => {
   let cbData = null;
   global.api.onAgentOutput((data) => { cbData = data; });
@@ -197,27 +143,6 @@ test('onAgentStatus registers listener and passes data', () => {
   assert.equal(cbData, 'status-data');
 });
 
-test('onAgentPrompt registers listener and passes data', () => {
-  let cbData = null;
-  global.api.onAgentPrompt((data) => { cbData = data; });
-  assert.ok(eventListeners['agent:prompt']);
-
-  // Simulate the event from main process
-  eventListeners['agent:prompt']({}, 'prompt-data');
-  assert.equal(cbData, 'prompt-data');
-});
-
-test('onTeamMessage registers listener and passes data', () => {
-  let cbData = null;
-  global.api.onTeamMessage((data) => { cbData = data; });
-  assert.ok(eventListeners['agent:team-message']);
-
-  // Simulate the event from main process
-  eventListeners['agent:team-message']({}, 'team-message-data');
-  assert.equal(cbData, 'team-message-data');
-});
-
-// Cleanup Module._load
 test('cleanup', () => {
   Module._load = originalLoad;
 });

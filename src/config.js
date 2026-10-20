@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const AGENT_IDS = ['antigravity', 'claude', 'codex', 'grok'];
+const AGENT_IDS = ['antigravity', 'claude', 'codex'];
 
 async function defaultAgentPaths() {
   const home = os.homedir();
@@ -32,8 +32,7 @@ async function defaultAgentPaths() {
   return {
     antigravity: { command: win ? 'agy.exe' : 'agy', path: win ? path.join(local, 'agy', 'bin', 'agy.exe') : path.join(home, '.local', 'bin', 'agy') },
     claude: { command: win ? 'claude.exe' : 'claude', path: path.join(home, '.local', 'bin', win ? 'claude.exe' : 'claude') },
-    codex: { command: win ? 'codex.exe' : 'codex', path: codexPath },
-    grok: { command: win ? 'grok.exe' : 'grok', path: path.join(home, '.grok', 'bin', win ? 'grok.exe' : 'grok') }
+    codex: { command: win ? 'codex.exe' : 'codex', path: codexPath }
   };
 }
 
