@@ -11,7 +11,9 @@
   - Antigravity: `agy -p "<prompt>"`
   - Claude: `claude -p "<prompt>"`
   - Codex: `codex exec --skip-git-repo-check "<prompt>"`
-- There is no memory between launches. The shared chat transcript must be added to each prompt (TM-47 Batch 2).
+- There is no memory between launches. The window adds the recent thread to each prompt (`buildPrompt` in `src/renderer/thread.js`: last 20 messages, at most 12,000 characters, app notes left out). `"msg":"launching"` in the log shows the full prompt.
+- Only Claude is connected so far (`CONNECTED` in `src/renderer/app.js`). Antigravity and Codex come in TM-47 Batch 3.
+- Replies are stdout only, shown as plain text. stderr is kept and its last lines are shown if the agent fails or says nothing. Send is off for an agent while it is answering.
 - Agents talk to each other by **relay**: Matt sends a reply to another agent. No automatic agent-to-agent hops in V1.
 
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)
@@ -36,6 +38,6 @@ The default `workingDir` is the dedicated chat folder `~/AgentDaycare/chat` (cre
 - `src/config.js`: user settings
 - `src/logger.js`: the log writer
 - `src/preload.js`: the `window.api` bridge between the UI and the main process
-- `src/renderer/`: the chat window. `thread.js` is the shared thread as plain data (tested in `test/`), `app.js` draws it (textContent only, never innerHTML), `styles.css`, `index.html`. Sending only adds Matt's message until Batch 2 connects the agents.
+- `src/renderer/`: the chat window. `thread.js` is the shared thread as plain data (tested in `test/`), `app.js` draws it (textContent only, never innerHTML), `styles.css`, `index.html`. It streams each reply into a bubble and reports in plain English when an agent fails.
 
 Run `npm test` after any change in `src/`.

@@ -1,6 +1,7 @@
 // The shared chat thread: one list of messages from Matt, the agents and the
 // app itself. Plain data, no DOM, so it runs in the window and in node --test.
-// Batch 2 builds the transcript that goes into each prompt from this list.
+// buildPrompt turns it into the text each agent launch receives, because the
+// CLIs remember nothing between launches.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.ChatThread = factory();
@@ -27,5 +28,42 @@
     return message;
   }
 
-  return { AGENT_IDS, createThread, addMessage };
+  const DEFAULT_NAMES = { antigravity: 'Antigravity', claude: 'Claude', codex: 'Codex' };
+
+  function speaker(m, names) {
+    return m.from === 'matt' ? `Matt (to ${names[m.to] || m.to})` : (names[m.from] || m.from);
+  }
+
+  // The prompt for agentId, answering Matt's newest message (the last one in
+  // the thread). Earlier messages go in as history, newest kept first when it
+  // has to be cut: at most maxMessages of them and maxChars of text, which
+  // keeps the command line well under the Windows limit (~32k characters).
+  // App notes (from 'system') are left out.
+  function buildPrompt(thread, agentId, { names = DEFAULT_NAMES, maxMessages = 20, maxChars = 12000 } = {}) {
+    const last = thread.messages[thread.messages.length - 1];
+    if (!last || last.from !== 'matt' || last.to !== agentId) {
+      throw new Error(`The newest message is not from Matt to ${agentId}`);
+    }
+    const name = names[agentId] || agentId;
+    const header = `You are ${name}, one of three AI agents (Antigravity, Claude and Codex) in a shared chat with Matt. ` +
+      'Only Matt reads the chat; another agent sees your reply only if Matt passes it on. ' +
+      "Reply to Matt's latest message in plain text.";
+
+    const history = [];
+    let used = 0;
+    const earlier = thread.messages.slice(0, -1).filter(m => m.from !== 'system');
+    for (let i = earlier.length - 1; i >= 0 && history.length < maxMessages; i--) {
+      const line = `${speaker(earlier[i], names)}: ${earlier[i].text}`;
+      if (used + line.length > maxChars) break;
+      history.unshift(line);
+      used += line.length;
+    }
+
+    const parts = [header];
+    if (history.length) parts.push('Recent conversation:\n' + history.join('\n\n'));
+    parts.push("Matt's message to you:\n" + last.text);
+    return parts.join('\n\n');
+  }
+
+  return { AGENT_IDS, createThread, addMessage, buildPrompt };
 });

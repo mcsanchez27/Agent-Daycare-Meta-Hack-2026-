@@ -117,3 +117,14 @@ test('stopAgent logs a warning if child.kill throws and still clears the process
   assert.equal(runner.processes.has('claude'), false, 'the dead handle is dropped anyway');
   assert.equal(runner.agents.claude.status, 'idle');
 });
+
+test('agent output reaches the window as plain text too, tagged with the run', () => {
+  const { runner, sent } = makeRunner();
+  runner.runCounts.set('claude', 3);
+  runner.emitOutput('claude', '\x1b[1mHello\x1b[0m there');
+  const out = sent.find(s => s.ch === 'agent:output').d;
+  assert.equal(out.text, 'Hello there');
+  assert.equal(out.raw, '\x1b[1mHello\x1b[0m there');
+  assert.equal(out.run, 3);
+  assert.equal(out.stream, 'stdout');
+});

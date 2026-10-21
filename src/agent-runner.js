@@ -28,6 +28,7 @@ function versionCommand(exe, platform = process.platform, env = process.env) {
 }
 
 const { parseAnsi } = require('./utils/ansi.js');
+const { stripAnsi } = require('./logger');
 
 // Lines Codex prints to stderr that are not part of its answer: its banner,
 // session metadata, token counts and MCP login noise.
@@ -125,8 +126,8 @@ class AgentRunner {
   }
 
   // Launches one agent with one prompt. Each message is a fresh one-shot process
-  // (stdin closed), so there is no memory between launches; Batch 2 adds the
-  // shared transcript to the prompt for that.
+  // (stdin closed), so there is no memory between launches; the chat window
+  // puts recent history into the prompt (see renderer/thread.js buildPrompt).
   startAgent(agentId, prompt = '') {
     const agent = this.agents[agentId];
     if (!agent) throw new Error(`Agent ${agentId} not found`);
@@ -167,7 +168,8 @@ class AgentRunner {
       return spawn(exe, args, {
         cwd: workingDir,
         shell: false,
-        env: { ...process.env, FORCE_COLOR: '1' },
+        // No FORCE_COLOR: replies are shown as plain text in chat bubbles.
+        env: process.env,
         // stdin closed so the CLIs never sit waiting for input
         stdio: ['ignore', 'pipe', 'pipe']
       });
@@ -249,7 +251,8 @@ class AgentRunner {
   }
 
   emitOutput(agentId, rawText, stream = 'stdout') {
-    this._send('agent:output', { agentId, stream, raw: rawText, html: parseAnsi(rawText) });
+    // text: colour and cursor codes removed, for the chat bubbles.
+    this._send('agent:output', { agentId, stream, run: this.currentRun(agentId), raw: rawText, text: stripAnsi(rawText), html: parseAnsi(rawText) });
   }
 
   broadcastStatus(agentId) {

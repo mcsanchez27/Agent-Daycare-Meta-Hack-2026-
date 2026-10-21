@@ -1,17 +1,20 @@
 // Chat window behaviour: the agent picker, the message box and the shared
 // thread. Messages are drawn with textContent only, never innerHTML, so
 // nothing an agent prints can run as code in this window.
-// TM-47 Batch 1 is the shell only: sending adds Matt's message to the thread.
-// Batch 2 launches the agent and adds its reply.
+// Sending to Claude launches it with the recent thread in the prompt and
+// streams its reply into a bubble. Antigravity and Codex connect in Batch 3.
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage } = window.ChatThread;
+const { createThread, addMessage, buildPrompt } = window.ChatThread;
+
+// Agents the chat can launch so far (TM-47 Batch 3 adds the other two).
+const CONNECTED = ['claude'];
 
 const thread = createThread();
 const agents = {}; // id -> { id, name, color, status }
 let selected = 'claude';
-let notConnectedShown = false;
+const pending = {}; // agentId -> the reply being streamed: { row, meta, bubble, text, stderr }
 
 const el = {
   thread: document.getElementById('thread'),
@@ -36,30 +39,41 @@ function timeLabel(iso) {
 
 // ---- Thread -----------------------------------------------------------------
 
-function renderMessage(m) {
+// Builds one message row. from: 'matt', 'system' or an agent id.
+function createRow(from, metaText, text) {
   const row = document.createElement('div');
   const meta = document.createElement('div');
   const bubble = document.createElement('div');
   meta.className = 'meta';
   bubble.className = 'bubble';
-  bubble.textContent = m.text;
+  meta.textContent = metaText;
+  bubble.textContent = text;
 
-  if (m.from === 'matt') {
+  if (from === 'matt') {
     row.className = 'msg matt';
-    meta.textContent = `To ${agentName(m.to)} · ${timeLabel(m.ts)}`;
-  } else if (m.from === 'system') {
+  } else if (from === 'system') {
     row.className = 'msg system';
   } else {
     row.className = 'msg agent';
-    row.style.setProperty('--agent-color', agents[m.from] ? agents[m.from].color : '#888');
-    meta.textContent = `${agentName(m.from)} · ${timeLabel(m.ts)}`;
+    row.style.setProperty('--agent-color', agents[from] ? agents[from].color : '#888');
   }
 
-  if (m.from !== 'system') row.appendChild(meta);
+  if (from !== 'system') row.appendChild(meta);
   row.appendChild(bubble);
   el.empty.hidden = true;
+  const atBottom = el.thread.scrollHeight - el.thread.scrollTop - el.thread.clientHeight < 40;
   el.thread.appendChild(row);
+  if (atBottom || from === 'matt') scrollToBottom();
+  return { row, meta, bubble };
+}
+
+function scrollToBottom() {
   el.thread.scrollTop = el.thread.scrollHeight;
+}
+
+function renderMessage(m) {
+  const metaText = m.from === 'matt' ? `To ${agentName(m.to)} · ${timeLabel(m.ts)}` : `${agentName(m.from)} · ${timeLabel(m.ts)}`;
+  createRow(m.from, metaText, m.text);
 }
 
 function post(message) {
@@ -97,6 +111,7 @@ function select(id) {
   selected = id;
   el.input.placeholder = `Message ${agentName(id)}… (Enter to send, Shift+Enter for a new line)`;
   renderPicker();
+  updateSendButton();
   el.input.focus();
 }
 
@@ -108,21 +123,78 @@ function autoGrow() {
   el.input.style.height = (el.input.scrollHeight + el.input.offsetHeight - el.input.clientHeight) + 'px';
 }
 
+// Send is off while the box is empty or the picked agent is still answering
+// (a new launch would cut its reply off; Batch 4 adds a Stop button).
 function updateSendButton() {
-  el.send.disabled = !el.input.value.trim();
+  el.send.disabled = !el.input.value.trim() || Boolean(pending[selected]);
+  el.send.title = pending[selected] ? `${agentName(selected)} is still answering` : '';
 }
 
 function send() {
   const text = el.input.value.trim();
-  if (!text) return;
-  post({ from: 'matt', to: selected, text });
+  if (!text || pending[selected]) return;
+  const to = selected;
+  post({ from: 'matt', to, text });
   el.input.value = '';
   autoGrow();
-  updateSendButton();
-  if (!notConnectedShown) {
-    notConnectedShown = true;
-    post({ from: 'system', text: 'Agents are not connected yet. Replies arrive in TM-47 Batch 2.' });
+
+  if (!CONNECTED.includes(to)) {
+    post({ from: 'system', text: `${agentName(to)} is not connected yet. It arrives in TM-47 Batch 3; Claude works now.` });
+    updateSendButton();
+    return;
   }
+  ask(to);
+}
+
+// Launches the agent with the thread so far and opens a bubble for its reply.
+function ask(agentId) {
+  const prompt = buildPrompt(thread, agentId, { names: Object.fromEntries(Object.values(agents).map(a => [a.id, a.name])) });
+  const row = createRow(agentId, `${agentName(agentId)} · thinking…`, '');
+  row.row.classList.add('pending');
+  pending[agentId] = { ...row, text: '', stderr: '' };
+  updateSendButton();
+
+  api.sendInput(agentId, prompt).then((started) => {
+    if (started === false) finishReply(agentId, null, 'it could not be started');
+  }).catch((err) => finishReply(agentId, null, err.message));
+}
+
+function onOutput({ agentId, stream, text }) {
+  const p = pending[agentId];
+  if (!p || !text) return;
+  if (stream === 'stderr') {
+    p.stderr = (p.stderr + text).slice(-2000);
+    return;
+  }
+  const atBottom = el.thread.scrollHeight - el.thread.scrollTop - el.thread.clientHeight < 40;
+  p.text += text;
+  p.bubble.textContent = p.text.trim();
+  if (atBottom) scrollToBottom();
+}
+
+// Turns the streamed bubble into a thread message, or reports why there is none.
+function finishReply(agentId, code, why) {
+  const p = pending[agentId];
+  if (!p) return;
+  delete pending[agentId];
+  const reply = p.text.trim();
+  if (reply) {
+    const m = addMessage(thread, { from: agentId, text: reply });
+    p.row.classList.remove('pending');
+    p.bubble.textContent = m.text;
+    p.meta.textContent = `${agentName(agentId)} · ${timeLabel(m.ts)}`;
+  } else {
+    p.row.remove();
+  }
+  if (code !== 0 || !reply) {
+    const notFound = /ENOENT/.test(p.stderr);
+    const reason = why || (notFound ? `the app couldn't find ${agentName(agentId)}. Check its path in config.json`
+      : code === 0 ? 'it finished without saying anything' : `it exited with code ${code}`);
+    const detail = p.stderr.trim().split(/\r?\n/).slice(-3).join('\n');
+    post({ from: 'system', text: `${agentName(agentId)} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
+    api.log('warn', 'agent gave no reply', { agentId, code, why: why || null });
+  }
+  updateSendButton();
 }
 
 el.form.addEventListener('submit', (e) => {
@@ -150,6 +222,8 @@ api.onAgentStatus(({ agentId, status }) => {
   renderPicker();
 });
 
+api.onAgentOutput(onOutput);
+api.onAgentDone(({ agentId, code }) => finishReply(agentId, code));
 api.onNotice(({ text }) => post({ from: 'system', text }));
 
 async function init() {
