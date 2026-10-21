@@ -4,8 +4,9 @@
 // TM-47 Batch 1 is the shell only: sending adds Matt's message to the thread.
 // Batch 2 launches the agent and adds its reply.
 
+// `api` is the global the preload bridge exposes (window.api); declaring it
+// again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage } = window.ChatThread;
-const api = window.api;
 
 const thread = createThread();
 const agents = {}; // id -> { id, name, color, status }
@@ -103,7 +104,8 @@ function select(id) {
 
 function autoGrow() {
   el.input.style.height = 'auto';
-  el.input.style.height = el.input.scrollHeight + 'px';
+  // scrollHeight leaves out the border; without it the box always overflows by 2px.
+  el.input.style.height = (el.input.scrollHeight + el.input.offsetHeight - el.input.clientHeight) + 'px';
 }
 
 function updateSendButton() {
