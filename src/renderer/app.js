@@ -100,6 +100,7 @@ function addActions(row, buttons) {
 function relay(fromAgent, text, to) {
   if (pending[to]) {
     post({ from: 'system', text: `${agentName(to)} is still answering. Send it once ${agentName(to)} is done, or stop it first.` });
+    scrollToBottom(); // the note lands at the bottom, likely out of view of the button clicked
     return;
   }
   post({ from: 'matt', to, text, relayOf: fromAgent });
