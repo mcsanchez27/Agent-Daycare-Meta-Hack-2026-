@@ -261,6 +261,7 @@ function addActions(row, buttons) {
 function relay(fromAgent, text, to) {
   if (pending[to]) {
     post(currentId, { from: 'system', text: busyText(to) });
+    scrollToBottom(); // the note lands at the bottom, likely out of view of the button clicked
     return;
   }
   post(currentId, { from: 'matt', to, text, relayOf: fromAgent });
