@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createThread, addMessage, buildPrompt, AGENT_IDS } = require('../src/renderer/thread');
+const { createThread, addMessage, buildPrompt, chatTitle, AGENT_IDS } = require('../src/renderer/thread');
 
 test('messages get increasing ids and keep their order', () => {
   const t = createThread();
@@ -120,4 +120,26 @@ test('renamed agents are called by their new names throughout the prompt', () =>
   assert.match(p, /^You are Cyclops, one of three AI agents \(Storm, Cyclops and Beast\)/);
   assert.match(p, /Beast: design ready/);
   assert.ok(!/Claude|Codex|Antigravity/.test(p), 'no default names leak in');
+});
+
+test("a chat is titled from Matt's first message, one line, at most 40 characters", () => {
+  const t = createThread();
+  assert.equal(chatTitle(t), 'New chat');
+  addMessage(t, { from: 'system', text: 'note' });
+  assert.equal(chatTitle(t), 'New chat');
+  addMessage(t, { from: 'matt', to: 'claude', text: 'Lets talk\nabout the UX design mocks for the new chat list please' });
+  addMessage(t, { from: 'matt', to: 'claude', text: 'second' });
+  const title = chatTitle(t);
+  assert.ok(title.length <= 40, title);
+  assert.ok(title.startsWith('Lets talk about the UX design mocks'));
+  assert.ok(title.endsWith('…'));
+});
+
+test('an agent reply can be marked as stopped or timed out', () => {
+  const t = createThread();
+  assert.equal(addMessage(t, { from: 'claude', text: 'partial', endedAs: 'stopped' }).endedAs, 'stopped');
+  assert.equal(addMessage(t, { from: 'codex', text: 'partial', endedAs: 'timed out' }).endedAs, 'timed out');
+  assert.equal(addMessage(t, { from: 'codex', text: 'whole' }).endedAs, undefined);
+  assert.throws(() => addMessage(t, { from: 'matt', to: 'claude', text: 'x', endedAs: 'stopped' }), /Bad ending/);
+  assert.throws(() => addMessage(t, { from: 'claude', text: 'x', endedAs: 'exploded' }), /Bad ending/);
 });

@@ -7,6 +7,8 @@
   else root.ChatThread = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   const AGENT_IDS = ['antigravity', 'claude', 'codex'];
+  const ENDINGS = ['stopped', 'timed out'];
+  const TITLE_LENGTH = 40;
 
   function createThread() {
     return { messages: [], nextId: 1 };
@@ -14,8 +16,9 @@
 
   // from: 'matt', 'system', or an agent id. Matt's messages say which agent
   // they are for (to); relayOf marks one that passes on another agent's reply
-  // (Batch 4 relay). Returns the new message, or throws on bad input.
-  function addMessage(thread, { from, to = null, text, relayOf = null }) {
+  // (Batch 4 relay). endedAs marks an agent reply cut short: 'stopped' or
+  // 'timed out'. Returns the new message, or throws on bad input.
+  function addMessage(thread, { from, to = null, text, relayOf = null, endedAs = null }) {
     const body = String(text == null ? '' : text).trim();
     if (!body) throw new Error('A message needs text');
     if (from !== 'matt' && from !== 'system' && !AGENT_IDS.includes(from)) {
@@ -29,6 +32,10 @@
     }
     const message = { id: thread.nextId++, from, to: from === 'matt' ? to : null, text: body, ts: new Date().toISOString() };
     if (relayOf) message.relayOf = relayOf;
+    if (endedAs !== null) {
+      if (!AGENT_IDS.includes(from) || !ENDINGS.includes(endedAs)) throw new Error(`Bad ending: ${endedAs}`);
+      message.endedAs = endedAs;
+    }
     thread.messages.push(message);
     return message;
   }
@@ -87,5 +94,13 @@
     return parts.join('\n\n');
   }
 
-  return { AGENT_IDS, createThread, addMessage, buildPrompt };
+  // A chat's title: Matt's first message, on one line and cut to 40 characters.
+  function chatTitle(thread) {
+    const first = thread.messages.find(m => m.from === 'matt');
+    if (!first) return 'New chat';
+    const line = first.text.replace(/\s+/g, ' ').trim();
+    return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
+  }
+
+  return { AGENT_IDS, createThread, addMessage, buildPrompt, chatTitle };
 });

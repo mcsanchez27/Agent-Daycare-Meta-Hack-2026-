@@ -3,6 +3,7 @@ const path = require('path');
 const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
 const userConfig = require('./config');
+const chats = require('./chats');
 
 let mainWindow = null;
 let agentRunner = null;
@@ -16,6 +17,10 @@ const logsDir = app.isPackaged
 const configFile = app.isPackaged
   ? path.join(app.getPath('userData'), 'config.json')
   : path.join(__dirname, '..', 'config.json');
+// Saved chats live next to config.json while developing, like the logs.
+const chatsDir = app.isPackaged
+  ? path.join(app.getPath('userData'), 'chats')
+  : path.join(__dirname, '..', 'chats');
 let config = null; // loaded in whenReady, after the logger is open
 
 const logger = new Logger({
@@ -136,6 +141,15 @@ handle('config:pick-file', async ({ current, title }) => {
   const r = await dialog.showOpenDialog(mainWindow, { title: title || 'Choose the agent executable', defaultPath: current || undefined, properties: ['openFile'] });
   return r.canceled ? null : r.filePaths[0];
 });
+
+// Saved chats (TM-53 Batch 2)
+handle('chats:list', async () => {
+  const r = await chats.list(chatsDir);
+  for (const p of r.problems) logger.warn('app', 'chat file could not be read', { dir: chatsDir, ...p });
+  return r;
+});
+handle('chats:load', ({ id }) => chats.load(chatsDir, id));
+handle('chats:save', ({ chat }) => chats.save(chatsDir, chat));
 
 handle('logs:open-folder', async () => {
   const result = await shell.openPath(logsDir);

@@ -4,6 +4,7 @@ dist/
 *.log
 logs/
 config.json
+chats/
 
 .env
 .env.local

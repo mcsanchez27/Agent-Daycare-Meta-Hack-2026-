@@ -13,7 +13,6 @@ body {
   margin: 0;
   height: 100vh;
   display: flex;
-  flex-direction: column;
   background: var(--bg);
   color: var(--text);
   font: 15px/1.5 system-ui, "Segoe UI", sans-serif;
@@ -27,7 +26,7 @@ body {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
-.top h1 { font-size: 1.1rem; margin: 0; }
+
 .folder { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .thread {
@@ -133,3 +132,50 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
   cursor: pointer;
 }
 .actions button:hover { color: var(--text); border-color: var(--agent-color, var(--muted)); }
+
+/* Chat list (TM-53 Batch 2) */
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  padding: .75rem;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.brand { font-weight: 700; font-size: 1.05rem; padding: .1rem .35rem .3rem; }
+.new-chat {
+  padding: .5rem .75rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.new-chat:hover { border-color: var(--matt); }
+.chat-list { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: .15rem; }
+.chat-item {
+  display: flex;
+  flex-direction: column;
+  gap: .05rem;
+  width: 100%;
+  min-width: 0;
+  padding: .45rem .6rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-item:hover { background: var(--line); }
+.chat-item.active { background: color-mix(in srgb, var(--matt) 25%, transparent); }
+.chat-title { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+.chat-when { color: var(--muted); font-size: .75rem; }
+.chat-item.busy .chat-when { color: var(--matt); }
+
+.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }

@@ -22,6 +22,12 @@
 - **Names:** `agents.<id>.name` in `config.json` renames an agent everywhere: picker, bubbles, relay buttons and prompts. Later handoff markers must read the name from the same place, never a hard-coded one.
 - `config.load` writes newly added settings into an existing `config.json`, so they can be edited by hand.
 
+## Chats (TM-53 Batch 2)
+- Each chat is one file, `chats/<id>.json` (project root while developing, git-ignored; `userData/chats` when packaged), written through a temp file and a rename (`src/chats.js`). Chat ids are checked against `CHAT_ID` before they touch a path.
+- The sidebar lists chats newest first, titled from Matt's first message (`chatTitle`). A new chat isn't saved until something is said in it. The most recent chat opens at start-up.
+- Each agent runs one process at a time, whichever chat asked. `pending[agentId].chatId` says where its reply lands, even if Matt has switched chats. Send to that agent is off everywhere until it finishes.
+- An unreadable chat file is skipped and logged as `"msg":"chat file could not be read"`; the others still open.
+
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)
 - All three answer headless and none hang. Claude ~7s, Codex ~7s, Antigravity ~30s (show a "thinking" state).
 - Claude and Antigravity refuse file writes in headless mode. **Codex writes files without asking**, so agents must run in a dedicated chat folder, never a real project.
@@ -42,6 +48,7 @@ The default `workingDir` is the dedicated chat folder `~/AgentDaycare/chat` (cre
 - `src/main.js`: Electron main process, window, IPC, logger setup
 - `src/agent-runner.js`: launches the agent CLIs and streams their output
 - `src/config.js`: user settings
+- `src/chats.js`: saved chats, one JSON file each
 - `src/logger.js`: the log writer
 - `src/preload.js`: the `window.api` bridge between the UI and the main process
 - `src/renderer/`: the chat window. `thread.js` is the shared thread as plain data (tested in `test/`), `app.js` draws it (textContent only, never innerHTML), `styles.css`, `index.html`. It streams each reply into a bubble and reports in plain English when an agent fails.
