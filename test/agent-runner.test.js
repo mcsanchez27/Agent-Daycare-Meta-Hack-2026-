@@ -41,7 +41,7 @@ test('only the three V1 agents exist', () => {
 
 test('agent arguments: everyone may write in the working folder; codex reads the prompt from stdin', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['-p', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '-p', 'hi'], stdin: null });
   assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', 'hi'], stdin: null });
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
   // Codex's arguments must stay safe for a codex.cmd shim.

@@ -8,7 +8,7 @@
 
 ## How it works
 - Each message to an agent is a **one-shot launch** of its CLI (stdin closed, or closed right after Codex's prompt):
-  - Antigravity: `agy -p "<prompt>"` (write setting not added yet: needs `agy --help` from Matt's PC, TM-53 Batch 1)
+  - Antigravity: `agy --mode accept-edits -p "<prompt>"` (`-p` takes the next word as the prompt, so flags go before it)
   - Claude: `claude -p --permission-mode acceptEdits "<prompt>"`
   - Codex: `codex exec --skip-git-repo-check --sandbox workspace-write -` with the prompt written to stdin (so it never passes through `cmd.exe` when Codex is an npm `codex.cmd` shim)
 - There is no memory between launches. The window adds the recent thread to each prompt (`buildPrompt` in `src/renderer/thread.js`: last 20 messages, at most 12,000 characters, app notes left out). `"msg":"launching"` in the log shows the full prompt.
@@ -17,7 +17,7 @@
 - **Stop** sits under a reply while it streams. It kills the process tree (`killTree`: `taskkill /T /F` on Windows, so a `codex.cmd` shim's Codex dies too) and `agent:done` comes back with `stopped: true`. Any partial reply is kept and marked "stopped".
 
 ## Access, timeout, names (TM-53)
-- **Equal access (Matt's decision):** every agent may write inside the working folder without asking. Claude uses `acceptEdits`; Codex uses the `workspace-write` sandbox. Nothing grants system-wide access.
+- **Equal access (Matt's decision):** every agent may write inside the working folder without asking. Antigravity uses `--mode accept-edits`; Claude uses `acceptEdits`; Codex uses the `workspace-write` sandbox. Nothing grants system-wide access.
 - **Timeout:** `agents.<id>.timeoutSec` in `config.json` (default 300, kept between 10 and 3600). Past it, the runner stops the agent like Stop (`stopAgent(id, 'timeout')`), and `agent:done` carries `timedOut: true`. The log line is `"msg":"timed out, stopping"`.
 - **Names:** `agents.<id>.name` in `config.json` renames an agent everywhere: picker, bubbles, relay buttons and prompts. Later handoff markers must read the name from the same place, never a hard-coded one.
 - `config.load` writes newly added settings into an existing `config.json`, so they can be edited by hand.

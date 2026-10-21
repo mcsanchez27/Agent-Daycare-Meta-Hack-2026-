@@ -223,11 +223,11 @@ class AgentRunner {
   // when Codex is an npm codex.cmd shim.
   // Access (TM-53): every agent may write inside the working folder without
   // asking. Claude: acceptEdits. Codex: the workspace-write sandbox.
-  // Antigravity: TODO, its setting is not known yet (needs `agy --help`).
+  // Antigravity: --mode accept-edits.
   _buildAgentArgs(agentId, p) {
     if (agentId === 'codex') return { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: p };
     if (agentId === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', p], stdin: null };
-    return { args: ['-p', p], stdin: null }; // antigravity (agy)
+    return { args: ['--mode', 'accept-edits', '-p', p], stdin: null }; // antigravity (agy): -p takes the next word as the prompt, so it goes last
   }
 
   _spawnAgentProcess(agentId, agent, cmd, workingDir, run, stdin = null) {
