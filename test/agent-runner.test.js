@@ -181,3 +181,30 @@ test('agent output reaches the window as plain text too, tagged with the run', (
   assert.equal(out.run, 3);
   assert.equal(out.stream, 'stdout');
 });
+
+test('killTree uses taskkill /T on Windows so a .cmd shim\'s children die too', () => {
+  const calls = [];
+  const child = { pid: 99, kill: () => calls.push('kill') };
+  AgentRunner.killTree(child, 'win32', (file, args) => calls.push([file, args]));
+  assert.deepEqual(calls, [['taskkill', ['/pid', '99', '/T', '/F']]]);
+  calls.length = 0;
+  AgentRunner.killTree(child, 'linux', () => calls.push('taskkill'));
+  assert.deepEqual(calls, ['kill']);
+});
+
+test('Stop ends a running agent and its done event says it was stopped', async () => {
+  const os = require('node:os');
+  const { runner } = makeRunner();
+  runner.agents.claude.path = process.execPath;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("partial"); setInterval(() => {}, 1000)'], stdin: null });
+  runner.workingDir = os.tmpdir();
+  const events = [];
+  const done = new Promise(resolve => { runner._send = (ch, d) => { events.push({ ch, d }); if (ch === 'agent:done') resolve(d); }; });
+  runner.startAgent('claude', 'x');
+  await new Promise(r => setTimeout(r, 300));
+  runner.stopAgent('claude');
+  const d = await done;
+  assert.equal(d.stopped, true);
+  assert.equal(runner.agents.claude.status, 'idle');
+  assert.equal(runner.processes.has('claude'), false);
+});

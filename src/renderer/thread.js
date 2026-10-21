@@ -13,8 +13,9 @@
   }
 
   // from: 'matt', 'system', or an agent id. Matt's messages say which agent
-  // they are for (to). Returns the new message, or throws on bad input.
-  function addMessage(thread, { from, to = null, text }) {
+  // they are for (to); relayOf marks one that passes on another agent's reply
+  // (Batch 4 relay). Returns the new message, or throws on bad input.
+  function addMessage(thread, { from, to = null, text, relayOf = null }) {
     const body = String(text == null ? '' : text).trim();
     if (!body) throw new Error('A message needs text');
     if (from !== 'matt' && from !== 'system' && !AGENT_IDS.includes(from)) {
@@ -23,7 +24,11 @@
     if (from === 'matt' && !AGENT_IDS.includes(to)) {
       throw new Error(`Pick an agent to send to (got ${to})`);
     }
+    if (relayOf !== null && (from !== 'matt' || !AGENT_IDS.includes(relayOf) || relayOf === to)) {
+      throw new Error(`Can't relay ${relayOf}'s reply to ${to}`);
+    }
     const message = { id: thread.nextId++, from, to: from === 'matt' ? to : null, text: body, ts: new Date().toISOString() };
+    if (relayOf) message.relayOf = relayOf;
     thread.messages.push(message);
     return message;
   }
@@ -32,6 +37,13 @@
 
   function speaker(m, names) {
     return m.from === 'matt' ? `Matt (to ${names[m.to] || m.to})` : (names[m.from] || m.from);
+  }
+
+  // A relayed reply is already in the history under the agent who wrote it,
+  // so the relay itself is a short line rather than the whole text again.
+  function historyLine(m, names) {
+    if (m.relayOf) return `${speaker(m, names)}: [passed on ${names[m.relayOf] || m.relayOf}'s reply]`;
+    return `${speaker(m, names)}: ${m.text}`;
   }
 
   // The prompt for agentId, answering Matt's newest message (the last one in
@@ -51,9 +63,14 @@
 
     const history = [];
     let used = 0;
-    const earlier = thread.messages.slice(0, -1).filter(m => m.from !== 'system');
+    let earlier = thread.messages.slice(0, -1).filter(m => m.from !== 'system');
+    if (last.relayOf) {
+      // The relayed reply goes in at the end; don't spend room on it twice.
+      const i = earlier.map(m => m.from === last.relayOf && m.text === last.text).lastIndexOf(true);
+      if (i !== -1) earlier = earlier.filter((_, j) => j !== i);
+    }
     for (let i = earlier.length - 1; i >= 0 && history.length < maxMessages; i--) {
-      const line = `${speaker(earlier[i], names)}: ${earlier[i].text}`;
+      const line = historyLine(earlier[i], names);
       if (used + line.length > maxChars) break;
       history.unshift(line);
       used += line.length;
@@ -61,7 +78,11 @@
 
     const parts = [header];
     if (history.length) parts.push('Recent conversation:\n' + history.join('\n\n'));
-    parts.push("Matt's message to you:\n" + last.text);
+    if (last.relayOf) {
+      parts.push(`Matt passed you this reply from ${names[last.relayOf] || last.relayOf}. Respond to it:\n` + last.text);
+    } else {
+      parts.push("Matt's message to you:\n" + last.text);
+    }
     return parts.join('\n\n');
   }
 

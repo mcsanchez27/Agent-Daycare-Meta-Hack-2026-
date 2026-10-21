@@ -49,6 +49,17 @@ function resolveExecutable(agent, { platform = process.platform, exists = fs.exi
   return agent.command;
 }
 
+// Stops a child and everything it started. On Windows a plain kill stops only
+// the top process, which for a .cmd shim is cmd.exe while Codex keeps going,
+// so the whole tree goes through taskkill.
+function killTree(child, platform = process.platform, run = execFile) {
+  if (platform === 'win32' && child.pid) {
+    run('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+  } else {
+    child.kill('SIGTERM');
+  }
+}
+
 function whereSync(name) {
   try {
     return String(execFileSync('where', [name], { encoding: 'utf8', timeout: 2500, windowsHide: true }))
@@ -263,7 +274,7 @@ class AgentRunner {
       this.log[code === 0 ? 'info' : 'warn'](agentId, 'process exited', { run, code });
       agent.status = 'idle';
       this.broadcastStatus(agentId);
-      this._send('agent:done', { agentId, run, code });
+      this._send('agent:done', { agentId, run, code, stopped: Boolean(child.stoppedByUser) });
     });
 
     child.on('error', (err) => {
@@ -278,8 +289,9 @@ class AgentRunner {
     const child = this.processes.get(agentId);
     if (child) {
       this.log.info(agentId, 'stopping process', { run: this.currentRun(agentId), pid: child.pid });
+      child.stoppedByUser = true;
       try {
-        child.kill('SIGTERM');
+        killTree(child);
       } catch (err) {
         this.log.warn(agentId, 'kill failed', { run: this.currentRun(agentId), error: err.message });
       }
@@ -318,5 +330,6 @@ class AgentRunner {
 AgentRunner.versionCommand = versionCommand;
 AgentRunner.launchCommand = launchCommand;
 AgentRunner.resolveExecutable = resolveExecutable;
+AgentRunner.killTree = killTree;
 
 module.exports = AgentRunner;

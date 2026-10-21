@@ -2,7 +2,8 @@
 // thread. Messages are drawn with textContent only, never innerHTML, so
 // nothing an agent prints can run as code in this window.
 // Sending launches the picked agent with the recent thread in the prompt and
-// streams its reply into a bubble.
+// streams its reply into a bubble. A reply can be stopped while it streams,
+// and once finished passed on to another agent in one click (relay).
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
@@ -70,8 +71,39 @@ function scrollToBottom() {
 }
 
 function renderMessage(m) {
-  const metaText = m.from === 'matt' ? `To ${agentName(m.to)} · ${timeLabel(m.ts)}` : `${agentName(m.from)} · ${timeLabel(m.ts)}`;
+  let metaText = `${agentName(m.from)} · ${timeLabel(m.ts)}`;
+  if (m.from === 'matt') {
+    metaText = m.relayOf
+      ? `To ${agentName(m.to)} · passing on ${agentName(m.relayOf)}'s reply · ${timeLabel(m.ts)}`
+      : `To ${agentName(m.to)} · ${timeLabel(m.ts)}`;
+  }
   createRow(m.from, metaText, m.text);
+}
+
+// A row of small buttons under a bubble.
+function addActions(row, buttons) {
+  const bar = document.createElement('div');
+  bar.className = 'actions';
+  for (const { label, title, onClick } of buttons) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (title) b.title = title;
+    b.addEventListener('click', onClick);
+    bar.appendChild(b);
+  }
+  row.appendChild(bar);
+  return bar;
+}
+
+// Relay: Matt passes one agent's finished reply to another agent.
+function relay(fromAgent, text, to) {
+  if (pending[to]) {
+    post({ from: 'system', text: `${agentName(to)} is still answering. Send it once ${agentName(to)} is done, or stop it first.` });
+    return;
+  }
+  post({ from: 'matt', to, text, relayOf: fromAgent });
+  ask(to);
 }
 
 function post(message) {
@@ -122,7 +154,7 @@ function autoGrow() {
 }
 
 // Send is off while the box is empty or the picked agent is still answering
-// (a new launch would cut its reply off; Batch 4 adds a Stop button).
+// (a new launch would cut its reply off; use Stop under the reply instead).
 function updateSendButton() {
   el.send.disabled = !el.input.value.trim() || Boolean(pending[selected]);
   el.send.title = pending[selected] ? `${agentName(selected)} is still answering` : '';
@@ -149,7 +181,8 @@ function ask(agentId) {
     const p = pending[agentId];
     if (p && !p.text) p.meta.textContent = `${agentName(agentId)} · thinking… ${Math.round((Date.now() - started) / 1000)}s`;
   }, 1000);
-  pending[agentId] = { ...row, text: '', stderr: '', timer };
+  const stopBar = addActions(row.row, [{ label: 'Stop', title: `Stop ${agentName(agentId)}`, onClick: () => api.stopAgent(agentId) }]);
+  pending[agentId] = { ...row, text: '', stderr: '', timer, stopBar };
   updateSendButton();
 
   api.sendInput(agentId, prompt).then((started) => {
@@ -172,21 +205,29 @@ function onOutput({ agentId, stream, text }) {
 }
 
 // Turns the streamed bubble into a thread message, or reports why there is none.
-function finishReply(agentId, code, why) {
+function finishReply(agentId, code, why, stopped = false) {
   const p = pending[agentId];
   if (!p) return;
   delete pending[agentId];
   clearInterval(p.timer);
+  p.stopBar.remove();
   const reply = p.text.trim();
   if (reply) {
     const m = addMessage(thread, { from: agentId, text: reply });
     p.row.classList.remove('pending');
     p.bubble.textContent = m.text;
-    p.meta.textContent = `${agentName(agentId)} · ${timeLabel(m.ts)}`;
+    p.meta.textContent = `${agentName(agentId)} · ${timeLabel(m.ts)}` + (stopped ? ' · stopped' : '');
+    addActions(p.row, Object.values(agents).filter(a => a.id !== agentId).map(a => ({
+      label: `Send to ${a.name}`,
+      title: `Pass this reply on to ${a.name}`,
+      onClick: () => relay(agentId, m.text, a.id)
+    })));
   } else {
     p.row.remove();
   }
-  if (code !== 0 || !reply) {
+  if (stopped) {
+    if (!reply) post({ from: 'system', text: `${agentName(agentId)} was stopped before it replied.` });
+  } else if (code !== 0 || !reply) {
     const notFound = /ENOENT/.test(p.stderr);
     const reason = why || (notFound ? `the app couldn't find ${agentName(agentId)}. Check its path in config.json`
       : code === 0 ? 'it finished without saying anything' : `it exited with code ${code}`);
@@ -223,7 +264,7 @@ api.onAgentStatus(({ agentId, status }) => {
 });
 
 api.onAgentOutput(onOutput);
-api.onAgentDone(({ agentId, code }) => finishReply(agentId, code));
+api.onAgentDone(({ agentId, code, stopped }) => finishReply(agentId, code, null, stopped));
 api.onNotice(({ text }) => post({ from: 'system', text }));
 
 async function init() {

@@ -84,3 +84,29 @@ test("buildPrompt refuses when the newest message isn't Matt's message to that a
   addMessage(t, { from: 'matt', to: 'codex', text: 'hi' });
   assert.throws(() => buildPrompt(t, 'claude'), /not from Matt to claude/);
 });
+
+test('a relay is Matt passing one agent\'s reply to another', () => {
+  const t = createThread();
+  addMessage(t, { from: 'matt', to: 'claude', text: 'plan it' });
+  addMessage(t, { from: 'claude', text: 'Step 1: do the thing' });
+  const r = addMessage(t, { from: 'matt', to: 'codex', text: 'Step 1: do the thing', relayOf: 'claude' });
+  assert.equal(r.relayOf, 'claude');
+  const p = buildPrompt(t, 'codex');
+  assert.ok(p.endsWith("Matt passed you this reply from Claude. Respond to it:\nStep 1: do the thing"));
+  assert.equal(p.split('Step 1: do the thing').length - 1, 1, 'the relayed text is in the prompt once');
+  assert.match(p, /Matt \(to Claude\): plan it/);
+
+  addMessage(t, { from: 'codex', text: 'Looks good' });
+  addMessage(t, { from: 'matt', to: 'claude', text: 'ok?' });
+  const later = buildPrompt(t, 'claude');
+  assert.match(later, /Matt \(to Codex\): \[passed on Claude's reply\]/);
+  assert.equal(later.split('Step 1: do the thing').length - 1, 1, 'the relayed text appears once in history');
+});
+
+test('relays must come from Matt and go to a different agent', () => {
+  const t = createThread();
+  assert.throws(() => addMessage(t, { from: 'matt', to: 'claude', text: 'x', relayOf: 'claude' }), /Can't relay/);
+  assert.throws(() => addMessage(t, { from: 'codex', text: 'x', relayOf: 'claude' }), /Can't relay/);
+  assert.throws(() => addMessage(t, { from: 'matt', to: 'codex', text: 'x', relayOf: 'grok' }), /Can't relay/);
+  assert.equal(addMessage(t, { from: 'matt', to: 'codex', text: 'x' }).relayOf, undefined);
+});
