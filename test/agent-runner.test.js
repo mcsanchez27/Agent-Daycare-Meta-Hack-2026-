@@ -161,7 +161,8 @@ test('scanAgents reports an agent missing from PATH as not installed and logs wh
 
 test('stopAgent logs a warning if child.kill throws and still clears the process', () => {
   const { runner, logEvents } = makeRunner();
-  runner.processes.set('claude', { pid: 4242, kill() { throw new Error('kill failed hard'); } });
+  // No pid: on Windows killTree would run a real taskkill on it instead of kill().
+  runner.processes.set('claude', { kill() { throw new Error('kill failed hard'); } });
 
   runner.stopAgent('claude');
 
