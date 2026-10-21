@@ -1,8 +1,8 @@
 # Agent Daycare: notes for AI agents
 
 ## Read this first
-- **Active version:** V1, a simple chat window for Antigravity, Claude and Codex. Tickets in Notion Task Master: **TM-47** (V1, branch `tm-47/v1-simple-chat`) and **TM-53** (V1.1: timeouts, access, chat list, agent threads; branch `tm-53/v1.1`, built on top of TM-47's branch).
-- **Where work happens:** the ticket's branch (above) until it merges into `master`. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
+- **Active version:** V1, a simple chat window for Antigravity, Claude and Codex. Tickets in Notion Task Master: **TM-47** (V1, validated on Windows) and **TM-53** (V1.1: timeouts, access, chat list, agent threads).
+- **Where work happens:** one branch, `tm-53/v1.1` (draft PR #51 into `master`). It contains all of TM-47; `tm-47/v1-simple-chat` and its PR #50 are retired. Before changing anything, run `git branch --show-current`. If you are not on `tm-53/v1.1`, stop and tell Matt.
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
