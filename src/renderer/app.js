@@ -174,7 +174,8 @@ function createRow(from, metaText, text) {
   el.empty.hidden = true;
   const atBottom = el.thread.scrollHeight - el.thread.scrollTop - el.thread.clientHeight < 40;
   el.thread.appendChild(row);
-  if (atBottom || from === 'matt') scrollToBottom();
+  // Next frame: callers add the meta text and buttons after this returns.
+  if (atBottom || from === 'matt') requestAnimationFrame(scrollToBottom);
   return { row, meta, bubble };
 }
 
