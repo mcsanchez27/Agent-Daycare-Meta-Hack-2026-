@@ -32,6 +32,10 @@ function agentName(id) {
   return agents[id] ? agents[id].name : id;
 }
 
+function durationLabel(sec) {
+  return sec % 60 === 0 ? `${sec / 60} minute${sec === 60 ? '' : 's'}` : `${sec} seconds`;
+}
+
 function timeLabel(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
@@ -205,7 +209,8 @@ function onOutput({ agentId, stream, text }) {
 }
 
 // Turns the streamed bubble into a thread message, or reports why there is none.
-function finishReply(agentId, code, why, stopped = false) {
+// outcome: { stopped, timedOut, timeoutSec } from agent:done.
+function finishReply(agentId, code, why, { stopped = false, timedOut = false, timeoutSec = 0 } = {}) {
   const p = pending[agentId];
   if (!p) return;
   delete pending[agentId];
@@ -216,7 +221,7 @@ function finishReply(agentId, code, why, stopped = false) {
     const m = addMessage(thread, { from: agentId, text: reply });
     p.row.classList.remove('pending');
     p.bubble.textContent = m.text;
-    p.meta.textContent = `${agentName(agentId)} · ${timeLabel(m.ts)}` + (stopped ? ' · stopped' : '');
+    p.meta.textContent = `${agentName(agentId)} · ${timeLabel(m.ts)}` + (stopped ? ' · stopped' : timedOut ? ' · timed out' : '');
     addActions(p.row, Object.values(agents).filter(a => a.id !== agentId).map(a => ({
       label: `Send to ${a.name}`,
       title: `Pass this reply on to ${a.name}`,
@@ -225,7 +230,10 @@ function finishReply(agentId, code, why, stopped = false) {
   } else {
     p.row.remove();
   }
-  if (stopped) {
+  if (timedOut) {
+    post({ from: 'system', text: `${agentName(agentId)} took longer than ${durationLabel(timeoutSec)} and was stopped.` + (reply ? ' Its reply so far is above.' : '') + ' The limit is timeoutSec in config.json.' });
+    api.log('warn', 'agent timed out', { agentId, timeoutSec });
+  } else if (stopped) {
     if (!reply) post({ from: 'system', text: `${agentName(agentId)} was stopped before it replied.` });
   } else if (code !== 0 || !reply) {
     const notFound = /ENOENT/.test(p.stderr);
@@ -264,7 +272,7 @@ api.onAgentStatus(({ agentId, status }) => {
 });
 
 api.onAgentOutput(onOutput);
-api.onAgentDone(({ agentId, code, stopped }) => finishReply(agentId, code, null, stopped));
+api.onAgentDone(({ agentId, code, stopped, timedOut, timeoutSec }) => finishReply(agentId, code, null, { stopped, timedOut, timeoutSec }));
 api.onNotice(({ text }) => post({ from: 'system', text }));
 
 async function init() {

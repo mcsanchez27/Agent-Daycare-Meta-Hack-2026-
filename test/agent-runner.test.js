@@ -39,11 +39,13 @@ test('only the three V1 agents exist', () => {
   assert.deepEqual(Object.keys(runner.agents), ['antigravity', 'claude', 'codex']);
 });
 
-test('agent arguments: -p for antigravity and claude; codex exec reads the prompt from stdin', () => {
+test('agent arguments: everyone may write in the working folder; codex reads the prompt from stdin', () => {
   const { runner } = makeRunner();
   assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['-p', 'hi'], stdin: null });
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', 'hi'], stdin: null });
-  assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--skip-git-repo-check', '-'], stdin: 'hi' });
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
+  // Codex's arguments must stay safe for a codex.cmd shim.
+  assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
 });
 
 test('launchCommand runs a safe Codex .cmd shim through cmd.exe and refuses anything a shell could misread', () => {
@@ -207,4 +209,47 @@ test('Stop ends a running agent and its done event says it was stopped', async (
   assert.equal(d.stopped, true);
   assert.equal(runner.agents.claude.status, 'idle');
   assert.equal(runner.processes.has('claude'), false);
+});
+
+test('a reply that runs past its timeout is stopped and reported as timed out', async () => {
+  const os = require('node:os');
+  const { runner, logEvents } = makeRunner();
+  runner.agents.claude.path = process.execPath;
+  runner.agents.claude.timeoutSec = 0.3;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'setInterval(() => {}, 1000)'], stdin: null });
+  runner.workingDir = os.tmpdir();
+  const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
+  runner.startAgent('claude', 'x');
+  const d = await done;
+  assert.equal(d.timedOut, true);
+  assert.equal(d.stopped, false);
+  assert.equal(d.timeoutSec, 0.3);
+  assert.ok(logEvents.find(l => l.msg === 'timed out, stopping'));
+  assert.equal(runner.processes.has('claude'), false);
+});
+
+test('a reply that finishes in time does not trip the timeout', async () => {
+  const os = require('node:os');
+  const { runner } = makeRunner();
+  runner.agents.claude.path = process.execPath;
+  runner.agents.claude.timeoutSec = 2;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("ok")'], stdin: null });
+  runner.workingDir = os.tmpdir();
+  const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
+  runner.startAgent('claude', 'x');
+  const d = await done;
+  assert.equal(d.code, 0);
+  assert.equal(d.timedOut, false);
+});
+
+test('applyConfig picks up per-agent timeouts', () => {
+  const { runner } = makeRunner();
+  runner.applyConfig({ agents: { antigravity: { timeoutSec: 600 } } });
+  assert.equal(runner.agents.antigravity.timeoutSec, 600);
+});
+
+test('a name from config replaces the default everywhere the window looks', () => {
+  const { runner } = makeRunner();
+  runner.applyConfig({ agents: { claude: { name: 'Cyclops' } } });
+  assert.equal(runner.getConfigs().find(a => a.id === 'claude').name, 'Cyclops');
 });

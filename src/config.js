@@ -9,6 +9,16 @@ const path = require('path');
 
 const AGENT_IDS = ['antigravity', 'claude', 'codex'];
 
+// How long one reply may take before the app stops the agent (TM-53).
+const DEFAULT_TIMEOUT_SEC = 300;
+
+// What each agent is called in the chat (TM-53). Matt can rename them here;
+// the picker, bubbles, relay buttons and prompts all use this name.
+const DEFAULT_NAMES = { antigravity: 'Antigravity', claude: 'Claude', codex: 'Codex' };
+const MAX_NAME_LENGTH = 24;
+const MIN_TIMEOUT_SEC = 10;
+const MAX_TIMEOUT_SEC = 3600;
+
 async function defaultAgentPaths() {
   const home = os.homedir();
   const win = process.platform === 'win32';
@@ -33,6 +43,14 @@ async function defaultAgentPaths() {
     claude: { command: win ? 'claude.exe' : 'claude', path: path.join(home, '.local', 'bin', win ? 'claude.exe' : 'claude') },
     codex: { command: win ? 'codex.exe' : 'codex', path: codexPath }
   };
+}
+
+function withTimeouts(agents) {
+  for (const [id, a] of Object.entries(agents)) {
+    a.name = DEFAULT_NAMES[id];
+    a.timeoutSec = DEFAULT_TIMEOUT_SEC;
+  }
+  return agents;
 }
 
 // Agents run in a folder of their own, never a real project: Codex writes
@@ -65,7 +83,7 @@ async function ensureWorkingDir(dir) {
 }
 
 async function defaults() {
-  return { workingDir: await defaultWorkingDir(), agents: await defaultAgentPaths() };
+  return { workingDir: await defaultWorkingDir(), agents: withTimeouts(await defaultAgentPaths()) };
 }
 
 // Keeps only the fields we know, with sane types. Unknown agents are dropped.
@@ -77,9 +95,14 @@ function sanitize(input, base) {
   for (const id of AGENT_IDS) {
     const b = base.agents[id];
     const u = input && input.agents && input.agents[id];
+    const name = u && typeof u.name === 'string' ? u.name.trim().replace(/\s+/g, ' ').slice(0, MAX_NAME_LENGTH) : '';
     out.agents[id] = {
+      name: name || b.name,
       command: u && typeof u.command === 'string' && u.command.trim() ? u.command.trim() : b.command,
-      path: u && typeof u.path === 'string' && u.path.trim() ? u.path.trim() : b.path
+      path: u && typeof u.path === 'string' && u.path.trim() ? u.path.trim() : b.path,
+      timeoutSec: u && Number.isFinite(u.timeoutSec)
+        ? Math.min(MAX_TIMEOUT_SEC, Math.max(MIN_TIMEOUT_SEC, Math.round(u.timeoutSec)))
+        : b.timeoutSec
     };
   }
   return out;
@@ -112,7 +135,17 @@ async function load(file) {
       const clean = await save(file, parsed);
       return { config: clean, file, migratedFrom };
     }
-    return { config: sanitize(parsed, base), file };
+    const clean = sanitize(parsed, base);
+    // Write back settings added since the file was made (e.g. timeoutSec), so
+    // they show up in config.json for hand editing. The file was valid JSON.
+    if (JSON.stringify(clean) !== JSON.stringify(parsed)) {
+      try {
+        await save(file, clean);
+      } catch (_) {
+        // Still usable this run; the next save will try again.
+      }
+    }
+    return { config: clean, file };
   } catch (err) {
     return { config: base, file, error: `config.json is not valid JSON (${err.message}); using defaults` };
   }
@@ -125,4 +158,4 @@ async function save(file, config) {
   return clean;
 }
 
-module.exports = { load, save, defaults, sanitize, chatDir, ensureWorkingDir, isLegacyWorkingDir, AGENT_IDS };
+module.exports = { load, save, defaults, sanitize, chatDir, ensureWorkingDir, isLegacyWorkingDir, AGENT_IDS, DEFAULT_TIMEOUT_SEC };

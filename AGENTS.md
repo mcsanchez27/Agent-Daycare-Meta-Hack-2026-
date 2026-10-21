@@ -1,20 +1,26 @@
 # Agent Daycare: notes for AI agents
 
 ## Read this first
-- **Active version:** V1, a simple chat window for Antigravity, Claude and Codex. Ticket: **TM-47** in Notion Task Master.
-- **Where work happens:** branch `tm-47/v1-simple-chat` until it merges into `master`. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
+- **Active version:** V1, a simple chat window for Antigravity, Claude and Codex. Tickets in Notion Task Master: **TM-47** (V1, branch `tm-47/v1-simple-chat`) and **TM-53** (V1.1: timeouts, access, chat list, agent threads; branch `tm-53/v1.1`, built on top of TM-47's branch).
+- **Where work happens:** the ticket's branch (above) until it merges into `master`. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
 ## How it works
 - Each message to an agent is a **one-shot launch** of its CLI (stdin closed, or closed right after Codex's prompt):
-  - Antigravity: `agy -p "<prompt>"`
-  - Claude: `claude -p "<prompt>"`
-  - Codex: `codex exec --skip-git-repo-check -` with the prompt written to stdin (so it never passes through `cmd.exe` when Codex is an npm `codex.cmd` shim)
+  - Antigravity: `agy -p "<prompt>"` (write setting not added yet: needs `agy --help` from Matt's PC, TM-53 Batch 1)
+  - Claude: `claude -p --permission-mode acceptEdits "<prompt>"`
+  - Codex: `codex exec --skip-git-repo-check --sandbox workspace-write -` with the prompt written to stdin (so it never passes through `cmd.exe` when Codex is an npm `codex.cmd` shim)
 - There is no memory between launches. The window adds the recent thread to each prompt (`buildPrompt` in `src/renderer/thread.js`: last 20 messages, at most 12,000 characters, app notes left out). `"msg":"launching"` in the log shows the full prompt.
 - Replies are stdout only, shown as plain text. stderr is kept and its last lines are shown if the agent fails or says nothing. Send is off for an agent while it is answering.
 - Agents talk to each other by **relay**: each finished reply has "Send to <agent>" buttons. The relayed message is Matt's, with `relayOf` set; its prompt ends "Matt passed you this reply from <agent>. Respond to it:" and the text goes in once. No automatic agent-to-agent hops in V1.
 - **Stop** sits under a reply while it streams. It kills the process tree (`killTree`: `taskkill /T /F` on Windows, so a `codex.cmd` shim's Codex dies too) and `agent:done` comes back with `stopped: true`. Any partial reply is kept and marked "stopped".
+
+## Access, timeout, names (TM-53)
+- **Equal access (Matt's decision):** every agent may write inside the working folder without asking. Claude uses `acceptEdits`; Codex uses the `workspace-write` sandbox. Nothing grants system-wide access.
+- **Timeout:** `agents.<id>.timeoutSec` in `config.json` (default 300, kept between 10 and 3600). Past it, the runner stops the agent like Stop (`stopAgent(id, 'timeout')`), and `agent:done` carries `timedOut: true`. The log line is `"msg":"timed out, stopping"`.
+- **Names:** `agents.<id>.name` in `config.json` renames an agent everywhere: picker, bubbles, relay buttons and prompts. Later handoff markers must read the name from the same place, never a hard-coded one.
+- `config.load` writes newly added settings into an existing `config.json`, so they can be edited by hand.
 
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)
 - All three answer headless and none hang. Claude ~7s, Codex ~7s, Antigravity ~30s (show a "thinking" state).

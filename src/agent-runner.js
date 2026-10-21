@@ -71,6 +71,7 @@ function whereSync(name) {
 
 const { parseAnsi } = require('./utils/ansi.js');
 const { stripAnsi } = require('./logger');
+const { DEFAULT_TIMEOUT_SEC } = require('./config');
 
 // Lines Codex prints to stderr that are not part of its answer: its banner,
 // session metadata, token counts and MCP login noise.
@@ -100,8 +101,10 @@ class AgentRunner {
     for (const [id, cfg] of Object.entries(config.agents || {})) {
       const agent = this.agents[id];
       if (!agent || !cfg) continue;
+      if (cfg.name) agent.name = cfg.name;
       if (cfg.command) agent.command = cfg.command;
       if (cfg.path) agent.path = cfg.path;
+      if (Number.isFinite(cfg.timeoutSec)) agent.timeoutSec = cfg.timeoutSec;
     }
     this.log.info('app', 'config applied', { workingDir: this.workingDir, paths: Object.fromEntries(Object.values(this.agents).map(a => [a.id, a.path])) });
   }
@@ -197,6 +200,14 @@ class AgentRunner {
     if (!child) return false;
 
     this.processes.set(agentId, child);
+    // Timeout (TM-53): a reply that takes too long is stopped like Stop.
+    const timeoutSec = agent.timeoutSec || DEFAULT_TIMEOUT_SEC;
+    child.timeoutSec = timeoutSec;
+    child.timer = setTimeout(() => {
+      if (this.processes.get(agentId) !== child) return;
+      this.log.warn(agentId, 'timed out, stopping', { run, timeoutSec });
+      this.stopAgent(agentId, 'timeout');
+    }, timeoutSec * 1000);
     agent.status = 'working';
     this.broadcastStatus(agentId);
     this._attachProcessStreams(agentId, agent, child, run);
@@ -210,9 +221,13 @@ class AgentRunner {
   // args, plus the text to write to stdin (null = stdin closed). Codex reads
   // its prompt from stdin ("-") so the prompt never passes through cmd.exe
   // when Codex is an npm codex.cmd shim.
+  // Access (TM-53): every agent may write inside the working folder without
+  // asking. Claude: acceptEdits. Codex: the workspace-write sandbox.
+  // Antigravity: TODO, its setting is not known yet (needs `agy --help`).
   _buildAgentArgs(agentId, p) {
-    if (agentId === 'codex') return { args: ['exec', '--skip-git-repo-check', '-'], stdin: p };
-    return { args: ['-p', p], stdin: null }; // antigravity (agy) and claude
+    if (agentId === 'codex') return { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: p };
+    if (agentId === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', p], stdin: null };
+    return { args: ['-p', p], stdin: null }; // antigravity (agy)
   }
 
   _spawnAgentProcess(agentId, agent, cmd, workingDir, run, stdin = null) {
@@ -268,13 +283,19 @@ class AgentRunner {
     }
 
     child.on('close', (code) => {
+      clearTimeout(child.timer);
       if (this.processes.get(agentId) === child) this.processes.delete(agentId);
       stdoutSink.flush();
       stderrSink.flush();
       this.log[code === 0 ? 'info' : 'warn'](agentId, 'process exited', { run, code });
       agent.status = 'idle';
       this.broadcastStatus(agentId);
-      this._send('agent:done', { agentId, run, code, stopped: Boolean(child.stoppedByUser) });
+      this._send('agent:done', {
+        agentId, run, code,
+        stopped: child.stopReason === 'user',
+        timedOut: child.stopReason === 'timeout',
+        timeoutSec: child.timeoutSec
+      });
     });
 
     child.on('error', (err) => {
@@ -285,11 +306,13 @@ class AgentRunner {
     });
   }
 
-  stopAgent(agentId) {
+  // reason: 'user' (Stop button, a new launch, quitting) or 'timeout'.
+  stopAgent(agentId, reason = 'user') {
     const child = this.processes.get(agentId);
     if (child) {
-      this.log.info(agentId, 'stopping process', { run: this.currentRun(agentId), pid: child.pid });
-      child.stoppedByUser = true;
+      this.log.info(agentId, 'stopping process', { run: this.currentRun(agentId), pid: child.pid, reason });
+      child.stopReason = reason;
+      clearTimeout(child.timer);
       try {
         killTree(child);
       } catch (err) {

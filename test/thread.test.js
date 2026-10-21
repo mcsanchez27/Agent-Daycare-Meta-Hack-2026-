@@ -110,3 +110,14 @@ test('relays must come from Matt and go to a different agent', () => {
   assert.throws(() => addMessage(t, { from: 'matt', to: 'codex', text: 'x', relayOf: 'grok' }), /Can't relay/);
   assert.equal(addMessage(t, { from: 'matt', to: 'codex', text: 'x' }).relayOf, undefined);
 });
+
+test('renamed agents are called by their new names throughout the prompt', () => {
+  const t = createThread();
+  const names = { antigravity: 'Storm', claude: 'Cyclops', codex: 'Beast' };
+  addMessage(t, { from: 'codex', text: 'design ready' });
+  addMessage(t, { from: 'matt', to: 'claude', text: 'review it', relayOf: null });
+  const p = buildPrompt(t, 'claude', { names });
+  assert.match(p, /^You are Cyclops, one of three AI agents \(Storm, Cyclops and Beast\)/);
+  assert.match(p, /Beast: design ready/);
+  assert.ok(!/Claude|Codex|Antigravity/.test(p), 'no default names leak in');
+});

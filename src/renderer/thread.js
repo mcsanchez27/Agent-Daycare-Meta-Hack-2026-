@@ -57,7 +57,8 @@
       throw new Error(`The newest message is not from Matt to ${agentId}`);
     }
     const name = names[agentId] || agentId;
-    const header = `You are ${name}, one of three AI agents (Antigravity, Claude and Codex) in a shared chat with Matt. ` +
+    const all = AGENT_IDS.map(id => names[id] || id);
+    const header = `You are ${name}, one of three AI agents (${all.slice(0, -1).join(', ')} and ${all[all.length - 1]}) in a shared chat with Matt. ` +
       'Only Matt reads the chat; another agent sees your reply only if Matt passes it on. ' +
       "Reply to Matt's latest message in plain text.";
 

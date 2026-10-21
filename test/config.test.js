@@ -101,3 +101,33 @@ test('ensureWorkingDir creates a missing folder and is fine if it exists', async
   assert.ok(fs.statSync(dir).isDirectory());
   await config.ensureWorkingDir(dir);
 });
+
+test('each agent gets a 5-minute timeout by default, kept within 10s..1h', async () => {
+  const d = await config.defaults();
+  for (const id of config.AGENT_IDS) assert.equal(d.agents[id].timeoutSec, 300);
+  const file = tmpFile(JSON.stringify({ agents: { antigravity: { timeoutSec: 600 }, claude: { timeoutSec: 1 }, codex: { timeoutSec: 99999 } } }));
+  const r = await config.load(file);
+  assert.equal(r.config.agents.antigravity.timeoutSec, 600);
+  assert.equal(r.config.agents.claude.timeoutSec, 10);
+  assert.equal(r.config.agents.codex.timeoutSec, 3600);
+  const junk = await config.load(tmpFile(JSON.stringify({ agents: { claude: { timeoutSec: 'soon' } } })));
+  assert.equal(junk.config.agents.claude.timeoutSec, 300);
+});
+
+test('settings added later (timeoutSec) are written into an existing config.json', async () => {
+  const file = tmpFile(JSON.stringify({ workingDir: path.join(os.homedir(), 'mine'), agents: { claude: { path: '/opt/claude', command: 'claude' } } }));
+  await config.load(file);
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(onDisk.agents.claude.timeoutSec, 300);
+  assert.equal(onDisk.agents.claude.path, '/opt/claude', 'what was there is kept');
+  assert.equal(onDisk.workingDir, path.join(os.homedir(), 'mine'));
+});
+
+test('agents can be renamed in config.json; blank or overlong names are handled', async () => {
+  assert.equal((await config.defaults()).agents.codex.name, 'Codex');
+  const file = tmpFile(JSON.stringify({ agents: { claude: { name: '  Cyclops  ' }, codex: { name: '   ' }, antigravity: { name: 'A'.repeat(40) } } }));
+  const r = await config.load(file);
+  assert.equal(r.config.agents.claude.name, 'Cyclops');
+  assert.equal(r.config.agents.codex.name, 'Codex');
+  assert.equal(r.config.agents.antigravity.name.length, 24);
+});
