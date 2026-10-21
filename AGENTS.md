@@ -7,19 +7,18 @@
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
 ## How it works
-- Each message to an agent is a **one-shot launch** of its CLI with stdin closed:
+- Each message to an agent is a **one-shot launch** of its CLI (stdin closed, or closed right after Codex's prompt):
   - Antigravity: `agy -p "<prompt>"`
   - Claude: `claude -p "<prompt>"`
-  - Codex: `codex exec --skip-git-repo-check "<prompt>"`
+  - Codex: `codex exec --skip-git-repo-check -` with the prompt written to stdin (so it never passes through `cmd.exe` when Codex is an npm `codex.cmd` shim)
 - There is no memory between launches. The window adds the recent thread to each prompt (`buildPrompt` in `src/renderer/thread.js`: last 20 messages, at most 12,000 characters, app notes left out). `"msg":"launching"` in the log shows the full prompt.
-- Only Claude is connected so far (`CONNECTED` in `src/renderer/app.js`). Antigravity and Codex come in TM-47 Batch 3.
 - Replies are stdout only, shown as plain text. stderr is kept and its last lines are shown if the agent fails or says nothing. Send is off for an agent while it is answering.
 - Agents talk to each other by **relay**: Matt sends a reply to another agent. No automatic agent-to-agent hops in V1.
 
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)
 - All three answer headless and none hang. Claude ~7s, Codex ~7s, Antigravity ~30s (show a "thinking" state).
 - Claude and Antigravity refuse file writes in headless mode. **Codex writes files without asking**, so agents must run in a dedicated chat folder, never a real project.
-- Codex on Matt's PC is an npm install (`codex.cmd`). `startAgent` cannot launch `.cmd` shims yet; fix this before Codex works in the app (Batch 3).
+- Codex on Matt's PC is an npm install (`codex.cmd`). If the configured path doesn't exist, `resolveExecutable` asks `where` (trying `codex.exe` and `codex`, `.exe` first). A `.cmd`/`.bat` shim is run through `cmd.exe` only if its path and every argument pass an allow-list (`launchCommand`); otherwise the launch is refused with a note in the chat.
 - Codex prints its whole session plus MCP login errors to stderr. Show stdout as the reply; `CODEX_STDERR_NOISE` filters the rest.
 
 ## Logs

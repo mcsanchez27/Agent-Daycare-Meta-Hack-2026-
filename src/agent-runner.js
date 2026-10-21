@@ -1,4 +1,4 @@
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
@@ -6,25 +6,56 @@ const { StringDecoder } = require('string_decoder');
 const execFileAsync = promisify(execFile);
 
 // Windows will not spawn a .cmd/.bat shim (how npm installs codex, ...)
-// without a shell, so `--version` on one fails with EINVAL and the scan can
-// only say "Installed". For those we go through cmd.exe with a fixed, fully
+// without a shell. For those we go through cmd.exe with a fixed, fully
 // quoted command line. The path must pass this allow-list first: no quotes,
-// no cmd metacharacters (& | < > ^ % !), so nothing in it can reach the shell.
+// no cmd metacharacters (& | < > ^ % !), and so must every argument (plain
+// words and flags only), so nothing can reach the shell. That is why Codex
+// gets its prompt on stdin rather than as an argument.
 // Everything else is run directly.
-// NOTE (TM-47 Batch 3): startAgent does not yet handle .cmd shims, so an
-// npm-installed Codex (codex.cmd) cannot be launched until that is added.
 const SAFE_BATCH_PATH = /^[A-Za-z]:\\[A-Za-z0-9 _.\-\\()~@+,=]+\.(cmd|bat)$/i;
+const SAFE_BATCH_ARG = /^[A-Za-z0-9_.=-]+$/;
 
-function versionCommand(exe, platform = process.platform, env = process.env) {
+// How to run exe with args: { file, args, options }, or null when it is a
+// Windows batch shim that cannot be run safely with these arguments.
+function launchCommand(exe, args, platform = process.platform, env = process.env) {
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(exe)) {
-    if (!SAFE_BATCH_PATH.test(exe)) return null;
+    if (!SAFE_BATCH_PATH.test(exe) || !args.every(a => SAFE_BATCH_ARG.test(a))) return null;
     return {
       file: env.ComSpec || 'cmd.exe',
-      args: ['/d', '/s', '/c', `""${exe}" --version"`],
+      args: ['/d', '/s', '/c', `""${exe}" ${args.join(' ')}"`],
       options: { windowsVerbatimArguments: true, windowsHide: true }
     };
   }
-  return { file: exe, args: ['--version'], options: {} };
+  return { file: exe, args, options: {} };
+}
+
+function versionCommand(exe, platform = process.platform, env = process.env) {
+  return launchCommand(exe, ['--version'], platform, env);
+}
+
+// Finds the file to launch. The configured path wins if it exists. On Windows
+// we otherwise ask `where`, trying the command as configured and without
+// ".exe" (an npm install is codex.cmd, not codex.exe), and keep only files
+// Windows can launch, .exe first. Elsewhere spawn searches PATH itself.
+function resolveExecutable(agent, { platform = process.platform, exists = fs.existsSync, where = whereSync } = {}) {
+  if (agent.path && exists(agent.path)) return agent.path;
+  if (platform !== 'win32') return agent.command;
+  const names = [...new Set([agent.command, agent.command.replace(/\.exe$/i, '')])];
+  for (const name of names) {
+    const hits = where(name).filter(f => /\.(exe|cmd|bat)$/i.test(f));
+    const best = hits.find(f => /\.exe$/i.test(f)) || hits[0];
+    if (best) return best;
+  }
+  return agent.command;
+}
+
+function whereSync(name) {
+  try {
+    return String(execFileSync('where', [name], { encoding: 'utf8', timeout: 2500, windowsHide: true }))
+      .split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  } catch (_) {
+    return [];
+  }
 }
 
 const { parseAnsi } = require('./utils/ansi.js');
@@ -138,13 +169,20 @@ class AgentRunner {
 
     const exe = this._getExecutable(agent);
     const workingDir = this.workingDir || process.cwd();
-    const args = this._buildAgentArgs(agentId, p);
+    const { args, stdin } = this._buildAgentArgs(agentId, p);
 
     const run = this.currentRun(agentId) + 1;
     this.runCounts.set(agentId, run);
-    this.log.info(agentId, 'launching', { run, exe, args, cwd: workingDir });
+    this.log.info(agentId, 'launching', { run, exe, args, stdin, cwd: workingDir });
 
-    const child = this._spawnAgentProcess(agentId, agent, exe, args, workingDir, run);
+    const cmd = launchCommand(exe, args);
+    if (!cmd) {
+      this.log.warn(agentId, 'refused to launch batch file with unsafe path or arguments', { run, exe });
+      this.emitOutput(agentId, `[Can't launch ${agent.name}]: ${exe} is a .cmd/.bat file in a folder name Windows' command shell could misread. Point ${agent.name}'s path in config.json at a plain folder.\r\n`, 'stderr');
+      return false;
+    }
+
+    const child = this._spawnAgentProcess(agentId, agent, cmd, workingDir, run, stdin);
     if (!child) return false;
 
     this.processes.set(agentId, child);
@@ -155,24 +193,34 @@ class AgentRunner {
   }
 
   _getExecutable(agent) {
-    return fs.existsSync(agent.path) ? agent.path : agent.command;
+    return resolveExecutable(agent);
   }
 
+  // args, plus the text to write to stdin (null = stdin closed). Codex reads
+  // its prompt from stdin ("-") so the prompt never passes through cmd.exe
+  // when Codex is an npm codex.cmd shim.
   _buildAgentArgs(agentId, p) {
-    if (agentId === 'codex') return ['exec', '--skip-git-repo-check', p];
-    return ['-p', p]; // antigravity (agy) and claude
+    if (agentId === 'codex') return { args: ['exec', '--skip-git-repo-check', '-'], stdin: p };
+    return { args: ['-p', p], stdin: null }; // antigravity (agy) and claude
   }
 
-  _spawnAgentProcess(agentId, agent, exe, args, workingDir, run) {
+  _spawnAgentProcess(agentId, agent, cmd, workingDir, run, stdin = null) {
     try {
-      return spawn(exe, args, {
+      const child = spawn(cmd.file, cmd.args, {
+        ...cmd.options,
         cwd: workingDir,
         shell: false,
         // No FORCE_COLOR: replies are shown as plain text in chat bubbles.
         env: process.env,
-        // stdin closed so the CLIs never sit waiting for input
-        stdio: ['ignore', 'pipe', 'pipe']
+        // stdin is closed (or closed right after the prompt is written) so the
+        // CLIs never sit waiting for input
+        stdio: [stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe']
       });
+      if (stdin != null && child.stdin) {
+        child.stdin.on('error', (err) => this.log.warn(agentId, 'could not write prompt to stdin', { run, error: err.message }));
+        child.stdin.end(stdin);
+      }
+      return child;
     } catch (err) {
       this.log.exception(agentId, err, { run, phase: 'spawn' });
       this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
@@ -268,5 +316,7 @@ class AgentRunner {
 }
 
 AgentRunner.versionCommand = versionCommand;
+AgentRunner.launchCommand = launchCommand;
+AgentRunner.resolveExecutable = resolveExecutable;
 
 module.exports = AgentRunner;

@@ -1,20 +1,18 @@
 // Chat window behaviour: the agent picker, the message box and the shared
 // thread. Messages are drawn with textContent only, never innerHTML, so
 // nothing an agent prints can run as code in this window.
-// Sending to Claude launches it with the recent thread in the prompt and
-// streams its reply into a bubble. Antigravity and Codex connect in Batch 3.
+// Sending launches the picked agent with the recent thread in the prompt and
+// streams its reply into a bubble.
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt } = window.ChatThread;
 
-// Agents the chat can launch so far (TM-47 Batch 3 adds the other two).
-const CONNECTED = ['claude'];
 
 const thread = createThread();
 const agents = {}; // id -> { id, name, color, status }
 let selected = 'claude';
-const pending = {}; // agentId -> the reply being streamed: { row, meta, bubble, text, stderr }
+const pending = {}; // agentId -> the reply being streamed: { row, meta, bubble, text, stderr, timer }
 
 const el = {
   thread: document.getElementById('thread'),
@@ -137,12 +135,6 @@ function send() {
   post({ from: 'matt', to, text });
   el.input.value = '';
   autoGrow();
-
-  if (!CONNECTED.includes(to)) {
-    post({ from: 'system', text: `${agentName(to)} is not connected yet. It arrives in TM-47 Batch 3; Claude works now.` });
-    updateSendButton();
-    return;
-  }
   ask(to);
 }
 
@@ -151,7 +143,13 @@ function ask(agentId) {
   const prompt = buildPrompt(thread, agentId, { names: Object.fromEntries(Object.values(agents).map(a => [a.id, a.name])) });
   const row = createRow(agentId, `${agentName(agentId)} · thinking…`, '');
   row.row.classList.add('pending');
-  pending[agentId] = { ...row, text: '', stderr: '' };
+  // Antigravity can take ~30s, so the wait shows a seconds counter.
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const p = pending[agentId];
+    if (p && !p.text) p.meta.textContent = `${agentName(agentId)} · thinking… ${Math.round((Date.now() - started) / 1000)}s`;
+  }, 1000);
+  pending[agentId] = { ...row, text: '', stderr: '', timer };
   updateSendButton();
 
   api.sendInput(agentId, prompt).then((started) => {
@@ -166,6 +164,7 @@ function onOutput({ agentId, stream, text }) {
     p.stderr = (p.stderr + text).slice(-2000);
     return;
   }
+  if (!p.text) p.meta.textContent = `${agentName(agentId)} · replying…`;
   const atBottom = el.thread.scrollHeight - el.thread.scrollTop - el.thread.clientHeight < 40;
   p.text += text;
   p.bubble.textContent = p.text.trim();
@@ -177,6 +176,7 @@ function finishReply(agentId, code, why) {
   const p = pending[agentId];
   if (!p) return;
   delete pending[agentId];
+  clearInterval(p.timer);
   const reply = p.text.trim();
   if (reply) {
     const m = addMessage(thread, { from: agentId, text: reply });

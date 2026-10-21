@@ -39,11 +39,64 @@ test('only the three V1 agents exist', () => {
   assert.deepEqual(Object.keys(runner.agents), ['antigravity', 'claude', 'codex']);
 });
 
-test('agent arguments: -p for antigravity and claude, exec for codex', () => {
+test('agent arguments: -p for antigravity and claude; codex exec reads the prompt from stdin', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), ['-p', 'hi']);
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), ['-p', 'hi']);
-  assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), ['exec', '--skip-git-repo-check', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['-p', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--skip-git-repo-check', '-'], stdin: 'hi' });
+});
+
+test('launchCommand runs a safe Codex .cmd shim through cmd.exe and refuses anything a shell could misread', () => {
+  const lc = AgentRunner.launchCommand;
+  const shim = 'C:\\Users\\Matth\\AppData\\Roaming\\npm\\codex.cmd';
+  const cmd = lc(shim, ['exec', '--skip-git-repo-check', '-'], 'win32', { ComSpec: 'C:\\Windows\\system32\\cmd.exe' });
+  assert.equal(cmd.file, 'C:\\Windows\\system32\\cmd.exe');
+  assert.deepEqual(cmd.args, ['/d', '/s', '/c', `""${shim}" exec --skip-git-repo-check -"`]);
+  assert.equal(cmd.options.windowsVerbatimArguments, true);
+  // A prompt as an argument would reach the shell, so it is refused.
+  assert.equal(lc(shim, ['-p', 'hi & del *'], 'win32'), null);
+  assert.equal(lc(shim, ['-p', 'two words'], 'win32'), null);
+  assert.equal(lc('C:\\x\\a&b.cmd', ['exec'], 'win32'), null);
+  // Real executables are run directly with any arguments.
+  assert.deepEqual(lc('C:\\x\\claude.exe', ['-p', 'hi & bye'], 'win32'), { file: 'C:\\x\\claude.exe', args: ['-p', 'hi & bye'], options: {} });
+  assert.deepEqual(lc('/usr/bin/codex.cmd', ['-p', 'a b'], 'linux').args, ['-p', 'a b']);
+});
+
+test('resolveExecutable: configured path, then `where` on Windows (.exe first, npm .cmd shims found)', () => {
+  const r = AgentRunner.resolveExecutable;
+  const agent = { path: 'C:\\nope\\codex.exe', command: 'codex.exe' };
+  assert.equal(r({ ...agent, path: 'C:\\ok\\codex.exe' }, { platform: 'win32', exists: () => true, where: () => [] }), 'C:\\ok\\codex.exe');
+
+  const npm = { 'codex': ['C:\\npm\\codex', 'C:\\npm\\codex.cmd'] };
+  assert.equal(r(agent, { platform: 'win32', exists: () => false, where: n => npm[n] || [] }), 'C:\\npm\\codex.cmd', 'codex.exe missing, codex.cmd found');
+
+  const both = { 'codex': ['C:\\npm\\codex.cmd', 'C:\\bin\\codex.exe'] };
+  assert.equal(r({ ...agent, command: 'codex' }, { platform: 'win32', exists: () => false, where: n => both[n] || [] }), 'C:\\bin\\codex.exe');
+
+  assert.equal(r(agent, { platform: 'win32', exists: () => false, where: () => [] }), 'codex.exe', 'nothing found: spawn reports it');
+  assert.equal(r({ path: '/nope', command: 'codex' }, { platform: 'linux', exists: () => false, where: () => { throw new Error('not used'); } }), 'codex');
+});
+
+test('codex gets the whole prompt on stdin, shell characters and new lines intact', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { runner, sent } = makeRunner();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-codex-'));
+  // A stand-in Codex: node, printing its arguments and what it read on stdin.
+  const script = path.join(dir, 'fake.js');
+  fs.writeFileSync(script, "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.stringify({args:process.argv.slice(2),stdin:s})));");
+  runner.agents.codex.path = process.execPath;
+  runner._buildAgentArgs = () => ({ args: [script, 'exec', '-'], stdin: 'hi & "you" | %PATH%\nline 2' });
+  runner.workingDir = dir;
+
+  const done = new Promise(resolve => { runner._send = (ch, d) => { sent.push({ ch, d }); if (ch === 'agent:done') resolve(d); }; });
+  assert.equal(runner.startAgent('codex', 'ignored'), true);
+  const result = await done;
+  assert.equal(result.code, 0);
+  const out = JSON.parse(sent.filter(s => s.ch === 'agent:output' && s.d.stream === 'stdout').map(s => s.d.text).join(''));
+  assert.deepEqual(out.args, ['exec', '-']);
+  assert.equal(out.stdin, 'hi & "you" | %PATH%\nline 2');
 });
 
 test('versionCommand runs executables directly and only routes safe Windows batch shims through cmd.exe', () => {
