@@ -86,7 +86,7 @@
 
 The default `workingDir` is the dedicated chat folder `~/AgentDaycare/chat` (created at start-up). A config still pointing at an old dashboard default (the home folder or `~/.gemini/antigravity/scratch/cli-companions`) is moved there and saved; the log says `"msg":"working folder moved to the chat folder"`. Any other folder is left alone.
 
-**A folder per chat (TM-59 Batch 1):** each chat's agents run in `<workingDir><chat id>` (`chatFolder` in `agent-runner.js`, from the runKey; a bad id falls back to `workingDir`), created on first use. The header shows it. Vendor sessions made in the old shared folder still resumed in testing.
+**A folder per chat (TM-59 Batch 1):** each chat's agents run in `<workingDir>/<chat id>` (`chatFolder` in `agent-runner.js`, from the runKey; a bad id falls back to `workingDir`), created on first use. The header shows it. Vendor sessions made in the old shared folder still resumed in testing.
 
 ## Layout
 - `src/main.js`: Electron main process, window, IPC, logger setup
