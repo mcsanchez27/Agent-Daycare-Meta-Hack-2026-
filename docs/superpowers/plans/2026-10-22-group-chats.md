@@ -180,3 +180,22 @@
 - [ ] **Step 1:** Rendering takes a target: the main view always draws into `#thread` (main messages only); the panel draws the root plus the thread into `#panel-thread`. `showThread(rootId)` opens the panel instead of swapping views. Every main message gets a **Thread** button; the summary row opens the panel. The panel's message box routes with `routeMessage(thread, text, rootId)` and supports the @ popup. `post`, the pending rows and `renderSummary` update whichever views show the message. The panel is 40% of the width and closes with ×. Switching chats closes it.
 - [ ] **Step 2:** `npm test` → pass. In the real app: a handoff streams in the panel while the main chat stays usable; Stop on the summary row ends the chain.
 - [ ] **Step 3:** Update `AGENTS.md` (members, runs per run key, @, the panel). Commit `TM-54 Batch 4: thread side panel`, push, then a test list on TM-54.
+
+---
+
+## Batch 5: Background asks (addendum, see spec)
+
+### Task 10: Asking another chat
+- `thread.js`: `findChatMention(text, chats: [{id,title}]) -> { chatId, question } | null` (the longest title after `#`); `addMessage` accepts `from: 'guest'` with `guest`, and system notes with `side`; `buildPrompt(..., { answer: { chatTitle, text } })` ends with the follow-up wording; history lines for guest messages and answered side notes.
+- Tests: `findChatMention` with overlapping titles ("Codex" vs "Codex solo") picks the longest; guest lines in prompts; follow-up prompt ending; hop carried and refused at 3.
+- `app.js`: the `#` dropdown (like @); `askChat(fromChatId, asker, targetId, question, hop)` loads the target, posts the guest message, runs its owner, updates the side note on done; the follow-up run for agent askers; the live row with Stop.
+- Real app: Claude solo asks #Codex solo; the row goes live; Codex's chat keeps it; Claude finishes with the answer.
+- Commit `TM-54 Batch 5: chats ask each other in the background`.
+
+## Batch 6: Merge chats
+
+### Task 11: Merge
+- `thread.js`: `mergeThreads(a, b, vendorNames) -> thread` (members unioned with new ids and unique names; messages by `ts`; every id reference remapped).
+- Tests: ids and references remapped, threads intact, clashing names renamed, originals unchanged.
+- `app.js`: "Merge with…" next to ✎ → chat picker → new chat "<A> + <B>" opened and saved.
+- Commit `TM-54 Batch 6: merge two chats into a new one`.

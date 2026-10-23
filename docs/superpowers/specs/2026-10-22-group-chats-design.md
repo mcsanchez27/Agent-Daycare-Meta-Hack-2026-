@@ -98,3 +98,21 @@ Each batch: `npm test`, a check in the real app on Windows (driven over the debu
 ## Out of scope
 
 Renaming members, removing members, more than one @ addressed at once (only the first counts), live memory (it's a snapshot), searching chats, and chat folders.
+
+## Addendum (2026-10-22): background asks and merging chats
+
+Approved by Matt in chat after Batches 1–3 passed. Batch 4 (side panel) comes first, then these two.
+
+### Background asks (`#`), Batch 5
+
+One chat asks another without anyone joining. Matt or an agent writes `#<chat title>` followed by the question.
+
+- **Pointing:** typing `#` in the message box opens a dropdown of the other chats (titles, newest first). It is matched as the longest chat title after `#`, case-insensitive, as a whole phrase. Renaming chats keeps titles short.
+- **Delivery:** the question is posted in the target chat as a guest message (`from: 'guest'`, `guest: { chatId, chatTitle, name }`), addressed to the target's owner, who answers there as usual. The target chat keeps the exchange, so its agent remembers it. Prompts show the guest line as "<name> (from chat '<title>'): …".
+- **In the asking chat:** a live row, saved as an app note with `side: { chatId, chatTitle, asker, question, answer, state, hop }` (state: `asking`, `answered`, `stopped`, `busy`, `failed`). It is drawn as "Claude ⇄ Codex solo · asking…" with Stop, and expands (in the side panel) to the question and the answer as it streams.
+- **Follow-up:** when an agent asked, it is launched again once the answer arrives. Its prompt ends "The chat '<title>' answered your question: … Finish your reply to Matt." When Matt asked, the answer only lands in the row.
+- **Limits:** `hop` counts across the chain (a target's reply may `#`-ask in turn), with `HOP_LIMIT` 3. One Stop ends the chain. A busy target member gives a `busy` row, and an agent asker is told.
+
+### Merging chats, Batch 6
+
+"Merge with…" on a chat (next to rename), then pick a second chat. This makes **a new chat** titled "<A> + <B>": both chats' members (clashing names made unique, new ids), and both histories in time order with ids, `to`, `relayOf`, `threadOf`, `handoff` and `side` remapped. The two originals are untouched.
