@@ -187,7 +187,7 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 .chat-rename { position: absolute; top: .4rem; right: .5rem; color: var(--muted); font-size: .8rem; visibility: hidden; cursor: pointer; }
 .chat-item:hover .chat-rename { visibility: visible; }
 .chat-rename:hover { color: var(--text); }
-.chat-title { padding-right: 1.1rem; }
+.chat-title { padding-right: 2.3rem; }
 .chat-title-edit {
   margin: .2rem 0;
   width: 100%;
@@ -377,3 +377,8 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 }
 .side-q { color: var(--muted); }
 .side-a:empty::after { content: "…"; color: var(--muted); }
+
+/* Merge chats (TM-54 Batch 6) */
+.chat-merge { position: absolute; top: .4rem; right: 1.6rem; color: var(--muted); font-size: .8rem; visibility: hidden; cursor: pointer; }
+.chat-item:hover .chat-merge { visibility: visible; }
+.chat-merge:hover { color: var(--text); }

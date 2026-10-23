@@ -6,7 +6,7 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./members'));
   else root.ChatThread = factory(root.ChatMembers);
-})(typeof self !== 'undefined' ? self : this, function ({ VENDORS, VENDOR_NAMES }) {
+})(typeof self !== 'undefined' ? self : this, function ({ VENDORS, VENDOR_NAMES, newMember }) {
   const ENDINGS = ['stopped', 'timed out'];
   const TITLE_LENGTH = 40;
 
@@ -253,6 +253,41 @@
     return best ? { chatId: best.chatId } : null;
   }
 
+  // Two chats as one new thread (TM-54 Batch 6): both chats' agents (each
+  // keeps its name unless it clashes, then "<name> 2"), and both histories in
+  // time order, renumbered, with every member and message reference remapped.
+  // a and b are left as they were.
+  function mergeThreads(a, b, vendorNames = VENDOR_NAMES) {
+    const members = [];
+    const memberMaps = [a, b].map(t => {
+      const map = {};
+      for (const m of t.members) {
+        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null }, { vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        members.push(fresh);
+        map[m.id] = fresh.id;
+      }
+      return map;
+    });
+    // Stable by time; on a tie, a's message first.
+    const all = [a, b].flatMap((t, src) => t.messages.map((m, i) => ({ m, src, i })))
+      .sort((x, y) => (x.m.ts < y.m.ts ? -1 : x.m.ts > y.m.ts ? 1 : x.src - y.src || x.i - y.i));
+    const idMaps = [{}, {}];
+    all.forEach(({ m, src }, n) => { idMaps[src][m.id] = n + 1; });
+    const messages = all.map(({ m, src }, n) => {
+      const who = (id) => (id in memberMaps[src] ? memberMaps[src][id] : id);
+      const c = JSON.parse(JSON.stringify(m));
+      c.id = n + 1;
+      c.from = who(c.from);
+      if (c.to) c.to = who(c.to);
+      if (c.relayOf) c.relayOf = who(c.relayOf);
+      if (c.threadOf) c.threadOf = idMaps[src][c.threadOf];
+      if (c.handoff) c.handoff = { from: who(c.handoff.from), to: who(c.handoff.to) };
+      if (c.side && c.side.asker !== 'matt') c.side.asker = who(c.side.asker);
+      return c;
+    });
+    return { messages, nextId: messages.length + 1, members };
+  }
+
   // A chat's title: Matt's first message, on one line and cut to 40 characters.
   function chatTitle(thread) {
     const first = thread.messages.find(m => m.from === 'matt');
@@ -261,5 +296,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, routeMessage, memorySnapshot, hopsSinceMatt };
+  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
 });

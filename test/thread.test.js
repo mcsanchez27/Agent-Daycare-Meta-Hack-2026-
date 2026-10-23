@@ -336,3 +336,38 @@ test("agents are told the titles of Matt's other chats, so they can ask one with
   assert.match(p, /Matt's other chats: "Codex solo", "Plan"\./);
   assert.ok(!buildPrompt(t, 'm1').includes("Matt's other chats:"), 'no list, no line');
 });
+
+// ---- Merging chats (TM-54 Batch 6) ----
+const { mergeThreads } = require('../src/renderer/thread');
+
+test('merge: both agents and histories in time order, every reference remapped, originals untouched', () => {
+  const a = createThread([newMember([], { vendor: 'claude', model: 'sonnet' })]);
+  const b = ensureMembers({ messages: [], nextId: 1 }); // an old chat: member ids are vendor ids
+  b.members.push({ id: 'codex', vendor: 'codex', model: null, name: 'Codex' });
+  const at = (m, ts) => { m.ts = ts; return m; };
+  at(addMessage(a, { from: 'matt', to: 'm1', text: 'A1' }), '2026-10-23T01:00:00.000Z');
+  const aRoot = at(addMessage(a, { from: 'm1', text: 'A2 @Codex?' }), '2026-10-23T01:02:00.000Z');
+  at(addMessage(b, { from: 'matt', to: 'codex', text: 'B1' }), '2026-10-23T01:01:00.000Z');
+  at(addMessage(b, { from: 'claude', text: 'B2' }), '2026-10-23T01:03:00.000Z');
+  at(addMessage(a, { from: 'matt', to: 'm1', text: 'A3 in thread', threadOf: aRoot.id }), '2026-10-23T01:04:00.000Z');
+  at(addMessage(b, { from: 'system', text: 'hop', handoff: { from: 'claude', to: 'codex' } }), '2026-10-23T01:05:00.000Z');
+  const before = JSON.stringify([a, b]);
+
+  const t = mergeThreads(a, b);
+  assert.equal(JSON.stringify([a, b]), before, 'originals unchanged');
+  assert.deepEqual(t.members.map(m => [m.id, m.vendor, m.model, m.name]),
+    [['m1', 'claude', 'sonnet', 'Claude'], ['m2', 'claude', null, 'Claude 2'], ['m3', 'codex', null, 'Codex']]);
+  assert.deepEqual(t.messages.map(m => m.text), ['A1', 'B1', 'A2 @Codex?', 'B2', 'A3 in thread', 'hop']);
+  assert.deepEqual(t.messages.map(m => m.id), [1, 2, 3, 4, 5, 6]);
+  assert.equal(t.nextId, 7);
+  const [a1, b1, a2, b2, a3, hop] = t.messages;
+  assert.equal(a1.to, 'm1');
+  assert.equal(b1.to, 'm3');
+  assert.equal(a2.from, 'm1');
+  assert.equal(b2.from, 'm2');
+  assert.equal(a3.threadOf, a2.id, 'the thread still hangs off its message');
+  assert.deepEqual(hop.handoff, { from: 'm2', to: 'm3' });
+  // The merged chat works: a new message gets a fresh id and prompts build.
+  assert.equal(addMessage(t, { from: 'matt', to: 'm3', text: 'next' }).id, 7);
+  assert.match(buildPrompt(t, 'm3'), /one of 3 AI agents \(Claude, Claude 2 and Codex\)/);
+});

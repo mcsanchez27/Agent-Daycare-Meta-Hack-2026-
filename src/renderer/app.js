@@ -16,7 +16,7 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, chatTitle, findTarget, findChatMention, routeMessage, memorySnapshot, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, chatTitle, findTarget, findChatMention, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
 const { VENDORS, newMember, ensureMembers, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
@@ -256,7 +256,12 @@ function renderChatList() {
     rename.textContent = '✎';
     rename.title = 'Rename';
     rename.addEventListener('click', (e) => { e.stopPropagation(); editTitle(chat, item); });
-    item.append(title, when, rename);
+    const merge = document.createElement('span');
+    merge.className = 'chat-merge';
+    merge.textContent = '⇆';
+    merge.title = 'Merge with another chat (makes a new chat; both stay)';
+    merge.addEventListener('click', (e) => { e.stopPropagation(); showChooser('merge', chat.id); });
+    item.append(title, when, rename, merge);
     // The first click opens the chat and redraws this list, so a double-click
     // never lands on one element: the second click's count says it instead.
     item.addEventListener('click', (e) => (e.detail >= 2 ? editTitle(chat, item) : openChat(chat.id)));
@@ -376,7 +381,18 @@ function showChooser(mode = 'new', vendor = null) {
     showChat(currentId);
   };
 
-  if (mode === 'from') {
+  if (mode === 'merge') {
+    // vendor holds the chat being merged on this screen.
+    const first = chats.get(vendor);
+    h.textContent = `Merge "${first.title}" with which chat?`;
+    const note = document.createElement('p');
+    note.className = 'chooser-note';
+    note.textContent = 'This makes a new chat with both chats\' agents and messages. Both chats stay as they are.';
+    el.chooser.insertBefore(note, options);
+    for (const c of [...chats.values()].filter(c => c.id !== first.id).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))) {
+      option(c.title, dayLabel(c.updatedAt), null, () => mergeChats(first, c));
+    }
+  } else if (mode === 'from') {
     h.textContent = vendor ? 'Which agent from that chat?' : 'Add an agent from which chat?';
     if (!vendor) {
       for (const c of [...chats.values()].filter(c => c.id !== currentId).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))) {
@@ -434,7 +450,7 @@ function showChooser(mode = 'new', vendor = null) {
   }
   const nav = document.createElement('div');
   nav.className = 'chooser-nav';
-  if (vendor || mode === 'from') {
+  if ((vendor || mode === 'from') && mode !== 'merge') {
     const back = document.createElement('button');
     back.type = 'button';
     back.textContent = '← Back';
@@ -450,6 +466,25 @@ function showChooser(mode = 'new', vendor = null) {
     nav.appendChild(cancel);
   }
   el.chooser.appendChild(nav);
+}
+
+// Two chats into a new group chat (TM-54 Batch 6). Both originals stay.
+async function mergeChats(a, b) {
+  try {
+    await loadChat(a);
+    await loadChat(b);
+  } catch (err) {
+    api.log('error', 'could not open a chat to merge', { error: err.message });
+    return;
+  }
+  const now = new Date().toISOString();
+  const title = `${a.title} + ${b.title}`.slice(0, 60);
+  const chat = { id: newChatId(), title, titleSet: true, createdAt: now, updatedAt: now, thread: mergeThreads(a.thread, b.thread, vendorNames()) };
+  chats.set(chat.id, chat);
+  post(chat.id, { from: 'system', text: `Merged from "${a.title}" and "${b.title}". Both of those chats are unchanged.` });
+  api.log('info', 'chats merged', { from: [a.id, b.id], into: chat.id, members: chat.thread.members.length, messages: chat.thread.messages.length });
+  hideChooser();
+  showChat(chat.id);
 }
 
 function hideChooser() {

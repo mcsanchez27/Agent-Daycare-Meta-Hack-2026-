@@ -50,6 +50,9 @@
 - `settleSide`: states `answered`, `stopped`, `busy`, `failed`. If an agent asked, it is run again with `buildPrompt(..., { answer })`, which ends "The chat '<title>' answered your question: … Finish your reply to Matt." When Matt asked, the answer only lands in the row.
 - Answered asks go into later prompts as "(in the background) X asked the chat 'Y': … It answered: …". Chains are capped by `hop` (`HOP_LIMIT`). The log has `"msg":"background ask"` and `"msg":"background ask settled"`.
 
+## Merging chats (TM-54 Batch 6)
+- "⇆" on a chat in the list → pick a second chat → `mergeChats` makes a **new** chat "<A> + <B>" (`titleSet`) from `mergeThreads(a, b)` in `thread.js`. That holds both chats' members (each keeps its name unless it clashes, then "<name> 2"; fresh `m1`… ids) and both histories in time order, renumbered, with `from`/`to`/`relayOf`/`threadOf`/`handoff`/`side.asker` remapped. Both originals are untouched. A note says what it was merged from; the log says `"msg":"chats merged"`.
+
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)
 - All three answer headless and none hang. Claude ~7s, Codex ~7s, Antigravity ~30s (show a "thinking" state).
 - Claude and Antigravity refuse file writes in headless mode. **Codex writes files without asking**, so agents must run in a dedicated chat folder, never a real project.
