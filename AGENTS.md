@@ -44,6 +44,12 @@
 - In the main chat, a summary row under the thread's first message shows "Claude ⇄ Codex talking…" with Stop while it runs, then "N replies · who".
 - Prompts: a thread prompt holds the main chat up to the thread's first message, then the thread, and ends "<agent> brought you in with this message:" for a handoff. Main-chat prompts include thread messages marked "(in a thread)", inside the same size limit.
 
+## Background asks between chats (TM-54 Batch 5)
+- `#<chat title>` (one space after `#` is allowed, since agents write markdown) asks another chat without anyone joining (`findChatMention` in `thread.js`; the longest matching title wins). Typing `#` opens a dropdown of the other chats. Agents' prompts list Matt's 15 newest other chat titles and explain `#`.
+- `askChat` in `app.js`: posts an app note with `side: { chatId, chatTitle, asker, question, state, hop, runKey, answer | note }` in the asking chat, drawn as a "Claude ⇄ Codex solo · asking…" row (Stop, Open). It then posts a `from: 'guest'` message (`guest: { chatId, chatTitle, name }`) to the target chat's owner and runs it there. The answer streams into the row.
+- `settleSide`: states `answered`, `stopped`, `busy`, `failed`. If an agent asked, it is run again with `buildPrompt(..., { answer })`, which ends "The chat '<title>' answered your question: … Finish your reply to Matt." When Matt asked, the answer only lands in the row.
+- Answered asks go into later prompts as "(in the background) X asked the chat 'Y': … It answered: …". Chains are capped by `hop` (`HOP_LIMIT`). The log has `"msg":"background ask"` and `"msg":"background ask settled"`.
+
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)
 - All three answer headless and none hang. Claude ~7s, Codex ~7s, Antigravity ~30s (show a "thinking" state).
 - Claude and Antigravity refuse file writes in headless mode. **Codex writes files without asking**, so agents must run in a dedicated chat folder, never a real project.

@@ -23,16 +23,24 @@
   // (TM-47 relay). endedAs marks an agent reply cut short: 'stopped' or
   // 'timed out'. threadOf puts a message in the thread under a main-chat
   // message (TM-53 Batch 3); handoff marks an app note where one member
-  // brought another in. Returns the new message, or throws on bad input.
-  function addMessage(thread, { from, to = null, text, relayOf = null, endedAs = null, threadOf = null, handoff = null }) {
+  // brought another in. TM-54 Batch 5: 'guest' is another chat asking this
+  // one in the background (guest: { chatId, chatTitle, name }), and side, on
+  // an app note, records a background ask this chat made
+  // ({ chatId, chatTitle, asker, question, state, hop, answer? }).
+  // Returns the new message, or throws on bad input.
+  function addMessage(thread, { from, to = null, text, relayOf = null, endedAs = null, threadOf = null, handoff = null, guest = null, side = null }) {
     const body = String(text == null ? '' : text).trim();
     if (!body) throw new Error('A message needs text');
-    if (from !== 'matt' && from !== 'system' && !isMember(thread, from)) {
+    if (from !== 'matt' && from !== 'system' && from !== 'guest' && !isMember(thread, from)) {
       throw new Error(`Unknown sender: ${from}`);
     }
-    if (from === 'matt' && !isMember(thread, to)) {
+    if ((from === 'matt' || from === 'guest') && !isMember(thread, to)) {
       throw new Error(`Pick an agent to send to (got ${to})`);
     }
+    if ((from === 'guest') !== Boolean(guest && guest.chatId && guest.chatTitle && guest.name)) {
+      throw new Error('A guest message needs its guest: chatId, chatTitle and name');
+    }
+    if (side !== null && from !== 'system') throw new Error('Only app notes record background asks');
     if (relayOf !== null && (from !== 'matt' || !isMember(thread, relayOf) || relayOf === to)) {
       throw new Error(`Can't relay ${relayOf}'s reply to ${to}`);
     }
@@ -44,7 +52,9 @@
         !isMember(thread, handoff.to) || handoff.from === handoff.to)) {
       throw new Error('Bad handoff');
     }
-    const message = { id: thread.nextId++, from, to: from === 'matt' ? to : null, text: body, ts: new Date().toISOString() };
+    const message = { id: thread.nextId++, from, to: from === 'matt' || from === 'guest' ? to : null, text: body, ts: new Date().toISOString() };
+    if (guest) message.guest = { chatId: guest.chatId, chatTitle: guest.chatTitle, name: guest.name };
+    if (side) message.side = { ...side };
     if (relayOf) message.relayOf = relayOf;
     if (threadOf !== null) message.threadOf = threadOf;
     if (handoff) message.handoff = { from: handoff.from, to: handoff.to };
@@ -61,7 +71,14 @@
   }
 
   function speaker(m, names) {
+    if (m.from === 'guest') return `${m.guest.name} (from chat '${m.guest.chatTitle}')`;
     return m.from === 'matt' ? `Matt (to ${names[m.to] || m.to})` : (names[m.from] || m.from);
+  }
+
+  // Messages that go into prompts: everything but app notes, except the
+  // background asks that got an answer.
+  function spoken(m) {
+    return m.from !== 'system' || Boolean(m.side && m.side.answer);
   }
 
   // A relayed reply is already in the history under the agent who wrote it,
@@ -69,6 +86,10 @@
   // In the main chat, thread messages are marked so agents can tell them apart.
   function historyLine(m, names, inMain) {
     const where = inMain && m.threadOf ? '(in a thread) ' : '';
+    if (m.side) {
+      const who = m.side.asker === 'matt' ? 'Matt' : (names[m.side.asker] || m.side.asker);
+      return `${where}(in the background) ${who} asked the chat '${m.side.chatTitle}': ${m.side.question}\nIt answered: ${m.side.answer}`;
+    }
     if (m.relayOf) return `${where}${speaker(m, names)}: [passed on ${names[m.relayOf] || m.relayOf}'s reply]`;
     return `${where}${speaker(m, names)}: ${m.text}`;
   }
@@ -121,7 +142,7 @@
     const names = nameMap(thread);
     const lines = [];
     let used = 0;
-    const said = thread.messages.filter(m => m.from !== 'system');
+    const said = thread.messages.filter(spoken);
     for (let i = said.length - 1; i >= 0; i--) {
       const line = historyLine(said[i], names, true);
       if (used + line.length + 2 > maxChars) break;
@@ -157,16 +178,20 @@
   // 'system') are left out. With threadOf, the member answers in that thread:
   // it sees the main chat up to the thread's first message, then the thread.
   // In the main chat it sees everything, threads included.
-  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null } = {}) {
+  // A guest (another chat asking in the background) is answered like Matt.
+  // answer ({ chatTitle, text }) is the follow-up after this member asked
+  // another chat: the prompt ends with that chat's answer.
+  // chatTitles: the titles of Matt's other chats, so an agent can ask one with #.
+  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [] } = {}) {
     const members = thread.members || [];
     const me = members.find(m => m.id === memberId);
     const names = nameMap(thread);
-    const said = thread.messages.filter(m => m.from !== 'system' &&
+    const said = thread.messages.filter(m => spoken(m) &&
       (threadOf === null || m.threadOf === threadOf || (!m.threadOf && m.id <= threadOf)));
     const last = said[said.length - 1];
-    const fromMatt = last && last.from === 'matt' && last.to === memberId;
+    const fromMatt = last && (last.from === 'matt' || last.from === 'guest') && last.to === memberId;
     const handoff = last && isMember(thread, last.from) && findMention(last.text, last.from, members) === memberId;
-    if (!me || (!fromMatt && !handoff)) {
+    if (!me || (!answer && !fromMatt && !handoff)) {
       throw new Error(`The newest message is not from Matt to ${memberId} or a handoff to it`);
     }
 
@@ -175,15 +200,18 @@
       ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
       : `${who}, one of ${members.length} AI agents (${list(members.map(m => m.name))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
-    const header = intro + where + 'Reply to the latest message in plain text.';
+    const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
+      (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
+    const header = intro + background + where + 'Reply to the latest message in plain text.';
 
     // Background from the chat this member was added from counts toward the limit.
     const was = me.memory && me.memory.name && me.memory.name !== me.name ? ` (you were called ${me.memory.name} there)` : '';
     const memory = me.memory && me.memory.text ? `Background from your earlier chat '${me.memory.title}'${was}:\n${me.memory.text}` : '';
     const history = [];
     let used = memory.length;
-    let earlier = said.slice(0, -1);
-    if (last.relayOf) {
+    // A follow-up keeps everything but the answered ask itself, which ends the prompt.
+    let earlier = answer ? said.filter(m => m !== last || !last.side) : said.slice(0, -1);
+    if (!answer && last.relayOf) {
       // The relayed reply goes in at the end; don't spend room on it twice.
       const i = earlier.map(m => m.from === last.relayOf && m.text === last.text).lastIndexOf(true);
       if (i !== -1) earlier = earlier.filter((_, j) => j !== i);
@@ -198,7 +226,11 @@
     const parts = [header];
     if (memory) parts.push(memory);
     if (history.length) parts.push('Recent conversation:\n' + history.join('\n\n'));
-    if (handoff && !fromMatt) {
+    if (answer) {
+      parts.push(`The chat '${answer.chatTitle}' answered your question:\n${answer.text}\n\nFinish your reply to Matt.`);
+    } else if (last.from === 'guest') {
+      parts.push(`${speaker(last, names)} asks you:\n` + last.text);
+    } else if (handoff && !fromMatt) {
       parts.push(`${names[last.from]} brought you in with this message:\n` + last.text);
     } else if (last.relayOf) {
       parts.push(`Matt passed you this reply from ${names[last.relayOf] || last.relayOf}. Respond to it:\n` + last.text);
@@ -206,6 +238,19 @@
       parts.push("Matt's message to you:\n" + last.text);
     }
     return parts.join('\n\n');
+  }
+
+  // Which other chat text asks in the background: `#<chat title>`, matched
+  // case-insensitively as a whole phrase; the longest title wins, so
+  // "#Codex solo" beats a chat called "Codex". chats: [{ id, title }].
+  function findChatMention(text, chats) {
+    let best = null;
+    for (const c of chats) {
+      // One space after # is allowed: agents write markdown ("# Codex solo").
+      const hit = new RegExp(`(^|[^\\w#])# ?${escapeRegExp(c.title)}(?![\\w-])`, 'i').exec(text);
+      if (hit && (!best || c.title.length > best.length)) best = { chatId: c.id, length: c.title.length };
+    }
+    return best ? { chatId: best.chatId } : null;
   }
 
   // A chat's title: Matt's first message, on one line and cut to 40 characters.
@@ -216,5 +261,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, routeMessage, memorySnapshot, hopsSinceMatt };
+  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, routeMessage, memorySnapshot, hopsSinceMatt };
 });

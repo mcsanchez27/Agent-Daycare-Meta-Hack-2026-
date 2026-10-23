@@ -288,3 +288,51 @@ test('memory counts toward the size limit and comes before the conversation', ()
   const history = p.slice(p.indexOf('Background'), p.lastIndexOf("Matt's message"));
   assert.ok(history.length <= 12000 + 200, history.length);
 });
+
+// ---- Background asks between chats (TM-54 Batch 5) ----
+const { findChatMention } = require('../src/renderer/thread');
+
+test('findChatMention: the longest chat title after #, as a whole phrase', () => {
+  const chats = [{ id: 'a', title: 'Codex' }, { id: 'b', title: 'Codex solo' }, { id: 'c', title: 'Plan (v2)' }];
+  assert.deepEqual(findChatMention('#codex solo what is X?', chats), { chatId: 'b' });
+  assert.deepEqual(findChatMention('ask #Codex about X', chats), { chatId: 'a' });
+  assert.deepEqual(findChatMention('# Codex solo What is 7 times 8?', chats), { chatId: 'b' }, 'one space after # (markdown habit)');
+  assert.equal(findChatMention('# Notes for today', chats), null, 'a heading that is not a chat');
+  assert.deepEqual(findChatMention('see #Plan (v2): ok', chats), { chatId: 'c' }, 'punctuation in titles');
+  assert.equal(findChatMention('#Codexy', chats), null);
+  assert.equal(findChatMention('email#Codex', chats), null);
+  assert.equal(findChatMention('no hash here', chats), null);
+});
+
+test('a guest from another chat is answered like Matt, and named with its chat', () => {
+  const t = createThread([newMember([], { vendor: 'codex' })]);
+  assert.throws(() => addMessage(t, { from: 'guest', to: 'm1', text: 'x' }), /guest/);
+  const g = addMessage(t, { from: 'guest', to: 'm1', guest: { chatId: 'c1', chatTitle: 'Claude solo', name: 'Claude' }, text: 'What is 2+2?' });
+  assert.equal(g.to, 'm1');
+  const p = buildPrompt(t, 'm1');
+  assert.ok(p.endsWith("Claude (from chat 'Claude solo') asks you:\nWhat is 2+2?"), p);
+  addMessage(t, { from: 'm1', text: '4' });
+  addMessage(t, { from: 'matt', to: 'm1', text: 'what did Claude ask?' });
+  assert.match(buildPrompt(t, 'm1'), /Claude \(from chat 'Claude solo'\): What is 2\+2\?/);
+});
+
+test('an answered background ask shows in later prompts; the follow-up prompt ends with the answer', () => {
+  const t = createThread([newMember([], { vendor: 'claude' })]);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'ask Codex solo for a number' });
+  addMessage(t, { from: 'm1', text: '#Codex solo pick a number' });
+  const side = addMessage(t, { from: 'system', text: 'Claude asked', side: { chatId: 'x', chatTitle: 'Codex solo', asker: 'm1', question: '#Codex solo pick a number', state: 'asking', hop: 1 } });
+  side.side.state = 'answered';
+  side.side.answer = '7';
+  const follow = buildPrompt(t, 'm1', { answer: { chatTitle: 'Codex solo', text: '7' } });
+  assert.ok(follow.endsWith("The chat 'Codex solo' answered your question:\n7\n\nFinish your reply to Matt."), follow);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'and?' });
+  assert.match(buildPrompt(t, 'm1'), /\(in the background\) Claude asked the chat 'Codex solo': #Codex solo pick a number\nIt answered: 7/);
+});
+
+test("agents are told the titles of Matt's other chats, so they can ask one with #", () => {
+  const t = createThread([newMember([], { vendor: 'claude' })]);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'ask the codex chat' });
+  const p = buildPrompt(t, 'm1', { chatTitles: ['Codex solo', 'Plan'] });
+  assert.match(p, /Matt's other chats: "Codex solo", "Plan"\./);
+  assert.ok(!buildPrompt(t, 'm1').includes("Matt's other chats:"), 'no list, no line');
+});

@@ -16,7 +16,7 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, chatTitle, findTarget, routeMessage, memorySnapshot, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, chatTitle, findTarget, findChatMention, routeMessage, memorySnapshot, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
 const { VENDORS, newMember, ensureMembers, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
@@ -459,7 +459,7 @@ function hideChooser() {
 
 // ---- Drawing messages ---------------------------------------------------------
 
-// Builds one message row in a view. from: 'matt', 'system' or a member id.
+// Builds one message row in a view. from: 'matt', 'system', 'guest' or a member id.
 function createRow(view, from, metaText, text) {
   const row = document.createElement('div');
   const meta = document.createElement('div');
@@ -474,18 +474,116 @@ function createRow(view, from, metaText, text) {
   } else if (from === 'system') {
     row.className = 'msg system';
   } else {
-    row.className = 'msg agent';
-    row.style.setProperty('--agent-color', colorOf(from));
+    row.className = 'msg agent' + (from === 'guest' ? ' guest' : '');
+    row.style.setProperty('--agent-color', from === 'guest' ? '#888' : colorOf(from));
   }
 
   if (from !== 'system') row.appendChild(meta);
   row.appendChild(bubble);
+  appendRow(view, row, from === 'matt');
+  return { row, meta, bubble };
+}
+
+function appendRow(view, row, alwaysScroll = false) {
   if (view.empty) view.empty.hidden = true;
   const atBottom = view.list.scrollHeight - view.list.scrollTop - view.list.clientHeight < 40;
   view.list.appendChild(row);
   // Next frame: callers add the meta text and buttons after this returns.
-  if (atBottom || from === 'matt') requestAnimationFrame(() => scrollToBottom(view));
-  return { row, meta, bubble };
+  if (atBottom || alwaysScroll) requestAnimationFrame(() => scrollToBottom(view));
+}
+
+// ---- Background asks between chats (TM-54 Batch 5) ----------------------------
+
+function otherChats(chatId) {
+  return [...chats.values()].filter(c => c.id !== chatId && c.title).map(c => ({ id: c.id, title: c.title }));
+}
+
+const SIDE_STATES = { asking: 'asking…', answered: 'answered', stopped: 'stopped', busy: 'busy', failed: "didn't answer" };
+
+// The row for a background ask: "Claude ⇄ Codex solo · asking…", which opens
+// to the question and the answer (streamed in while it comes).
+function sideRow(m) {
+  const s = m.side;
+  const row = document.createElement('div');
+  row.className = 'msg side' + (s.state === 'asking' ? ' live' : '');
+  row.dataset.id = m.id;
+  const head = document.createElement('button');
+  head.type = 'button';
+  head.className = 'side-head';
+  const who = s.asker === 'matt' ? 'You' : nameOf(s.asker);
+  head.textContent = `${who} ⇄ ${s.chatTitle} · ${SIDE_STATES[s.state] || s.state}  ›`;
+  head.title = 'Show the question and the answer';
+  const body = document.createElement('div');
+  body.className = 'side-body';
+  body.hidden = s.state !== 'asking';
+  const q = document.createElement('div');
+  q.className = 'side-q';
+  q.textContent = s.question;
+  const a = document.createElement('div');
+  a.className = 'side-a';
+  a.textContent = s.answer || s.note || '';
+  body.append(q, a);
+  head.addEventListener('click', () => { body.hidden = !body.hidden; });
+  row.append(head, body);
+  const buttons = [{ label: `Open "${s.chatTitle}"`, title: 'Go to that chat', onClick: () => openChat(s.chatId) }];
+  if (s.state === 'asking') buttons.unshift({ label: 'Stop', title: 'Stop the other chat answering', onClick: () => api.stop(s.runKey) });
+  addActions(row, buttons);
+  return row;
+}
+
+// Redraws a background ask's row wherever it shows.
+function redrawSide(chatId, m) {
+  if (chatId !== currentId) return;
+  for (const view of openViews()) {
+    const old = view.list.querySelector(`.msg.side[data-id="${m.id}"]`);
+    if (old) {
+      const row = sideRow(m);
+      if (!old.querySelector('.side-body').hidden) row.querySelector('.side-body').hidden = false;
+      old.replaceWith(row);
+    }
+  }
+}
+
+// Asks another chat in the background: the question goes to that chat's own
+// agent as a guest message, answered there; this chat gets a live row. An
+// agent that asked is launched again with the answer (see settleSide).
+async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null }) {
+  const src = chats.get(fromChatId);
+  const dst = chats.get(targetId);
+  const askerName = asker === 'matt' ? 'Matt' : nameOf(asker, src);
+  if (hop > HOP_LIMIT) {
+    post(fromChatId, { from: 'system', threadOf, text: `${askerName} asked "${dst.title}", but chats have asked each other ${HOP_LIMIT} times in a row. Reply here to keep going.` });
+    api.log('info', 'background ask refused: hop limit', { from: fromChatId, to: targetId, hop });
+    return;
+  }
+  await loadChat(dst);
+  const owner = dst.thread.members[0];
+  const runKey = runKeyOf(targetId, owner.id);
+  const side = post(fromChatId, { from: 'system', threadOf, text: `${askerName} asked "${dst.title}" in the background.`, side: { chatId: targetId, chatTitle: dst.title, asker, question: text, state: 'asking', hop, runKey } });
+  api.log('info', 'background ask', { from: fromChatId, to: targetId, asker, hop });
+  if (pending[runKey]) {
+    settleSide(fromChatId, side, 'busy', `${owner.name} in "${dst.title}" is busy answering something else. Try again once it's done.`);
+    return;
+  }
+  post(targetId, { from: 'guest', to: owner.id, guest: { chatId: fromChatId, chatTitle: src.title, name: askerName }, text });
+  ask(targetId, owner.id, null, { side: { chatId: fromChatId, messageId: side.id, hop } });
+}
+
+// Records how a background ask ended, and lets an agent that asked carry on
+// with the answer (or with why there is none).
+function settleSide(chatId, m, state, text) {
+  const chat = chats.get(chatId);
+  m.side.state = state;
+  if (state === 'answered') m.side.answer = text;
+  else m.side.note = text;
+  persist(chat);
+  redrawSide(chatId, m);
+  renderChatList();
+  api.log('info', 'background ask settled', { chatId, to: m.side.chatId, state });
+  const asker = m.side.asker;
+  if (asker === 'matt' || !memberById(chat.thread, asker)) return;
+  if (pending[runKeyOf(chatId, asker)]) return;
+  ask(chatId, asker, m.threadOf || null, { answer: { chatTitle: m.side.chatTitle, text }, hop: m.side.hop });
 }
 
 function scrollToBottom(view) {
@@ -493,6 +591,15 @@ function scrollToBottom(view) {
 }
 
 function renderMessage(view, m) {
+  if (m.side) {
+    appendRow(view, sideRow(m));
+    return;
+  }
+  if (m.from === 'guest') {
+    const { row } = createRow(view, 'guest', `${m.guest.name} from "${m.guest.chatTitle}" · to ${nameOf(m.to)} · ${timeLabel(m.ts)}`, m.text);
+    row.dataset.id = m.id;
+    return;
+  }
   if (m.handoff) {
     // Drawn from the ids, so a renamed agent shows its current name.
     const { row } = createRow(view, 'system', '', `${nameOf(m.handoff.from)} › ${nameOf(m.handoff.to)} · Sent to ${nameOf(m.handoff.to)} ›`);
@@ -676,12 +783,18 @@ function target(view) {
 function updatePlaceholder(view) {
   if (!current() || (view === panel && !panelOpen())) return;
   const to = routeMessage(current().thread, '', view.threadOf, vendorNames()).memberId;
-  view.input.placeholder = view === main ? `Message ${nameOf(to)}… (@ to bring in another agent)` : `Reply to ${nameOf(to)} in the thread… (@ for another agent)`;
+  view.input.placeholder = view === main ? `Message ${nameOf(to)}… (@ agent, # ask another chat)` : `Reply to ${nameOf(to)} in the thread… (@ agent, # another chat)`;
 }
 
 // Send is off while the box is empty or the agent it would go to is still
 // answering (a new launch would cut its reply off; use Stop instead).
 function updateSendButton(view) {
+  const chatAsk = current() && findChatMention(view.input.value, otherChats(currentId));
+  if (chatAsk) {
+    view.send.disabled = false;
+    view.send.title = `Asks "${chats.get(chatAsk.chatId).title}" in the background`;
+    return;
+  }
   const t = current() && view.input.value.trim() ? target(view) : null;
   const busy = Boolean(t && t.memberId && pending[runKeyOf(currentId, t.memberId)]);
   view.send.disabled = !t || busy;
@@ -697,6 +810,15 @@ function updateSendButtons() {
 function send(view) {
   const text = view.input.value.trim();
   if (!text || !current()) return;
+  // #chat: ask that chat in the background; the answer lands in a row here.
+  const chatAsk = findChatMention(text, otherChats(currentId));
+  if (chatAsk) {
+    view.input.value = '';
+    autoGrow(view);
+    closeMentions(view);
+    askChat({ fromChatId: currentId, asker: 'matt', text, targetId: chatAsk.chatId, hop: 1, threadOf: view.threadOf });
+    return;
+  }
   const t = target(view);
   if (t.memberId && pending[runKeyOf(currentId, t.memberId)]) return;
   const to = t.memberId || join(currentId, t.vendor, { threadOf: view.threadOf }).id;
@@ -708,36 +830,51 @@ function send(view) {
 }
 
 // The `@word` being typed right before the cursor, or null.
+// The `@word` or `#chat` being typed right before the cursor, or null. A chat
+// title may have spaces, so `#` reads to the cursor.
 function mentionQuery(view) {
   const before = view.input.value.slice(0, view.input.selectionStart);
-  const m = /(^|\s)@([\w-]*)$/.exec(before);
-  return m ? { start: before.length - m[2].length - 1, query: m[2].toLowerCase() } : null;
+  const m = /(^|\s)@([\w-]*)$/.exec(before) || /(^|\s)#([^#@\n]{0,60})$/.exec(before);
+  if (!m) return null;
+  return { start: before.length - m[2].length - 1, sigil: before[before.length - m[2].length - 1], query: m[2].toLowerCase() };
 }
 
-// The dropdown lists our three vendors (Matt, TM-54): one already in the chat
-// is reached by its name; one that isn't joins on its default model.
+// What the dropdown offers. For @, our three vendors (Matt, TM-54): one
+// already in the chat is reached by its name; one that isn't joins on its
+// default model. For #, the other chats, to ask in the background.
+function mentionItems(q) {
+  if (q.sigil === '#') {
+    return otherChats(currentId).filter(c => c.title.toLowerCase().startsWith(q.query)).slice(0, 8)
+      .map(c => ({ key: c.id, label: c.title, sub: 'ask in the background', color: null, insert: `#${c.title} ` }));
+  }
+  const inChat = new Set(current().thread.members.map(m => m.name.toLowerCase()));
+  return VENDORS.filter(v => vendorName(v).toLowerCase().startsWith(q.query)).map(v => ({
+    key: v, label: vendorName(v), color: vendors[v] ? vendors[v].color : '#888', insert: `@${vendorName(v)} `,
+    sub: inChat.has(vendorName(v).toLowerCase()) ? 'in this chat' : 'joins on its default model'
+  }));
+}
+
 function updateMentions(view) {
   const q = mentionQuery(view);
-  const items = q && current() ? VENDORS.filter(v => vendorName(v).toLowerCase().startsWith(q.query)) : [];
+  const items = q && current() ? mentionItems(q) : [];
   if (!items.length) return closeMentions(view);
-  if (view.mention.items.join() !== items.join()) view.mention.index = 0;
+  if (view.mention.items.map(i => i.key).join() !== items.map(i => i.key).join()) view.mention.index = 0;
   view.mention.items = items;
   view.mentions.replaceChildren();
-  const inChat = new Set(current().thread.members.map(m => m.name.toLowerCase()));
-  items.forEach((v, i) => {
+  items.forEach((item, i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'mention' + (i === view.mention.index ? ' active' : '');
-    b.style.setProperty('--agent-color', vendors[v] ? vendors[v].color : '#888');
+    b.style.setProperty('--agent-color', item.color || 'var(--line)');
     const name = document.createElement('span');
     name.className = 'mention-name';
-    name.textContent = vendorName(v);
+    name.textContent = item.label;
     const sub = document.createElement('span');
     sub.className = 'mention-sub';
-    sub.textContent = inChat.has(vendorName(v).toLowerCase()) ? 'in this chat' : 'joins on its default model';
+    sub.textContent = item.sub;
     b.append(name, sub);
     // mousedown, not click: the box must keep focus and its cursor.
-    b.addEventListener('mousedown', (e) => { e.preventDefault(); pickMention(view, v); });
+    b.addEventListener('mousedown', (e) => { e.preventDefault(); pickMention(view, item); });
     view.mentions.appendChild(b);
   });
   view.mentions.hidden = false;
@@ -748,13 +885,12 @@ function closeMentions(view) {
   view.mentions.hidden = true;
 }
 
-function pickMention(view, v) {
+function pickMention(view, item) {
   const q = mentionQuery(view);
   if (!q) return closeMentions(view);
   const end = view.input.selectionStart;
-  const word = `@${vendorName(v)} `;
-  view.input.value = view.input.value.slice(0, q.start) + word + view.input.value.slice(end);
-  const caret = q.start + word.length;
+  view.input.value = view.input.value.slice(0, q.start) + item.insert + view.input.value.slice(end);
+  const caret = q.start + item.insert.length;
   view.input.setSelectionRange(caret, caret);
   closeMentions(view);
   autoGrow(view);
@@ -809,13 +945,19 @@ function wireComposer(view) {
 // ---- Runs -------------------------------------------------------------------
 
 // Launches a member with the chat so far and opens a bubble for its reply.
-// threadOf: the thread it answers in, or null for the main chat.
-function ask(chatId, memberId, threadOf = null) {
+// threadOf: the thread it answers in, or null for the main chat. extra
+// (background asks): side ({ chatId, messageId, hop }) when this reply answers
+// another chat; answer ({ chatTitle, text }) for an asker's follow-up; hop,
+// how many chats have asked each other so far in this chain.
+function ask(chatId, memberId, threadOf = null, { side = null, answer = null, hop = 0 } = {}) {
   const thread = chats.get(chatId).thread;
   const member = memberById(thread, memberId);
-  const prompt = buildPrompt(thread, memberId, { threadOf });
+  // The newest 15 other chats with real titles, so the agent can ask one with #.
+  const chatTitles = otherChats(chatId).filter(c => c.title !== 'New chat')
+    .sort((a, b) => (chats.get(a.id).updatedAt < chats.get(b.id).updatedAt ? 1 : -1)).slice(0, 15).map(c => c.title);
+  const prompt = buildPrompt(thread, memberId, { threadOf, answer, chatTitles });
   const runKey = runKeyOf(chatId, memberId);
-  pending[runKey] = { chatId, memberId, threadOf, text: '', stderr: '', started: Date.now() };
+  pending[runKey] = { chatId, memberId, threadOf, side, hop: side ? side.hop : hop, text: '', stderr: '', started: Date.now() };
   if (chatId === currentId) {
     openViews().forEach(renderPendingRows);
     renderMembers();
@@ -837,6 +979,13 @@ function onOutput({ runKey, stream, text }) {
     return;
   }
   p.text += text;
+  // An answer to another chat streams into that chat's ask row too.
+  if (p.side && p.side.chatId === currentId) {
+    for (const view of openViews()) {
+      const a = view.list.querySelector(`.msg.side[data-id="${p.side.messageId}"] .side-a`);
+      if (a) a.textContent = p.text.trim();
+    }
+  }
   const r = pendingRows[runKey];
   if (!r) return;
   const list = r.view.list;
@@ -876,7 +1025,20 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
     post(p.chatId, { from: 'system', threadOf, text: `${name} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
     api.log('warn', 'agent gave no reply', { runKey, code, why: why || null });
   } else {
-    handOff(p.chatId, m);
+    // #chat asks another chat in the background; otherwise @ may hand off here.
+    const chatAsk = findChatMention(m.text, otherChats(p.chatId));
+    if (chatAsk) askChat({ fromChatId: p.chatId, asker: p.memberId, text: m.text, targetId: chatAsk.chatId, hop: (p.hop || 0) + 1, threadOf });
+    else handOff(p.chatId, m);
+  }
+  // This reply answered another chat: settle that chat's ask.
+  if (p.side) {
+    const src = chats.get(p.side.chatId);
+    const sm = src && src.thread && src.thread.messages.find(x => x.id === p.side.messageId);
+    if (sm) {
+      if (reply && !stopped && !timedOut && code === 0) settleSide(p.side.chatId, sm, 'answered', reply);
+      else if (stopped) settleSide(p.side.chatId, sm, 'stopped', `${name} was stopped before it finished answering.` + (reply ? ` What it had so far: ${reply}` : ''));
+      else settleSide(p.side.chatId, sm, 'failed', `${name} didn't answer` + (timedOut ? ' in time.' : '.'));
+    }
   }
   if (p.chatId === currentId) {
     if (threadOf !== null) renderSummary(threadOf);
