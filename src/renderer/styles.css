@@ -20,7 +20,9 @@ body {
 
 .top {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: .4rem;
   gap: 1rem;
   padding: .75rem 1.25rem;
   border-bottom: 1px solid var(--line);
@@ -162,27 +164,6 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 /* Threads (TM-53 Batch 3) */
-.thread-bar {
-  display: flex;
-  align-items: center;
-  gap: .75rem;
-  padding: .5rem 1.25rem;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--muted);
-  font-size: .85rem;
-}
-.thread-bar[hidden] { display: none; }
-.thread-bar button {
-  padding: .25rem .7rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.thread-bar button:hover { border-color: var(--matt); }
 
 .msg.handoff .bubble { font-style: normal; color: var(--text); background: var(--line); border-radius: 999px; }
 
@@ -220,7 +201,7 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 }
 
 /* Chat members and the new-chat chooser (TM-54) */
-.members { display: flex; gap: .4rem; flex-shrink: 0; }
+.members { display: flex; flex-wrap: wrap; gap: .4rem; }
 .member {
   padding: .1rem .6rem;
   border-radius: 999px;
@@ -230,7 +211,7 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
   white-space: nowrap;
 }
 
-.chat.choosing .thread, .chat.choosing .composer, .chat.choosing .thread-bar, .chat.choosing .members { display: none; }
+.chat.choosing .thread, .chat.choosing .composer, .chat.choosing .members { display: none; }
 .chooser[hidden] { display: none; }
 .chooser {
   flex: 1;
@@ -332,3 +313,36 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 .add-agent:hover { color: var(--text); border-color: var(--matt); }
 .chat.choosing .add-agent { display: none; }
 .member.working { background: color-mix(in srgb, var(--agent-color) 18%, transparent); }
+
+/* Thread side panel (TM-54 Batch 4) */
+.thread-panel[hidden] { display: none; }
+.thread-panel {
+  width: 40%;
+  min-width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+}
+.panel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .75rem 1rem .75rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.panel-label { font-weight: 600; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.panel-close:hover { color: var(--text); }
+.thread-panel .msg { max-width: 90%; }
+.msg.root { opacity: .85; }

@@ -1,12 +1,13 @@
-// Chat window behaviour: the chat list, the message box and the thread of the
-// open chat. Messages are drawn with textContent only, never innerHTML, so
-// nothing an agent prints can run as code in this window.
+// Chat window behaviour: the chat list, the main chat and a thread panel
+// beside it, each with its own message box. Messages are drawn with
+// textContent only, never innerHTML, so nothing an agent prints can run as
+// code in this window.
 // Sending launches an agent with the recent thread in the prompt and streams
 // its reply into a bubble. A reply can be stopped while it streams.
 // Chats are saved one file each (TM-53 Batch 2). A reply always lands in the
 // chat it was asked in, even if Matt has switched to another one meanwhile.
-// Threads (TM-53 Batch 3): the main chat shows a live summary row under a
-// thread's first message; opening it swaps the view to the thread.
+// Threads: the main chat shows a live summary row under a thread's first
+// message; the thread itself opens in the panel (TM-54 Batch 4).
 // Members (TM-54): each chat has its own agents (thread.members), picked by
 // vendor and model when the chat starts. Each member's reply is one run, named
 // `<chatId>/<memberId>`, so two Claudes can answer at once. @Name decides who
@@ -25,33 +26,48 @@ const vendors = {}; // vendor -> { id, name, color } from config.json
 let models = null; // vendor -> [{ id, label }], from api.listModels()
 const chats = new Map(); // id -> { id, title, createdAt, updatedAt, thread? } (thread once loaded)
 let currentId = null;
-let openThread = null; // id of the open thread's first message, or null for the main chat
 // runKey -> the reply being streamed: { chatId, memberId, threadOf, text, stderr, started }.
 // One per member: each member runs one process at a time.
 const pending = {};
-const pendingRows = {}; // runKey -> { row, meta, bubble } while its chat is on screen
+const pendingRows = {}; // runKey -> { row, meta, bubble, view } while on screen
 const summaryRows = {}; // thread's first message id -> its summary row in the main chat
-// The @ dropdown under the message box: the vendors matching what's typed after @.
-const mention = { items: [], index: 0 };
 
+const $ = (id) => document.getElementById(id);
 const el = {
   chat: document.querySelector('.chat'),
-  chatList: document.getElementById('chat-list'),
-  newChat: document.getElementById('new-chat'),
-  thread: document.getElementById('thread'),
-  empty: document.getElementById('empty'),
-  form: document.getElementById('composer'),
-  input: document.getElementById('message'),
-  send: document.getElementById('send'),
-  mentions: document.getElementById('mentions'),
-  folder: document.getElementById('folder'),
-  members: document.getElementById('members'),
-  addAgent: document.getElementById('add-agent'),
-  chooser: document.getElementById('chooser'),
-  threadBar: document.getElementById('thread-bar'),
-  threadLabel: document.getElementById('thread-label'),
-  back: document.getElementById('back')
+  chatList: $('chat-list'),
+  newChat: $('new-chat'),
+  folder: $('folder'),
+  members: $('members'),
+  addAgent: $('add-agent'),
+  chooser: $('chooser'),
+  panel: $('thread-panel'),
+  panelLabel: $('panel-label'),
+  panelClose: $('panel-close')
 };
+
+// The two places messages show: the main chat, and the thread panel beside
+// it. Each has its own list, message box and @ dropdown. threadOf is null for
+// the main chat, and the open thread's first message id for the panel (null
+// while the panel is closed).
+function makeView(name, ids) {
+  return {
+    name, threadOf: null,
+    list: $(ids.list), empty: ids.empty ? $(ids.empty) : null,
+    form: $(ids.form), input: $(ids.input), send: $(ids.send), mentions: $(ids.mentions),
+    mention: { items: [], index: 0 }
+  };
+}
+const main = makeView('main', { list: 'thread', empty: 'empty', form: 'composer', input: 'message', send: 'send', mentions: 'mentions' });
+const panel = makeView('panel', { list: 'panel-thread', form: 'panel-composer', input: 'panel-message', send: 'panel-send', mentions: 'panel-mentions' });
+
+function panelOpen() {
+  return panel.threadOf !== null;
+}
+
+function openViews() {
+  return panelOpen() ? [main, panel] : [main];
+}
 
 window.addEventListener('error', (e) => api.log('error', e.message, { file: e.filename, line: e.lineno }));
 window.addEventListener('unhandledrejection', (e) => api.log('error', String(e.reason && e.reason.message || e.reason)));
@@ -135,8 +151,8 @@ function createChat(vendor, model, modelLabel) {
 }
 
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
-// ({ title, text } from another chat), name (keep this name if it's free),
-// fromTitle (for the note), threadOf (where the note goes).
+// ({ title, name, text } from another chat), name (keep this name if it's
+// free), fromTitle (for the note), threadOf (where the note goes).
 function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, fromTitle = null, threadOf = null } = {}) {
   const chat = chats.get(chatId);
   const names = name ? { ...vendorNames(), [vendor]: name } : vendorNames();
@@ -170,30 +186,45 @@ async function openChat(id) {
 
 function showChat(id) {
   currentId = id;
+  closePanel();
   renderChatList();
   renderMembers();
-  showThread(null);
+  renderView(main);
+  updatePlaceholder(main);
+  updateSendButtons();
+  main.input.focus();
 }
 
-// Switches the view between the main chat (null) and one of its threads.
-function showThread(rootId) {
-  openThread = rootId;
-  const root = rootId === null ? null : current().thread.messages.find(m => m.id === rootId);
-  el.threadBar.hidden = !root;
-  if (root) el.threadLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : nameOf(root.from) + "'s"} message`;
-  renderThread();
-  updatePlaceholder();
-  updateSendButton();
-  el.input.focus();
+// Opens a thread in the panel beside the main chat.
+function openPanel(rootId) {
+  const root = current().thread.messages.find(m => m.id === rootId);
+  if (!root) return;
+  panel.threadOf = rootId;
+  el.panel.hidden = false;
+  el.panelLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : nameOf(root.from) + "'s"} message`;
+  renderView(panel);
+  updatePlaceholder(panel);
+  updateSendButtons();
+  panel.input.focus();
 }
 
-// Whether a message belongs in the view on screen. A thread shows its first message too.
-function inView(m) {
-  return openThread === null ? !m.threadOf : m.id === openThread || m.threadOf === openThread;
+function closePanel() {
+  removePendingRows(panel);
+  closeMentions(panel);
+  panel.threadOf = null;
+  panel.list.replaceChildren();
+  el.panel.hidden = true;
 }
 
-function pendingInView(p) {
-  return p.chatId === currentId && (p.threadOf || null) === openThread;
+// Whether a message belongs in a view. The panel shows the thread's first message too.
+function inView(view, m) {
+  if (view === panel && !panelOpen()) return false;
+  return view.threadOf === null ? !m.threadOf : m.id === view.threadOf || m.threadOf === view.threadOf;
+}
+
+function pendingInView(view, p) {
+  if (view === panel && !panelOpen()) return false;
+  return p.chatId === currentId && (p.threadOf || null) === view.threadOf;
 }
 
 async function persist(chat) {
@@ -281,19 +312,21 @@ function renderMembers() {
   }
 }
 
-// Adds a message to a chat (open or not), saves it, and draws it if on screen.
+// Adds a message to a chat (open or not), saves it, and draws it wherever it shows.
 function post(chatId, message) {
   const chat = chats.get(chatId);
   const m = addMessage(chat.thread, message);
   chat.updatedAt = m.ts;
   if (!chat.titleSet) chat.title = chatTitle(chat.thread);
   persist(chat);
-  if (chatId === currentId && inView(m)) {
-    removePendingRows();
-    renderMessage(m);
-    renderPendingRows();
-  } else if (chatId === currentId && openThread === null && m.threadOf) {
-    renderSummary(m.threadOf);
+  if (chatId === currentId) {
+    for (const view of openViews()) {
+      if (!inView(view, m)) continue;
+      removePendingRows(view);
+      renderMessage(view, m);
+      renderPendingRows(view);
+    }
+    if (m.threadOf) renderSummary(m.threadOf);
   }
   renderChatList();
   return m;
@@ -308,7 +341,8 @@ function showChooser(mode = 'new', vendor = null) {
   el.chooser.dataset.mode = mode;
   el.chooser.dataset.vendor = vendor || '';
   el.chat.classList.add('choosing');
-  closeMentions();
+  closePanel();
+  closeMentions(main);
   renderChatList();
   el.chooser.replaceChildren();
   const h = document.createElement('h2');
@@ -321,10 +355,10 @@ function showChooser(mode = 'new', vendor = null) {
     b.type = 'button';
     b.className = 'option';
     if (color) b.style.setProperty('--agent-color', color);
-    const main = document.createElement('span');
-    main.className = 'option-label';
-    main.textContent = label;
-    b.appendChild(main);
+    const top = document.createElement('span');
+    top.className = 'option-label';
+    top.textContent = label;
+    b.appendChild(top);
     if (sub) {
       const s = document.createElement('span');
       s.className = 'option-sub';
@@ -423,10 +457,10 @@ function hideChooser() {
   el.chat.classList.remove('choosing');
 }
 
-// ---- Thread -----------------------------------------------------------------
+// ---- Drawing messages ---------------------------------------------------------
 
-// Builds one message row. from: 'matt', 'system' or a member id.
-function createRow(from, metaText, text) {
+// Builds one message row in a view. from: 'matt', 'system' or a member id.
+function createRow(view, from, metaText, text) {
   const row = document.createElement('div');
   const meta = document.createElement('div');
   const bubble = document.createElement('div');
@@ -446,22 +480,22 @@ function createRow(from, metaText, text) {
 
   if (from !== 'system') row.appendChild(meta);
   row.appendChild(bubble);
-  el.empty.hidden = true;
-  const atBottom = el.thread.scrollHeight - el.thread.scrollTop - el.thread.clientHeight < 40;
-  el.thread.appendChild(row);
+  if (view.empty) view.empty.hidden = true;
+  const atBottom = view.list.scrollHeight - view.list.scrollTop - view.list.clientHeight < 40;
+  view.list.appendChild(row);
   // Next frame: callers add the meta text and buttons after this returns.
-  if (atBottom || from === 'matt') requestAnimationFrame(scrollToBottom);
+  if (atBottom || from === 'matt') requestAnimationFrame(() => scrollToBottom(view));
   return { row, meta, bubble };
 }
 
-function scrollToBottom() {
-  el.thread.scrollTop = el.thread.scrollHeight;
+function scrollToBottom(view) {
+  view.list.scrollTop = view.list.scrollHeight;
 }
 
-function renderMessage(m) {
+function renderMessage(view, m) {
   if (m.handoff) {
     // Drawn from the ids, so a renamed agent shows its current name.
-    const { row } = createRow('system', '', `${nameOf(m.handoff.from)} › ${nameOf(m.handoff.to)} · Sent to ${nameOf(m.handoff.to)} ›`);
+    const { row } = createRow(view, 'system', '', `${nameOf(m.handoff.from)} › ${nameOf(m.handoff.to)} · Sent to ${nameOf(m.handoff.to)} ›`);
     row.classList.add('handoff');
     return;
   }
@@ -471,28 +505,31 @@ function renderMessage(m) {
       ? `To ${nameOf(m.to)} · passing on ${nameOf(m.relayOf)}'s reply · ${timeLabel(m.ts)}`
       : `To ${nameOf(m.to)} · ${timeLabel(m.ts)}`;
   }
-  const { row } = createRow(m.from, metaText, m.text);
+  const { row } = createRow(view, m.from, metaText, m.text);
   row.dataset.id = m.id;
-  if (m.from !== 'system' && openThread === null) {
-    addActions(row, [{ label: 'Reply in thread', title: 'Open a thread under this message', onClick: () => showThread(m.id) }]);
+  if (view === panel && m.id === panel.threadOf) row.classList.add('root');
+  if (view === main && m.from !== 'system') {
+    addActions(row, [{ label: 'Thread', title: 'Open a thread on this message beside the chat', onClick: () => openPanel(m.id) }]);
   }
 }
 
-function renderThread() {
-  el.thread.replaceChildren(el.empty);
-  Object.keys(pendingRows).forEach(id => delete pendingRows[id]);
-  Object.keys(summaryRows).forEach(id => delete summaryRows[id]);
+function renderView(view) {
+  removePendingRows(view);
+  view.list.replaceChildren(...(view.empty ? [view.empty] : []));
+  if (view === main) Object.keys(summaryRows).forEach(id => delete summaryRows[id]);
   const chat = current();
-  el.empty.hidden = Boolean(chat && chat.thread.messages.length);
-  if (!chat) return;
-  el.empty.textContent = `Say hi to ${chat.thread.members[0].name}. Type @ to bring in another agent.`;
-  for (const m of chat.thread.messages) {
-    if (!inView(m)) continue;
-    renderMessage(m);
-    if (openThread === null) renderSummary(m.id);
+  if (!chat || (view === panel && !panelOpen())) return;
+  if (view.empty) {
+    view.empty.hidden = chat.thread.messages.length > 0;
+    view.empty.textContent = `Say hi to ${chat.thread.members[0].name}. Type @ to bring in another agent.`;
   }
-  renderPendingRows();
-  scrollToBottom();
+  for (const m of chat.thread.messages) {
+    if (!inView(view, m)) continue;
+    renderMessage(view, m);
+    if (view === main) renderSummary(m.id);
+  }
+  renderPendingRows(view);
+  scrollToBottom(view);
 }
 
 // What the main chat says under a thread's first message, or null for no thread:
@@ -514,7 +551,7 @@ function threadSummary(rootId) {
   return { text: `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'}` + (who.length ? ` · ${who.join(', ')}` : '') };
 }
 
-// Draws or updates the summary row right under a thread's first message.
+// Draws or updates the summary row right under a thread's first message in the main chat.
 function renderSummary(rootId) {
   const old = summaryRows[rootId];
   const info = threadSummary(rootId);
@@ -529,34 +566,35 @@ function renderSummary(rootId) {
   open.type = 'button';
   open.className = 'summary-open';
   open.textContent = `${info.text}  ›`;
-  open.title = 'Open the thread';
-  open.addEventListener('click', () => showThread(rootId));
+  open.title = 'Open the thread beside the chat';
+  open.addEventListener('click', () => openPanel(rootId));
   row.appendChild(open);
   // One Stop ends the thread: a stopped reply never hands off.
   if (info.live) addActions(row, [{ label: 'Stop', title: `Stop ${nameOf(info.live)}`, onClick: () => api.stop(info.liveKey) }]);
   if (old) old.replaceWith(row);
   else {
-    const rootRow = el.thread.querySelector(`[data-id="${rootId}"]`);
+    const rootRow = main.list.querySelector(`[data-id="${rootId}"]`);
     if (!rootRow) return;
     rootRow.after(row);
   }
   summaryRows[rootId] = row;
 }
 
-// The bubbles of replies still coming in always sit at the bottom.
-function renderPendingRows() {
+// The bubbles of replies still coming in always sit at the bottom of their view.
+function renderPendingRows(view) {
   for (const [key, p] of Object.entries(pending)) {
-    if (!pendingInView(p) || pendingRows[key]) continue;
-    const r = createRow(p.memberId, '', p.text.trim());
+    if (!pendingInView(view, p) || pendingRows[key]) continue;
+    const r = createRow(view, p.memberId, '', p.text.trim());
     r.row.classList.add('pending');
     addActions(r.row, [{ label: 'Stop', title: `Stop ${nameOf(p.memberId)}`, onClick: () => api.stop(key) }]);
-    pendingRows[key] = r;
+    pendingRows[key] = { ...r, view };
     updatePendingMeta(key);
   }
 }
 
-function removePendingRows() {
+function removePendingRows(view) {
   for (const [key, r] of Object.entries(pendingRows)) {
+    if (r.view !== view) continue;
     r.row.remove();
     delete pendingRows[key];
   }
@@ -598,23 +636,23 @@ function handOff(chatId, m) {
   const chat = chats.get(chatId);
   const target = findTarget(m.text, m.from, chat.thread.members, vendorNames());
   if (!target) return;
-  const view = m.threadOf || null;
+  const where = m.threadOf || null;
   const name = (id) => nameOf(id, chat);
   const toName = target.memberId ? name(target.memberId) : vendorName(target.vendor);
-  const hops = hopsSinceMatt(chat.thread, view);
+  const hops = hopsSinceMatt(chat.thread, where);
   if (hops >= HOP_LIMIT) {
-    post(chatId, { from: 'system', threadOf: view, text: `${name(m.from)} asked for ${toName}, but the agents have handed off ${HOP_LIMIT} times in a row. Reply here to keep going.` });
-    api.log('info', 'hop limit reached', { chatId, view, from: m.from, to: target });
+    post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} asked for ${toName}, but the agents have handed off ${HOP_LIMIT} times in a row. Reply here to keep going.` });
+    api.log('info', 'hop limit reached', { chatId, where, from: m.from, to: target });
     return;
   }
-  const to = target.memberId || join(chatId, target.vendor, { threadOf: view }).id;
+  const to = target.memberId || join(chatId, target.vendor, { threadOf: where }).id;
   if (pending[runKeyOf(chatId, to)]) {
-    post(chatId, { from: 'system', threadOf: view, text: `${name(m.from)} asked for ${name(to)}. ${busyText(chatId, to)}` });
+    post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} asked for ${name(to)}. ${busyText(chatId, to)}` });
     return;
   }
-  post(chatId, { from: 'system', threadOf: view, handoff: { from: m.from, to }, text: `${name(m.from)} › ${name(to)}` });
-  api.log('info', 'handoff', { chatId, view, from: m.from, to, hop: hops + 1 });
-  ask(chatId, to, view);
+  post(chatId, { from: 'system', threadOf: where, handoff: { from: m.from, to }, text: `${name(m.from)} › ${name(to)}` });
+  api.log('info', 'handoff', { chatId, where, from: m.from, to, hop: hops + 1 });
+  ask(chatId, to, where);
 }
 
 function busyText(chatId, memberId) {
@@ -622,70 +660,74 @@ function busyText(chatId, memberId) {
   return `${name} is still answering. Send it once ${name} is done, or stop it first.`;
 }
 
-// ---- Message box and the @ dropdown -----------------------------------------------
+// ---- Message boxes and the @ dropdown ---------------------------------------------
 
-function autoGrow() {
-  el.input.style.height = 'auto';
+function autoGrow(view) {
+  view.input.style.height = 'auto';
   // scrollHeight leaves out the border; without it the box always overflows by 2px.
-  el.input.style.height = (el.input.scrollHeight + el.input.offsetHeight - el.input.clientHeight) + 'px';
+  view.input.style.height = (view.input.scrollHeight + view.input.offsetHeight - view.input.clientHeight) + 'px';
 }
 
-// Who the text in the box would go to: { memberId } or { vendor } (joins).
-function target() {
-  return routeMessage(current().thread, el.input.value, openThread, vendorNames());
+// Who the text in a view's box would go to: { memberId } or { vendor } (joins).
+function target(view) {
+  return routeMessage(current().thread, view.input.value, view.threadOf, vendorNames());
 }
 
-function updatePlaceholder() {
-  if (!current()) return;
-  const to = routeMessage(current().thread, '', openThread, vendorNames()).memberId;
-  el.input.placeholder = `${openThread === null ? 'Message' : 'Reply in the thread to'} ${nameOf(to)}… (@ to bring in another agent, Shift+Enter for a new line)`;
+function updatePlaceholder(view) {
+  if (!current() || (view === panel && !panelOpen())) return;
+  const to = routeMessage(current().thread, '', view.threadOf, vendorNames()).memberId;
+  view.input.placeholder = view === main ? `Message ${nameOf(to)}… (@ to bring in another agent)` : `Reply to ${nameOf(to)} in the thread… (@ for another agent)`;
 }
 
 // Send is off while the box is empty or the agent it would go to is still
 // answering (a new launch would cut its reply off; use Stop instead).
-function updateSendButton() {
-  const t = current() && el.input.value.trim() ? target() : null;
+function updateSendButton(view) {
+  const t = current() && view.input.value.trim() ? target(view) : null;
   const busy = Boolean(t && t.memberId && pending[runKeyOf(currentId, t.memberId)]);
-  el.send.disabled = !t || busy;
-  el.send.title = busy ? busyText(currentId, t.memberId)
+  view.send.disabled = !t || busy;
+  view.send.title = busy ? busyText(currentId, t.memberId)
     : t && t.vendor ? `${vendorName(t.vendor)} isn't in this chat yet: it joins on its default model`
     : t ? `Goes to ${nameOf(t.memberId)}` : '';
 }
 
-function send() {
-  const text = el.input.value.trim();
+function updateSendButtons() {
+  openViews().forEach(updateSendButton);
+}
+
+function send(view) {
+  const text = view.input.value.trim();
   if (!text || !current()) return;
-  const t = target();
+  const t = target(view);
   if (t.memberId && pending[runKeyOf(currentId, t.memberId)]) return;
-  const to = t.memberId || join(currentId, t.vendor, { threadOf: openThread }).id;
-  post(currentId, { from: 'matt', to, text, threadOf: openThread });
-  el.input.value = '';
-  autoGrow();
-  closeMentions();
-  ask(currentId, to, openThread);
+  const to = t.memberId || join(currentId, t.vendor, { threadOf: view.threadOf }).id;
+  post(currentId, { from: 'matt', to, text, threadOf: view.threadOf });
+  view.input.value = '';
+  autoGrow(view);
+  closeMentions(view);
+  ask(currentId, to, view.threadOf);
 }
 
 // The `@word` being typed right before the cursor, or null.
-function mentionQuery() {
-  const before = el.input.value.slice(0, el.input.selectionStart);
+function mentionQuery(view) {
+  const before = view.input.value.slice(0, view.input.selectionStart);
   const m = /(^|\s)@([\w-]*)$/.exec(before);
   return m ? { start: before.length - m[2].length - 1, query: m[2].toLowerCase() } : null;
 }
 
 // The dropdown lists our three vendors (Matt, TM-54): one already in the chat
 // is reached by its name; one that isn't joins on its default model.
-function updateMentions() {
-  const q = mentionQuery();
+function updateMentions(view) {
+  const q = mentionQuery(view);
   const items = q && current() ? VENDORS.filter(v => vendorName(v).toLowerCase().startsWith(q.query)) : [];
-  if (!items.length) return closeMentions();
-  if (mention.items.join() !== items.join()) mention.index = 0;
-  mention.items = items;
-  el.mentions.replaceChildren();
+  if (!items.length) return closeMentions(view);
+  if (view.mention.items.join() !== items.join()) view.mention.index = 0;
+  view.mention.items = items;
+  view.mentions.replaceChildren();
   const inChat = new Set(current().thread.members.map(m => m.name.toLowerCase()));
   items.forEach((v, i) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'mention' + (i === mention.index ? ' active' : '');
+    b.className = 'mention' + (i === view.mention.index ? ' active' : '');
     b.style.setProperty('--agent-color', vendors[v] ? vendors[v].color : '#888');
     const name = document.createElement('span');
     name.className = 'mention-name';
@@ -695,29 +737,76 @@ function updateMentions() {
     sub.textContent = inChat.has(vendorName(v).toLowerCase()) ? 'in this chat' : 'joins on its default model';
     b.append(name, sub);
     // mousedown, not click: the box must keep focus and its cursor.
-    b.addEventListener('mousedown', (e) => { e.preventDefault(); pickMention(v); });
-    el.mentions.appendChild(b);
+    b.addEventListener('mousedown', (e) => { e.preventDefault(); pickMention(view, v); });
+    view.mentions.appendChild(b);
   });
-  el.mentions.hidden = false;
+  view.mentions.hidden = false;
 }
 
-function closeMentions() {
-  mention.items = [];
-  el.mentions.hidden = true;
+function closeMentions(view) {
+  view.mention.items = [];
+  view.mentions.hidden = true;
 }
 
-function pickMention(v) {
-  const q = mentionQuery();
-  if (!q) return closeMentions();
-  const end = el.input.selectionStart;
+function pickMention(view, v) {
+  const q = mentionQuery(view);
+  if (!q) return closeMentions(view);
+  const end = view.input.selectionStart;
   const word = `@${vendorName(v)} `;
-  el.input.value = el.input.value.slice(0, q.start) + word + el.input.value.slice(end);
+  view.input.value = view.input.value.slice(0, q.start) + word + view.input.value.slice(end);
   const caret = q.start + word.length;
-  el.input.setSelectionRange(caret, caret);
-  closeMentions();
-  autoGrow();
-  updateSendButton();
+  view.input.setSelectionRange(caret, caret);
+  closeMentions(view);
+  autoGrow(view);
+  updateSendButton(view);
 }
+
+function wireComposer(view) {
+  view.form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    send(view);
+  });
+  view.input.addEventListener('keydown', (e) => {
+    // While the @ dropdown is open, arrows move in it and Enter or Tab picks.
+    const items = view.mention.items;
+    if (!view.mentions.hidden && items.length) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        view.mention.index = (view.mention.index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        updateMentions(view);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        pickMention(view, items[view.mention.index]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeMentions(view);
+        return;
+      }
+    }
+    if (e.key === 'Escape' && view === panel) {
+      closePanel();
+      main.input.focus();
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      send(view);
+    }
+  });
+  view.input.addEventListener('input', () => {
+    autoGrow(view);
+    updateMentions(view);
+    updateSendButton(view);
+  });
+  view.input.addEventListener('click', () => updateMentions(view));
+  view.input.addEventListener('blur', () => closeMentions(view));
+}
+
+// ---- Runs -------------------------------------------------------------------
 
 // Launches a member with the chat so far and opens a bubble for its reply.
 // threadOf: the thread it answers in, or null for the main chat.
@@ -728,12 +817,12 @@ function ask(chatId, memberId, threadOf = null) {
   const runKey = runKeyOf(chatId, memberId);
   pending[runKey] = { chatId, memberId, threadOf, text: '', stderr: '', started: Date.now() };
   if (chatId === currentId) {
-    renderPendingRows();
+    openViews().forEach(renderPendingRows);
     renderMembers();
-    if (openThread === null && threadOf !== null) renderSummary(threadOf);
+    if (threadOf !== null) renderSummary(threadOf);
   }
   renderChatList();
-  updateSendButton();
+  updateSendButtons();
 
   api.run({ runKey, vendor: member.vendor, model: member.model, prompt }).then((started) => {
     if (started === false) finishReply(runKey, null, 'it could not be started');
@@ -750,10 +839,11 @@ function onOutput({ runKey, stream, text }) {
   p.text += text;
   const r = pendingRows[runKey];
   if (!r) return;
-  const atBottom = el.thread.scrollHeight - el.thread.scrollTop - el.thread.clientHeight < 40;
+  const list = r.view.list;
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   r.bubble.textContent = p.text.trim();
   updatePendingMeta(runKey);
-  if (atBottom) scrollToBottom();
+  if (atBottom) scrollToBottom(r.view);
 }
 
 // Turns the streamed reply into a message in its chat, or reports why there is none.
@@ -789,57 +879,20 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
     handOff(p.chatId, m);
   }
   if (p.chatId === currentId) {
-    if (openThread === null && threadOf !== null) renderSummary(threadOf);
+    if (threadOf !== null) renderSummary(threadOf);
     renderMembers();
   }
   renderChatList();
-  updateSendButton();
+  updateSendButtons();
 }
 
-el.form.addEventListener('submit', (e) => {
-  e.preventDefault();
-  send();
-});
+// ---- Start-up -----------------------------------------------------------------
 
-el.input.addEventListener('keydown', (e) => {
-  // While the @ dropdown is open, arrows move in it and Enter or Tab picks.
-  if (!el.mentions.hidden && mention.items.length) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      mention.index = (mention.index + (e.key === 'ArrowDown' ? 1 : -1) + mention.items.length) % mention.items.length;
-      updateMentions();
-      return;
-    }
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault();
-      pickMention(mention.items[mention.index]);
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeMentions();
-      return;
-    }
-  }
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-    e.preventDefault();
-    send();
-  }
-});
-
-el.input.addEventListener('input', () => {
-  autoGrow();
-  updateMentions();
-  updateSendButton();
-});
-el.input.addEventListener('click', updateMentions);
-el.input.addEventListener('blur', closeMentions);
-
+wireComposer(main);
+wireComposer(panel);
 el.newChat.addEventListener('click', startNewChat);
 el.addAgent.addEventListener('click', () => showChooser('add'));
-el.back.addEventListener('click', () => showThread(null));
-
-// ---- Start-up -----------------------------------------------------------------
+el.panelClose.addEventListener('click', () => { closePanel(); main.input.focus(); });
 
 api.onAgentOutput(onOutput);
 api.onAgentDone(({ runKey, code, stopped, timedOut, timeoutSec }) => finishReply(runKey, code, null, { stopped, timedOut, timeoutSec }));

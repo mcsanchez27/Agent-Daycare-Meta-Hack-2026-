@@ -22,11 +22,6 @@
 
     <section class="chooser" id="chooser" hidden aria-label="Pick an agent for the new chat"></section>
 
-    <div class="thread-bar" id="thread-bar" hidden>
-      <button type="button" id="back">← Back to chat</button>
-      <span id="thread-label">Thread</span>
-    </div>
-
     <main class="thread" id="thread" aria-live="polite">
       <p class="empty" id="empty">Say hi.</p>
     </main>
@@ -39,6 +34,22 @@
       </div>
     </form>
   </section>
+
+  <!-- Threads open beside the main chat (TM-54 Batch 4). -->
+  <aside class="thread-panel" id="thread-panel" hidden aria-label="Thread">
+    <header class="panel-top">
+      <span class="panel-label" id="panel-label">Thread</span>
+      <button type="button" class="panel-close" id="panel-close" title="Close the thread">×</button>
+    </header>
+    <div class="thread" id="panel-thread" aria-live="polite"></div>
+    <form class="composer" id="panel-composer" autocomplete="off">
+      <div class="mentions" id="panel-mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
+      <div class="input-row">
+        <textarea id="panel-message" rows="1" aria-label="Reply in the thread"></textarea>
+        <button type="submit" id="panel-send">Send</button>
+      </div>
+    </form>
+  </aside>
 
   <script src="members.js"></script>
   <script src="thread.js"></script>

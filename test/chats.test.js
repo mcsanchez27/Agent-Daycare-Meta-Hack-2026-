@@ -67,3 +67,12 @@ test('a renamed chat keeps its title and the flag; members are kept', async () =
   await chats.save(dir, sample('ren-2', '2026-10-22T10:00:00.000Z'));
   assert.ok(!(await chats.load(dir, 'ren-2')).titleSet, 'not renamed unless saved as renamed');
 });
+
+test('saves of one chat made at the same time all succeed, and the last one wins', async () => {
+  const dir = tmpDir();
+  const base = sample('race-1', '2026-10-23T05:00:00.000Z');
+  const versions = [1, 2, 3, 4, 5].map(n => ({ ...base, title: `v${n}` }));
+  await Promise.all(versions.map(v => chats.save(dir, v)));
+  assert.equal((await chats.load(dir, 'race-1')).title, 'v5');
+  assert.deepEqual(fs.readdirSync(dir).filter(f => f.endsWith('.tmp')), [], 'no temp files left');
+});

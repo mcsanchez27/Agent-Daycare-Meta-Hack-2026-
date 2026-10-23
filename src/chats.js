@@ -64,16 +64,27 @@ async function load(dir, id) {
   return clean({ ...JSON.parse(await fs.promises.readFile(fileFor(dir, id), 'utf8')), id });
 }
 
+// Saves of one chat run one after another, in the order they were asked for:
+// two at once would share the temporary file, and a late rename could put an
+// older version back over a newer one.
+const queues = new Map(); // file -> the last save queued for it
+
 // Writes to a temporary file first and renames it over the old one, so a
 // crash mid-save leaves the previous version rather than half a file.
 async function save(dir, chat) {
   const file = fileFor(dir, chat && chat.id);
   const c = clean(chat);
-  await fs.promises.mkdir(dir, { recursive: true });
-  const tmp = `${file}.tmp`;
-  await fs.promises.writeFile(tmp, JSON.stringify(c, null, 2) + '\n');
-  await fs.promises.rename(tmp, file);
-  return { id: c.id, title: c.title, updatedAt: c.updatedAt };
+  const write = async () => {
+    await fs.promises.mkdir(dir, { recursive: true });
+    const tmp = `${file}.tmp`;
+    await fs.promises.writeFile(tmp, JSON.stringify(c, null, 2) + '\n');
+    await fs.promises.rename(tmp, file);
+    return { id: c.id, title: c.title, updatedAt: c.updatedAt };
+  };
+  const next = (queues.get(file) || Promise.resolve()).then(write, write);
+  queues.set(file, next);
+  next.finally(() => { if (queues.get(file) === next) queues.delete(file); }).catch(() => {});
+  return next;
 }
 
 module.exports = { list, load, save, CHAT_ID };

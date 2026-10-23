@@ -27,6 +27,7 @@
 - Each chat is one file, `chats/<id>.json` (project root while developing, git-ignored; `userData/chats` when packaged), written through a temp file and a rename (`src/chats.js`). Chat ids are checked against `CHAT_ID` before they touch a path.
 - The sidebar lists chats newest first, titled from Matt's first message (`chatTitle`). A new chat isn't saved until something is said in it. The most recent chat opens at start-up.
 - Each chat member runs one process at a time. `pending[runKey]` (`<chatId>/<memberId>`) says where its reply lands, even if Matt has switched chats. Members of the same vendor, in one chat or several, run at the same time.
+- Saves of one chat are queued in `chats.save` so they run in order (two at once used to share the temp file and could lose a message).
 - An unreadable chat file is skipped and logged as `"msg":"chat file could not be read"`; the others still open.
 
 ## Chat members and models (TM-54)
@@ -37,7 +38,7 @@
 - **Runner:** `api.run({ runKey, vendor, model, prompt })` and `api.stop(runKey)`; events `agent:output` and `agent:done` carry `runKey`. The model is passed as `agy --model`, `claude --model` or `codex exec -m`; a `null` model passes nothing. The launch log line has `runKey` and the full `args`.
 
 ## Threads and agent-to-agent (TM-53 Batch 3)
-- A thread hangs off a main-chat message. Thread messages carry `threadOf` (that message's id); there are no threads inside threads. Matt opens one with "Reply in thread" or the summary row, and "← Back to chat" closes it. The one message box posts into whichever view is open.
+- A thread hangs off a main-chat message. Thread messages carry `threadOf` (that message's id); there are no threads inside threads. Matt opens one with the "Thread" button under any main-chat message, or the summary row; it opens in a **side panel** beside the main chat (TM-54 Batch 4), which closes with × or Esc and when switching chats. `app.js` has two views, `main` and `panel`, each with its own list, message box and @ dropdown; drawing and sending functions take the view.
 - When an agent's finished reply contains `@Name` for another member, or for a vendor not in the chat (which then joins), `handOff` in `app.js` posts a handoff note (`handoff: {from, to}`, drawn as "Claude › Codex · Sent to Codex ›") and launches that agent **in the same view**: the main chat or the thread the reply is in (TM-54 Batch 3; before that, main-chat handoffs opened a thread).
 - **Hop limit:** 3 handoffs in a row (`HOP_LIMIT`), counted per view (the main chat, or each thread) since Matt last spoke there (`hopsSinceMatt`); the 4th is refused with a note. A stopped or timed-out reply never hands off, so one Stop ends the chain. The log says `"msg":"handoff"` (with `hop`) and `"msg":"hop limit reached"`.
 - In the main chat, a summary row under the thread's first message shows "Claude ⇄ Codex talking…" with Stop while it runs, then "N replies · who".
