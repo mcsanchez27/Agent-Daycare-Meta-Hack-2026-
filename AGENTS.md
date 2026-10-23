@@ -13,7 +13,8 @@
   - Codex: `codex exec --skip-git-repo-check --sandbox workspace-write -` with the prompt written to stdin (so it never passes through `cmd.exe` when Codex is an npm `codex.cmd` shim)
 - There is no memory between launches. The window adds the recent thread to each prompt (`buildPrompt` in `src/renderer/thread.js`: last 20 messages, at most 12,000 characters, app notes left out). `"msg":"launching"` in the log shows the full prompt.
 - Replies are stdout only, shown as plain text. stderr is kept and its last lines are shown if the agent fails or says nothing. Send is off for an agent while it is answering.
-- Agents talk to each other by **relay**: each finished reply has "Send to <agent>" buttons. The relayed message is Matt's, with `relayOf` set; its prompt ends "Matt passed you this reply from <agent>. Respond to it:" and the text goes in once. No automatic agent-to-agent hops in V1.
+- Agents talk to each other by **relay**: each finished reply has "Send to <agent>" buttons. The relayed message is Matt's, with `relayOf` set; its prompt ends "Matt passed you this reply from <agent>. Respond to it:" and the text goes in once.
+- Agents also bring each other in with **@Name** (TM-53 Batch 3, see Threads below).
 - **Stop** sits under a reply while it streams. It kills the process tree (`killTree`: `taskkill /T /F` on Windows, so a `codex.cmd` shim's Codex dies too) and `agent:done` comes back with `stopped: true`. Any partial reply is kept and marked "stopped".
 
 ## Access, timeout, names (TM-53)
@@ -27,6 +28,13 @@
 - The sidebar lists chats newest first, titled from Matt's first message (`chatTitle`). A new chat isn't saved until something is said in it. The most recent chat opens at start-up.
 - Each agent runs one process at a time, whichever chat asked. `pending[agentId].chatId` says where its reply lands, even if Matt has switched chats. Send to that agent is off everywhere until it finishes.
 - An unreadable chat file is skipped and logged as `"msg":"chat file could not be read"`; the others still open.
+
+## Threads and agent-to-agent (TM-53 Batch 3)
+- A thread hangs off a main-chat message. Thread messages carry `threadOf` (that message's id); there are no threads inside threads. Matt opens one with "Reply in thread" or the summary row, and "← Back to chat" closes it. The one message box posts into whichever view is open.
+- When an agent's finished reply contains `@Name` for another agent (current names, `findMention` in `thread.js`), `handOff` in `app.js` posts a handoff note (`handoff: {from, to}`, drawn as "Claude › Codex · Sent to Codex ›") and launches that agent in the thread. A reply in the main chat starts a thread under itself.
+- **Hop limit:** 3 handoffs in a row (`HOP_LIMIT`), counted since Matt last spoke in the thread (`hopsSinceMatt`); the 4th is refused with a note. A stopped or timed-out reply never hands off, so one Stop ends the chain. The log says `"msg":"handoff"` (with `hop`) and `"msg":"hop limit reached"`.
+- In the main chat, a summary row under the thread's first message shows "Claude ⇄ Codex talking…" with Stop while it runs, then "N replies · who".
+- Prompts: a thread prompt holds the main chat up to the thread's first message, then the thread, and ends "<agent> brought you in with this message:" for a handoff. Main-chat prompts include thread messages marked "(in a thread)", inside the same size limit.
 
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)
 - All three answer headless and none hang. Claude ~7s, Codex ~7s, Antigravity ~30s (show a "thinking" state).

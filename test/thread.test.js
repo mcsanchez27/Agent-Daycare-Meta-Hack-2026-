@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createThread, addMessage, buildPrompt, chatTitle, AGENT_IDS } = require('../src/renderer/thread');
+const { createThread, addMessage, buildPrompt, chatTitle, findMention, hopsSinceMatt, HOP_LIMIT, AGENT_IDS } = require('../src/renderer/thread');
 
 test('messages get increasing ids and keep their order', () => {
   const t = createThread();
@@ -142,4 +142,75 @@ test('an agent reply can be marked as stopped or timed out', () => {
   assert.equal(addMessage(t, { from: 'codex', text: 'whole' }).endedAs, undefined);
   assert.throws(() => addMessage(t, { from: 'matt', to: 'claude', text: 'x', endedAs: 'stopped' }), /Bad ending/);
   assert.throws(() => addMessage(t, { from: 'claude', text: 'x', endedAs: 'exploded' }), /Bad ending/);
+});
+
+// ---- Threads and agent-to-agent hops (TM-53 Batch 3) ----
+
+test('a thread hangs off a main-chat message, and handoffs are app notes between two agents', () => {
+  const t = createThread();
+  const root = addMessage(t, { from: 'claude', text: 'Let me ask @Codex' });
+  const marker = addMessage(t, { from: 'system', text: 'Claude › Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
+  assert.equal(marker.threadOf, root.id);
+  assert.deepEqual(marker.handoff, { from: 'claude', to: 'codex' });
+  assert.equal(addMessage(t, { from: 'codex', text: 'here', threadOf: root.id }).threadOf, root.id);
+  assert.throws(() => addMessage(t, { from: 'codex', text: 'x', threadOf: 99 }), /Bad thread/);
+  assert.throws(() => addMessage(t, { from: 'codex', text: 'x', threadOf: marker.id }), /Bad thread/, 'no threads inside threads');
+  assert.throws(() => addMessage(t, { from: 'claude', text: 'x', handoff: { from: 'claude', to: 'codex' } }), /Bad handoff/);
+  assert.throws(() => addMessage(t, { from: 'system', text: 'x', handoff: { from: 'claude', to: 'claude' } }), /Bad handoff/);
+});
+
+test('findMention finds the first other agent named with @, by its current name', () => {
+  const names = { antigravity: 'Antigravity', claude: 'Cyclops', codex: 'Codex' };
+  assert.equal(findMention('Over to @codex, then @Antigravity.', 'claude', names), 'codex');
+  assert.equal(findMention('@Antigravity first, then @Codex', 'claude', names), 'antigravity');
+  assert.equal(findMention('I am @Cyclops', 'claude', names), null, 'not yourself');
+  assert.equal(findMention('ask @Claude', 'codex', names), null, 'old names do not count');
+  assert.equal(findMention('ask @Cyclops.', 'codex', names), 'claude');
+  assert.equal(findMention('email me@Codexample.com', 'claude', names), null, 'must be a whole name');
+  assert.equal(findMention('Codex could help', 'claude', names), null, 'needs the @');
+});
+
+test('hops count handoffs since Matt last spoke in the thread', () => {
+  const t = createThread();
+  const root = addMessage(t, { from: 'claude', text: '@Codex?' });
+  const hop = (from, to) => addMessage(t, { from: 'system', text: 'h', threadOf: root.id, handoff: { from, to } });
+  assert.equal(hopsSinceMatt(t, root.id), 0);
+  hop('claude', 'codex');
+  addMessage(t, { from: 'codex', text: '@Claude', threadOf: root.id });
+  hop('codex', 'claude');
+  assert.equal(hopsSinceMatt(t, root.id), 2);
+  addMessage(t, { from: 'matt', to: 'codex', text: 'keep going', threadOf: root.id });
+  assert.equal(hopsSinceMatt(t, root.id), 0);
+  hop('codex', 'antigravity');
+  assert.equal(hopsSinceMatt(t, root.id), 1);
+  assert.equal(HOP_LIMIT, 3);
+});
+
+test('a handoff prompt sees the main chat up to the thread, then the thread, and who brought it in', () => {
+  const t = createThread();
+  addMessage(t, { from: 'matt', to: 'claude', text: 'plan the menu' });
+  const root = addMessage(t, { from: 'claude', text: 'Soup first. @Codex can you price it?' });
+  addMessage(t, { from: 'matt', to: 'claude', text: 'later main-chat message' });
+  addMessage(t, { from: 'system', text: 'Claude › Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
+  const p = buildPrompt(t, 'codex', { threadOf: root.id });
+  assert.match(p, /^You are Codex/);
+  assert.match(p, /thread/);
+  assert.match(p, /Matt \(to Claude\): plan the menu/);
+  assert.ok(!p.includes('later main-chat message'), 'main chat after the thread started is left out');
+  assert.ok(p.endsWith('Claude brought you in with this message:\nSoup first. @Codex can you price it?'));
+  assert.equal(p.split('Soup first').length - 1, 1, 'the handoff text is in once');
+  assert.throws(() => buildPrompt(t, 'antigravity', { threadOf: root.id }), /not from Matt/, 'only the agent mentioned is brought in');
+});
+
+test('Matt can talk in a thread, and the main chat sees thread messages marked as such', () => {
+  const t = createThread();
+  const root = addMessage(t, { from: 'claude', text: '@Codex price it' });
+  addMessage(t, { from: 'codex', text: 'About $4', threadOf: root.id });
+  addMessage(t, { from: 'matt', to: 'codex', text: 'cheaper?', threadOf: root.id });
+  assert.ok(buildPrompt(t, 'codex', { threadOf: root.id }).endsWith("Matt's message to you:\ncheaper?"));
+  addMessage(t, { from: 'codex', text: 'About $3', threadOf: root.id });
+  addMessage(t, { from: 'matt', to: 'claude', text: 'so what did Codex say?' });
+  const main = buildPrompt(t, 'claude');
+  assert.match(main, /\(in a thread\) Codex: About \$3/);
+  assert.match(main, /@Name/, 'agents are told how to bring another agent in');
 });

@@ -6,19 +6,24 @@
 // and once finished passed on to another agent in one click (relay).
 // Chats are saved one file each (TM-53 Batch 2). A reply always lands in the
 // chat it was asked in, even if Matt has switched to another one meanwhile.
+// Threads (TM-53 Batch 3): an agent that writes @Name brings that agent in, in
+// a thread under its reply. The main chat shows a live summary row under the
+// thread's first message; opening it swaps the view to the thread.
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, chatTitle } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, chatTitle, findMention, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
 
 const agents = {}; // id -> { id, name, color, status }
 let selected = 'claude';
 const chats = new Map(); // id -> { id, title, createdAt, updatedAt, thread? } (thread once loaded)
 let currentId = null;
-// agentId -> the reply being streamed: { chatId, text, stderr, started }.
+let openThread = null; // id of the open thread's first message, or null for the main chat
+// agentId -> the reply being streamed: { chatId, threadOf, text, stderr, started }.
 // One per agent: each agent runs one process at a time, whichever chat asked.
 const pending = {};
 const pendingRows = {}; // agentId -> { row, meta, bubble } while its chat is on screen
+const summaryRows = {}; // thread's first message id -> its summary row in the main chat
 
 const el = {
   chatList: document.getElementById('chat-list'),
@@ -29,7 +34,10 @@ const el = {
   form: document.getElementById('composer'),
   input: document.getElementById('message'),
   send: document.getElementById('send'),
-  folder: document.getElementById('folder')
+  folder: document.getElementById('folder'),
+  threadBar: document.getElementById('thread-bar'),
+  threadLabel: document.getElementById('thread-label'),
+  back: document.getElementById('back')
 };
 
 window.addEventListener('error', (e) => api.log('error', e.message, { file: e.filename, line: e.lineno }));
@@ -97,9 +105,26 @@ async function openChat(id) {
 function showChat(id) {
   currentId = id;
   renderChatList();
+  showThread(null);
+}
+
+// Switches the view between the main chat (null) and one of its threads.
+function showThread(rootId) {
+  openThread = rootId;
+  const root = rootId === null ? null : current().thread.messages.find(m => m.id === rootId);
+  el.threadBar.hidden = !root;
+  if (root) el.threadLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : agentName(root.from) + "'s"} message`;
   renderThread();
-  updateSendButton();
-  el.input.focus();
+  select(selected);
+}
+
+// Whether a message belongs in the view on screen. A thread shows its first message too.
+function inView(m) {
+  return openThread === null ? !m.threadOf : m.id === openThread || m.threadOf === openThread;
+}
+
+function pendingInView(p) {
+  return p.chatId === currentId && (p.threadOf || null) === openThread;
 }
 
 async function persist(chat) {
@@ -139,10 +164,12 @@ function post(chatId, message) {
   chat.updatedAt = m.ts;
   chat.title = chatTitle(chat.thread);
   persist(chat);
-  if (chatId === currentId) {
+  if (chatId === currentId && inView(m)) {
     removePendingRows();
     renderMessage(m);
     renderPendingRows();
+  } else if (chatId === currentId && openThread === null && m.threadOf) {
+    renderSummary(m.threadOf);
   }
   renderChatList();
   return m;
@@ -184,6 +211,12 @@ function scrollToBottom() {
 }
 
 function renderMessage(m) {
+  if (m.handoff) {
+    // Drawn from the ids, so a renamed agent shows its current name.
+    const { row } = createRow('system', '', `${agentName(m.handoff.from)} › ${agentName(m.handoff.to)} · Sent to ${agentName(m.handoff.to)} ›`);
+    row.classList.add('handoff');
+    return;
+  }
   let metaText = `${agentName(m.from)} · ${timeLabel(m.ts)}` + (m.endedAs ? ` · ${m.endedAs}` : '');
   if (m.from === 'matt') {
     metaText = m.relayOf
@@ -191,30 +224,88 @@ function renderMessage(m) {
       : `To ${agentName(m.to)} · ${timeLabel(m.ts)}`;
   }
   const { row } = createRow(m.from, metaText, m.text);
+  row.dataset.id = m.id;
+  const buttons = [];
   if (agents[m.from]) {
-    addActions(row, Object.values(agents).filter(a => a.id !== m.from).map(a => ({
+    buttons.push(...Object.values(agents).filter(a => a.id !== m.from).map(a => ({
       label: `Send to ${a.name}`,
       title: `Pass this reply on to ${a.name}`,
       onClick: () => relay(m.from, m.text, a.id)
     })));
   }
+  if (m.from !== 'system' && openThread === null) {
+    buttons.push({ label: 'Reply in thread', title: 'Open a thread under this message', onClick: () => showThread(m.id) });
+  }
+  if (buttons.length) addActions(row, buttons);
 }
 
 function renderThread() {
   el.thread.replaceChildren(el.empty);
   Object.keys(pendingRows).forEach(id => delete pendingRows[id]);
+  Object.keys(summaryRows).forEach(id => delete summaryRows[id]);
   const chat = current();
   el.empty.hidden = Boolean(chat && chat.thread.messages.length);
   if (!chat) return;
-  for (const m of chat.thread.messages) renderMessage(m);
+  for (const m of chat.thread.messages) {
+    if (!inView(m)) continue;
+    renderMessage(m);
+    if (openThread === null) renderSummary(m.id);
+  }
   renderPendingRows();
   scrollToBottom();
+}
+
+// What the main chat says under a thread's first message, or null for no thread:
+// live while an agent answers in it, otherwise how many replies and from whom.
+function threadSummary(rootId) {
+  const msgs = current().thread.messages.filter(m => m.threadOf === rootId);
+  const live = Object.keys(pending).find(id => pending[id].chatId === currentId && pending[id].threadOf === rootId);
+  if (live) {
+    const hop = msgs.filter(m => m.handoff).pop();
+    const text = hop && hop.handoff.to === live
+      ? `${agentName(hop.handoff.from)} ⇄ ${agentName(live)} talking…`
+      : `${agentName(live)} replying in the thread…`;
+    return { text, live };
+  }
+  if (!msgs.length) return null;
+  const replies = msgs.filter(m => m.from !== 'system');
+  const who = [...new Set(replies.filter(m => agents[m.from]).map(m => agentName(m.from)))];
+  return { text: `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'}` + (who.length ? ` · ${who.join(', ')}` : '') };
+}
+
+// Draws or updates the summary row right under a thread's first message.
+function renderSummary(rootId) {
+  const old = summaryRows[rootId];
+  const info = threadSummary(rootId);
+  if (!info) {
+    if (old) old.remove();
+    delete summaryRows[rootId];
+    return;
+  }
+  const row = document.createElement('div');
+  row.className = 'msg summary' + (info.live ? ' live' : '');
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'summary-open';
+  open.textContent = `${info.text}  ›`;
+  open.title = 'Open the thread';
+  open.addEventListener('click', () => showThread(rootId));
+  row.appendChild(open);
+  // One Stop ends the thread: a stopped reply never hands off.
+  if (info.live) addActions(row, [{ label: 'Stop', title: `Stop ${agentName(info.live)}`, onClick: () => api.stopAgent(info.live) }]);
+  if (old) old.replaceWith(row);
+  else {
+    const rootRow = el.thread.querySelector(`[data-id="${rootId}"]`);
+    if (!rootRow) return;
+    rootRow.after(row);
+  }
+  summaryRows[rootId] = row;
 }
 
 // The bubbles of replies still coming in always sit at the bottom.
 function renderPendingRows() {
   for (const [agentId, p] of Object.entries(pending)) {
-    if (p.chatId !== currentId || pendingRows[agentId]) continue;
+    if (!pendingInView(p) || pendingRows[agentId]) continue;
     const r = createRow(agentId, '', p.text.trim());
     r.row.classList.add('pending');
     addActions(r.row, [{ label: 'Stop', title: `Stop ${agentName(agentId)}`, onClick: () => api.stopAgent(agentId) }]);
@@ -261,12 +352,34 @@ function addActions(row, buttons) {
 // Relay: Matt passes one agent's finished reply to another agent.
 function relay(fromAgent, text, to) {
   if (pending[to]) {
-    post(currentId, { from: 'system', text: busyText(to) });
+    post(currentId, { from: 'system', text: busyText(to), threadOf: openThread });
     scrollToBottom(); // the note lands at the bottom, likely out of view of the button clicked
     return;
   }
-  post(currentId, { from: 'matt', to, text, relayOf: fromAgent });
-  ask(currentId, to);
+  post(currentId, { from: 'matt', to, text, relayOf: fromAgent, threadOf: openThread });
+  ask(currentId, to, openThread);
+}
+
+// An agent's finished reply that names another agent with @Name brings that
+// agent in, in a thread under the reply (or in the thread it was already in).
+// After HOP_LIMIT handoffs in a row Matt has to say something in the thread.
+function handOff(chatId, m) {
+  const to = findMention(m.text, m.from, names());
+  if (!to) return;
+  const root = m.threadOf || m.id;
+  const hops = hopsSinceMatt(chats.get(chatId).thread, root);
+  if (hops >= HOP_LIMIT) {
+    post(chatId, { from: 'system', threadOf: root, text: `${agentName(m.from)} asked for ${agentName(to)}, but the agents have handed off ${HOP_LIMIT} times in a row. Reply in this thread to keep going.` });
+    api.log('info', 'hop limit reached', { chatId, root, from: m.from, to });
+    return;
+  }
+  if (pending[to]) {
+    post(chatId, { from: 'system', threadOf: root, text: `${agentName(m.from)} asked for ${agentName(to)}. ${busyText(to)}` });
+    return;
+  }
+  post(chatId, { from: 'system', threadOf: root, handoff: { from: m.from, to }, text: `${agentName(m.from)} › ${agentName(to)}` });
+  api.log('info', 'handoff', { chatId, root, from: m.from, to, hop: hops + 1 });
+  ask(chatId, to, root);
 }
 
 function busyText(agentId) {
@@ -304,7 +417,7 @@ function renderPicker() {
 function select(id) {
   if (!agents[id]) return;
   selected = id;
-  el.input.placeholder = `Message ${agentName(id)}… (Enter to send, Shift+Enter for a new line)`;
+  el.input.placeholder = `${openThread === null ? 'Message' : 'Reply in the thread to'} ${agentName(id)}… (Enter to send, Shift+Enter for a new line)`;
   renderPicker();
   updateSendButton();
   el.input.focus();
@@ -329,17 +442,21 @@ function send() {
   const text = el.input.value.trim();
   if (!text || pending[selected] || !current()) return;
   const to = selected;
-  post(currentId, { from: 'matt', to, text });
+  post(currentId, { from: 'matt', to, text, threadOf: openThread });
   el.input.value = '';
   autoGrow();
-  ask(currentId, to);
+  ask(currentId, to, openThread);
 }
 
-// Launches the agent with the chat's thread so far and opens a bubble for its reply.
-function ask(chatId, agentId) {
-  const prompt = buildPrompt(chats.get(chatId).thread, agentId, { names: names() });
-  pending[agentId] = { chatId, text: '', stderr: '', started: Date.now() };
-  if (chatId === currentId) renderPendingRows();
+// Launches the agent with the chat so far and opens a bubble for its reply.
+// threadOf: the thread it answers in, or null for the main chat.
+function ask(chatId, agentId, threadOf = null) {
+  const prompt = buildPrompt(chats.get(chatId).thread, agentId, { names: names(), threadOf });
+  pending[agentId] = { chatId, threadOf, text: '', stderr: '', started: Date.now() };
+  if (chatId === currentId) {
+    renderPendingRows();
+    if (openThread === null && threadOf !== null) renderSummary(threadOf);
+  }
   renderChatList();
   updateSendButton();
 
@@ -375,22 +492,27 @@ function finishReply(agentId, code, why, { stopped = false, timedOut = false, ti
     delete pendingRows[agentId];
   }
   const reply = p.text.trim();
+  const threadOf = p.threadOf || null;
+  let m = null;
   if (reply) {
-    post(p.chatId, { from: agentId, text: reply, endedAs: stopped ? 'stopped' : timedOut ? 'timed out' : null });
+    m = post(p.chatId, { from: agentId, text: reply, endedAs: stopped ? 'stopped' : timedOut ? 'timed out' : null, threadOf });
   }
   if (timedOut) {
-    post(p.chatId, { from: 'system', text: `${agentName(agentId)} took longer than ${durationLabel(timeoutSec)} and was stopped.` + (reply ? ' Its reply so far is above.' : '') + ' The limit is timeoutSec in config.json.' });
+    post(p.chatId, { from: 'system', threadOf, text: `${agentName(agentId)} took longer than ${durationLabel(timeoutSec)} and was stopped.` + (reply ? ' Its reply so far is above.' : '') + ' The limit is timeoutSec in config.json.' });
     api.log('warn', 'agent timed out', { agentId, timeoutSec });
   } else if (stopped) {
-    if (!reply) post(p.chatId, { from: 'system', text: `${agentName(agentId)} was stopped before it replied.` });
+    if (!reply) post(p.chatId, { from: 'system', threadOf, text: `${agentName(agentId)} was stopped before it replied.` });
   } else if (code !== 0 || !reply) {
     const notFound = /ENOENT/.test(p.stderr);
     const reason = why || (notFound ? `the app couldn't find ${agentName(agentId)}. Check its path in config.json`
       : code === 0 ? 'it finished without saying anything' : `it exited with code ${code}`);
     const detail = p.stderr.trim().split(/\r?\n/).slice(-3).join('\n');
-    post(p.chatId, { from: 'system', text: `${agentName(agentId)} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
+    post(p.chatId, { from: 'system', threadOf, text: `${agentName(agentId)} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
     api.log('warn', 'agent gave no reply', { agentId, code, why: why || null });
+  } else {
+    handOff(p.chatId, m);
   }
+  if (p.chatId === currentId && openThread === null && threadOf !== null) renderSummary(threadOf);
   renderChatList();
   updateSendButton();
 }
@@ -413,6 +535,7 @@ el.input.addEventListener('input', () => {
 });
 
 el.newChat.addEventListener('click', startNewChat);
+el.back.addEventListener('click', () => showThread(null));
 
 // ---- Start-up -----------------------------------------------------------------
 
