@@ -72,25 +72,6 @@ body {
   gap: .6rem;
 }
 
-.picker { display: flex; gap: .5rem; }
-.pick {
-  display: flex;
-  align-items: center;
-  gap: .45rem;
-  padding: .35rem .8rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: .9rem;
-  cursor: pointer;
-}
-.pick:hover { border-color: var(--agent-color); }
-.pick[aria-checked="true"] { border-color: var(--agent-color); background: color-mix(in srgb, var(--agent-color) 22%, transparent); }
-.pick .dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--agent-color); }
-.pick .status { color: var(--muted); font-size: .8rem; }
-.pick.working .status { color: var(--agent-color); }
 
 .input-row { display: flex; gap: .6rem; align-items: flex-end; }
 textarea {
@@ -248,7 +229,6 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
   font-size: .8rem;
   white-space: nowrap;
 }
-.picker[hidden] { display: none; }
 
 .chat.choosing .thread, .chat.choosing .composer, .chat.choosing .thread-bar, .chat.choosing .members { display: none; }
 .chooser[hidden] { display: none; }
@@ -304,3 +284,51 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 }
 .typed-model button:disabled { opacity: .45; cursor: default; }
 .chooser-nav { display: flex; gap: .6rem; margin-top: .5rem; }
+
+/* @ dropdown and Add agent (TM-54 Batch 3) */
+.composer { position: relative; }
+.mentions[hidden] { display: none; }
+.mentions {
+  position: absolute;
+  left: 1.25rem;
+  bottom: calc(100% - .4rem);
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  padding: .3rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+  z-index: 10;
+}
+.mention {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .4rem .6rem;
+  border: 0;
+  border-left: 3px solid var(--agent-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mention.active, .mention:hover { background: var(--line); }
+.mention-sub { color: var(--muted); font-size: .78rem; }
+.add-agent {
+  flex-shrink: 0;
+  padding: .1rem .7rem;
+  border-radius: 999px;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: .8rem;
+  cursor: pointer;
+}
+.add-agent:hover { color: var(--text); border-color: var(--matt); }
+.chat.choosing .add-agent { display: none; }
+.member.working { background: color-mix(in srgb, var(--agent-color) 18%, transparent); }

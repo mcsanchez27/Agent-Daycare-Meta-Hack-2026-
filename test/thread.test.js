@@ -219,3 +219,72 @@ test('Matt can talk in a thread, and the main chat sees thread messages marked a
   assert.match(main, /\(in a thread\) Codex: About \$3/);
   assert.match(main, /@Name/, 'agents are told how to bring another agent in');
 });
+
+// ---- @ and group chats (TM-54 Batch 3) ----
+const { newMember } = require('../src/renderer/members');
+const { findTarget, routeMessage, memorySnapshot } = require('../src/renderer/thread');
+const VN = { antigravity: 'Antigravity', claude: 'Claude', codex: 'Codex' };
+
+function claudeAndSonnet() {
+  const members = [newMember([], { vendor: 'claude' })];
+  members.push(newMember(members, { vendor: 'claude', model: 'sonnet' }, { modelLabel: 'Sonnet' }));
+  return createThread(members);
+}
+
+test('findTarget: a member by name, else an absent vendor, else nothing', () => {
+  const t = claudeAndSonnet();
+  assert.deepEqual(findTarget('hey @sonnet, thoughts?', null, t.members, VN), { memberId: 'm2' });
+  assert.deepEqual(findTarget('@Codex look at this', null, t.members, VN), { vendor: 'codex' });
+  assert.deepEqual(findTarget('ask @claude', 'm2', t.members, VN), { memberId: 'm1' });
+  assert.equal(findTarget('ask @claude', 'm1', t.members, VN), null, 'not yourself, and Claude is taken');
+  assert.equal(findTarget('email@codex.com', null, t.members, VN), null);
+  assert.deepEqual(findTarget('@codex then @sonnet', null, t.members, VN), { vendor: 'codex' }, 'the first one wins');
+});
+
+test('routeMessage: the first @, else the thread root author, else the owner', () => {
+  const t = claudeAndSonnet();
+  assert.deepEqual(routeMessage(t, 'hi', null, VN), { memberId: 'm1' });
+  assert.deepEqual(routeMessage(t, 'hi @Sonnet', null, VN), { memberId: 'm2' });
+  assert.deepEqual(routeMessage(t, '@antigravity hi', null, VN), { vendor: 'antigravity' });
+  const fromSonnet = addMessage(t, { from: 'm2', text: 'an idea' });
+  const fromMatt = addMessage(t, { from: 'matt', to: 'm1', text: 'a question' });
+  assert.deepEqual(routeMessage(t, 'more?', fromSonnet.id, VN), { memberId: 'm2' });
+  assert.deepEqual(routeMessage(t, 'more?', fromMatt.id, VN), { memberId: 'm1' });
+});
+
+test('handoffs can happen in the main chat, and hops count per view', () => {
+  const t = claudeAndSonnet();
+  const a = addMessage(t, { from: 'm1', text: '@Sonnet?' });
+  addMessage(t, { from: 'system', text: 'h', handoff: { from: 'm1', to: 'm2' } });
+  addMessage(t, { from: 'system', text: 'h', threadOf: a.id, handoff: { from: 'm1', to: 'm2' } });
+  assert.equal(hopsSinceMatt(t, null), 1);
+  assert.equal(hopsSinceMatt(t, a.id), 1);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'ok' });
+  assert.equal(hopsSinceMatt(t, null), 0);
+  assert.equal(hopsSinceMatt(t, a.id), 1, 'Matt spoke in the main chat, not the thread');
+});
+
+test('snapshot keeps the newest and stays within its limit', () => {
+  const t = claudeAndSonnet();
+  for (let i = 1; i <= 50; i++) addMessage(t, { from: 'm1', text: `note ${i} ` + 'x'.repeat(150) });
+  const s = memorySnapshot(t);
+  assert.ok(s.length <= 4000, s.length);
+  assert.ok(s.trimEnd().endsWith('note 50 ' + 'x'.repeat(150)));
+  assert.ok(!s.includes('note 1 '), 'oldest dropped');
+});
+
+test('memory counts toward the size limit and comes before the conversation', () => {
+  const members = [newMember([], { vendor: 'claude' })];
+  members.push(newMember(members, { vendor: 'codex', memory: { title: 'Old plan', text: 'M'.repeat(4000) } }));
+  const t = createThread(members);
+  for (let i = 0; i < 20; i++) addMessage(t, { from: 'm1', text: `msg ${i} ` + 'y'.repeat(1000) });
+  addMessage(t, { from: 'matt', to: 'm2', text: 'go' });
+  const p = buildPrompt(t, 'm2');
+  assert.match(p, /Background from your earlier chat 'Old plan':\nM{4000}/);
+  t.members[1].memory.name = 'Beast';
+  assert.match(buildPrompt(t, 'm2'), /Background from your earlier chat 'Old plan' \(you were called Beast there\):/);
+  assert.ok(p.indexOf('Background') < p.indexOf('Recent conversation'));
+  assert.ok(p.includes('msg 19 '), 'the newest message is kept');
+  const history = p.slice(p.indexOf('Background'), p.lastIndexOf("Matt's message"));
+  assert.ok(history.length <= 12000 + 200, history.length);
+});

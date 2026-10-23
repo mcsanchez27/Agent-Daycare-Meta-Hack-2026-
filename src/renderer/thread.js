@@ -40,7 +40,7 @@
       const root = thread.messages.find(m => m.id === threadOf);
       if (!root || root.threadOf || root.from === 'system') throw new Error(`Bad thread: ${threadOf}`);
     }
-    if (handoff !== null && (from !== 'system' || threadOf === null || !isMember(thread, handoff.from) ||
+    if (handoff !== null && (from !== 'system' || !isMember(thread, handoff.from) ||
         !isMember(thread, handoff.to) || handoff.from === handoff.to)) {
       throw new Error('Bad handoff');
     }
@@ -77,15 +77,58 @@
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  // Where `@name` first appears in text as a whole word, or -1.
+  function mentionAt(text, name) {
+    const hit = new RegExp(`(^|[^\\w@])@${escapeRegExp(name)}(?![\\w-])`, 'i').exec(text);
+    return hit ? hit.index : -1;
+  }
+
   // The first member other than selfId that text brings in with @Name, or null.
   function findMention(text, selfId, members) {
+    const t = findTarget(text, selfId, members, {});
+    return t && t.memberId ? t.memberId : null;
+  }
+
+  // Who text brings in with @ (TM-54): { memberId } for a member by name, or
+  // { vendor } for a vendor's name that no member of the chat has (it joins
+  // on its default model). The earliest @ wins; selfId is never a target.
+  function findTarget(text, selfId, members, vendorNames = VENDOR_NAMES) {
+    const names = new Set(members.map(m => m.name.toLowerCase()));
+    const candidates = members.filter(m => m.id !== selfId).map(m => ({ name: m.name, target: { memberId: m.id } }))
+      .concat(VENDORS.filter(v => vendorNames[v] && !names.has(vendorNames[v].toLowerCase()))
+        .map(v => ({ name: vendorNames[v], target: { vendor: v } })));
     let best = null;
-    for (const m of members) {
-      if (m.id === selfId) continue;
-      const hit = new RegExp(`(^|[^\\w@])@${escapeRegExp(m.name)}(?![\\w-])`, 'i').exec(text);
-      if (hit && (!best || hit.index < best.index)) best = { id: m.id, index: hit.index };
+    for (const c of candidates) {
+      const at = mentionAt(text, c.name);
+      if (at !== -1 && (!best || at < best.at)) best = { at, target: c.target };
     }
-    return best ? best.id : null;
+    return best ? best.target : null;
+  }
+
+  // Who answers Matt's message: the first @ in it, else (in a thread) the
+  // agent who wrote the thread's first message, else the chat's own agent.
+  function routeMessage(thread, text, threadOf = null, vendorNames = VENDOR_NAMES) {
+    const t = findTarget(text, null, thread.members, vendorNames);
+    if (t) return t;
+    const root = threadOf === null ? null : thread.messages.find(m => m.id === threadOf);
+    if (root && isMember(thread, root.from)) return { memberId: root.from };
+    return { memberId: thread.members[0].id };
+  }
+
+  // What an agent added from this chat carries to another one: the newest
+  // messages (threads included), at most maxChars, oldest dropped first.
+  function memorySnapshot(thread, maxChars = 4000) {
+    const names = nameMap(thread);
+    const lines = [];
+    let used = 0;
+    const said = thread.messages.filter(m => m.from !== 'system');
+    for (let i = said.length - 1; i >= 0; i--) {
+      const line = historyLine(said[i], names, true);
+      if (used + line.length + 2 > maxChars) break;
+      lines.unshift(line);
+      used += line.length + 2;
+    }
+    return lines.join('\n\n');
   }
 
   // Agents bringing each other in stops after this many hops until Matt says
@@ -95,7 +138,7 @@
   function hopsSinceMatt(thread, rootId) {
     let hops = 0;
     for (const m of thread.messages) {
-      if (m.threadOf !== rootId) continue;
+      if ((m.threadOf || null) !== rootId) continue;
       if (m.from === 'matt') hops = 0;
       else if (m.handoff) hops++;
     }
@@ -134,8 +177,11 @@
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const header = intro + where + 'Reply to the latest message in plain text.';
 
+    // Background from the chat this member was added from counts toward the limit.
+    const was = me.memory && me.memory.name && me.memory.name !== me.name ? ` (you were called ${me.memory.name} there)` : '';
+    const memory = me.memory && me.memory.text ? `Background from your earlier chat '${me.memory.title}'${was}:\n${me.memory.text}` : '';
     const history = [];
-    let used = 0;
+    let used = memory.length;
     let earlier = said.slice(0, -1);
     if (last.relayOf) {
       // The relayed reply goes in at the end; don't spend room on it twice.
@@ -150,6 +196,7 @@
     }
 
     const parts = [header];
+    if (memory) parts.push(memory);
     if (history.length) parts.push('Recent conversation:\n' + history.join('\n\n'));
     if (handoff && !fromMatt) {
       parts.push(`${names[last.from]} brought you in with this message:\n` + last.text);
@@ -169,5 +216,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, hopsSinceMatt };
+  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, routeMessage, memorySnapshot, hopsSinceMatt };
 });

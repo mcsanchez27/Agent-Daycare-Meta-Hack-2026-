@@ -16,6 +16,7 @@
   <section class="chat">
     <header class="top">
       <div class="members" id="members" aria-label="Agents in this chat"></div>
+      <button type="button" class="add-agent" id="add-agent" title="Add a new agent, or one from another chat">+ Add agent</button>
       <div class="folder" id="folder" title="Agents work in this folder">Working folder: …</div>
     </header>
 
@@ -31,7 +32,7 @@
     </main>
 
     <form class="composer" id="composer" autocomplete="off">
-      <div class="picker" id="picker" role="radiogroup" aria-label="Send to"></div>
+      <div class="mentions" id="mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
       <div class="input-row">
         <textarea id="message" rows="1" placeholder="Message Claude… (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
         <button type="submit" id="send">Send</button>

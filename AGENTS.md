@@ -13,14 +13,14 @@
   - Codex: `codex exec --skip-git-repo-check --sandbox workspace-write -` with the prompt written to stdin (so it never passes through `cmd.exe` when Codex is an npm `codex.cmd` shim)
 - There is no memory between launches. The window adds the recent thread to each prompt (`buildPrompt` in `src/renderer/thread.js`: last 20 messages, at most 12,000 characters, app notes left out). `"msg":"launching"` in the log shows the full prompt.
 - Replies are stdout only, shown as plain text. stderr is kept and its last lines are shown if the agent fails or says nothing. Send is off for a chat member while it is answering.
-- Agents talk to each other by **relay**: each finished reply has "Send to <agent>" buttons. The relayed message is Matt's, with `relayOf` set; its prompt ends "Matt passed you this reply from <agent>. Respond to it:" and the text goes in once.
-- Agents also bring each other in with **@Name** (TM-53 Batch 3, see Threads below).
+- **Who answers** (TM-54 Batch 3, `routeMessage` in `thread.js`): the first `@Name` in Matt's message, else (in a thread) the agent who wrote the thread's first message, else the chat's own agent. Typing `@` opens a dropdown of the three vendors; one already in the chat is reached by name, one that isn't joins on its default model. Agents bring each other in the same way (`findTarget`).
+- The TM-47 relay ("Send to <agent>" buttons) is gone; old relay messages (`relayOf`) still display and go into prompts as "[passed on X's reply]".
 - **Stop** sits under a reply while it streams. It kills the process tree (`killTree`: `taskkill /T /F` on Windows, so a `codex.cmd` shim's Codex dies too) and `agent:done` comes back with `stopped: true`. Any partial reply is kept and marked "stopped".
 
 ## Access, timeout, names (TM-53)
 - **Equal access (Matt's decision):** every agent may write inside the working folder without asking. Antigravity uses `--mode accept-edits`; Claude uses `acceptEdits`; Codex uses the `workspace-write` sandbox. Nothing grants system-wide access.
 - **Timeout:** `agents.<id>.timeoutSec` in `config.json` (default 300, kept between 10 and 3600). Past it, the runner stops the agent like Stop (`stopAgent(id, 'timeout')`), and `agent:done` carries `timedOut: true`. The log line is `"msg":"timed out, stopping"`.
-- **Names:** `agents.<vendor>.name` in `config.json` is the vendor's display name, the default name for new chat members (TM-54). Each chat member has its own `name`, used everywhere for that member: picker, bubbles, relay buttons, handoff markers and prompts.
+- **Names:** `agents.<vendor>.name` in `config.json` is the vendor's display name, the default name for new chat members (TM-54). Each chat member has its own `name`, used everywhere for that member: header chips, bubbles, @, handoff markers and prompts.
 - `config.load` writes newly added settings into an existing `config.json`, so they can be edited by hand.
 
 ## Chats (TM-53 Batch 2)
@@ -32,13 +32,14 @@
 ## Chat members and models (TM-54)
 - Each chat has its own agents in `chat.thread.members`: `[{ id, vendor, model, name, memory? }]`, the first being the chat's owner (`src/renderer/members.js`). New members get ids `m1`, `m2`, …; their name is the vendor's name, then the model's label, then "<vendor> 2". `addMessage` checks `from`/`to` against the member ids.
 - **Old chats** (no `members`) are moved over by `ensureMembers` when opened: one member per vendor that appears, with the vendor id as member id, so old messages still resolve. Nothing is written until the next message.
-- "+ New chat" shows a chooser: vendor, then model. Models come from `api.listModels()` (`agent:models`): Antigravity from `agy models` (10s limit, cached), Claude `opus`/`sonnet`/`haiku`, Codex typed (checked against `MODEL_TEXT`). A one-member chat hides the picker; the header shows each member as "name · model".
+- "+ New chat" shows a chooser: vendor, then model. Models come from `api.listModels()` (`agent:models`): Antigravity from `agy models` (10s limit, cached), Claude `opus`/`sonnet`/`haiku`, Codex typed (checked against `MODEL_TEXT`). The header shows each member as "name · model".
+- **"+ Add agent"** in the header: a new agent (vendor, then model), or "From another chat…" (a chat, then one of its agents). That one joins with `memory: { title, name, text }`, a snapshot of the other chat's newest messages (`memorySnapshot`, ≤ 4,000 characters), which its prompts carry as "Background from your earlier chat …". Joining posts a note ("Codex (default model) joined").
 - **Runner:** `api.run({ runKey, vendor, model, prompt })` and `api.stop(runKey)`; events `agent:output` and `agent:done` carry `runKey`. The model is passed as `agy --model`, `claude --model` or `codex exec -m`; a `null` model passes nothing. The launch log line has `runKey` and the full `args`.
 
 ## Threads and agent-to-agent (TM-53 Batch 3)
 - A thread hangs off a main-chat message. Thread messages carry `threadOf` (that message's id); there are no threads inside threads. Matt opens one with "Reply in thread" or the summary row, and "← Back to chat" closes it. The one message box posts into whichever view is open.
-- When an agent's finished reply contains `@Name` for another agent (current names, `findMention` in `thread.js`), `handOff` in `app.js` posts a handoff note (`handoff: {from, to}`, drawn as "Claude › Codex · Sent to Codex ›") and launches that agent in the thread. A reply in the main chat starts a thread under itself.
-- **Hop limit:** 3 handoffs in a row (`HOP_LIMIT`), counted since Matt last spoke in the thread (`hopsSinceMatt`); the 4th is refused with a note. A stopped or timed-out reply never hands off, so one Stop ends the chain. The log says `"msg":"handoff"` (with `hop`) and `"msg":"hop limit reached"`.
+- When an agent's finished reply contains `@Name` for another member, or for a vendor not in the chat (which then joins), `handOff` in `app.js` posts a handoff note (`handoff: {from, to}`, drawn as "Claude › Codex · Sent to Codex ›") and launches that agent **in the same view**: the main chat or the thread the reply is in (TM-54 Batch 3; before that, main-chat handoffs opened a thread).
+- **Hop limit:** 3 handoffs in a row (`HOP_LIMIT`), counted per view (the main chat, or each thread) since Matt last spoke there (`hopsSinceMatt`); the 4th is refused with a note. A stopped or timed-out reply never hands off, so one Stop ends the chain. The log says `"msg":"handoff"` (with `hop`) and `"msg":"hop limit reached"`.
 - In the main chat, a summary row under the thread's first message shows "Claude ⇄ Codex talking…" with Stop while it runs, then "N replies · who".
 - Prompts: a thread prompt holds the main chat up to the thread's first message, then the thread, and ends "<agent> brought you in with this message:" for a handoff. Main-chat prompts include thread messages marked "(in a thread)", inside the same size limit.
 
