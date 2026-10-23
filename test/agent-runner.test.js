@@ -17,32 +17,99 @@ function makeRunner() {
   };
 
   const runner = new AgentRunner(win, testLogger);
-  clearInterval(runner.scanInterval);
   return { runner, sent, logEvents };
 }
 
-test('sendInput logs a warning if stdin.write throws', () => {
-    const { runner, logEvents } = makeRunner();
-    runner.processes.set('claude', {
-        stdin: {
-            writable: true,
-            destroyed: false,
-            write: () => {
-                throw new Error('Fake write error');
-            }
-        }
-    });
+const req = (o = {}) => ({ runKey: 'chat1/m1', vendor: 'claude', model: null, prompt: 'x', ...o });
 
-    // We mock startAgent so it doesn't actually launch anything when fallback occurs
-    runner.startAgent = () => true;
+test('run refuses an unknown vendor and an empty prompt', () => {
+  const { runner } = makeRunner();
+  assert.throws(() => runner.run(req({ vendor: 'grok' })), /not found/);
+  assert.throws(() => runner.run(req({ prompt: '   ' })), /prompt is required/);
+});
 
-    runner.sendInput('claude', 'test input');
+test('typed models are checked before anything is launched', () => {
+  const { runner, sent } = makeRunner();
+  runner._spawnAgentProcess = () => { throw new Error('must not launch'); };
+  assert.equal(runner.run(req({ vendor: 'codex', model: 'gpt 5 & del' })), false);
+  assert.match(sent.find(s => s.ch === 'agent:output').d.text, /model name/);
+  assert.ok(AgentRunner.MODEL_TEXT.test('gpt-5.1-codex'));
+  for (const bad of ['gpt 5', 'a&b', '']) assert.ok(!AgentRunner.MODEL_TEXT.test(bad), bad);
+});
 
-    const warnLogs = logEvents.filter(l => l.level === 'warn');
-    assert.equal(warnLogs.length, 1);
-    assert.equal(warnLogs[0].msg, 'stdin write failed, relaunching instead');
-    assert.equal(warnLogs[0].data.error, 'Fake write error');
-    assert.equal(warnLogs[0].agentId, 'claude');
+test('only the three V1 agents exist', () => {
+  const { runner } = makeRunner();
+  assert.deepEqual(Object.keys(runner.agents), ['antigravity', 'claude', 'codex']);
+});
+
+test('agent arguments: everyone may write in the working folder; codex reads the prompt from stdin', () => {
+  const { runner } = makeRunner();
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '--output-format', 'json', '-p', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
+  // Codex's arguments must stay safe for a codex.cmd shim.
+  assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
+});
+
+test('model flags per vendor', () => {
+  const { runner } = makeRunner();
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', 'opus').args, ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', '--model', 'opus', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'gemini-4-argon-high').args, ['--mode', 'accept-edits', '--output-format', 'json', '--model', 'gemini-4-argon-high', '-p', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi', 'gpt-5'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-m', 'gpt-5', '-'], stdin: 'hi' });
+  assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x', 'gpt-5.1-codex').args, 'win32'), 'still safe for codex.cmd');
+});
+
+test('launchCommand runs a safe Codex .cmd shim through cmd.exe and refuses anything a shell could misread', () => {
+  const lc = AgentRunner.launchCommand;
+  const shim = 'C:\\Users\\Matth\\AppData\\Roaming\\npm\\codex.cmd';
+  const cmd = lc(shim, ['exec', '--skip-git-repo-check', '-'], 'win32', { ComSpec: 'C:\\Windows\\system32\\cmd.exe' });
+  assert.equal(cmd.file, 'C:\\Windows\\system32\\cmd.exe');
+  assert.deepEqual(cmd.args, ['/d', '/s', '/c', `""${shim}" exec --skip-git-repo-check -"`]);
+  assert.equal(cmd.options.windowsVerbatimArguments, true);
+  // A prompt as an argument would reach the shell, so it is refused.
+  assert.equal(lc(shim, ['-p', 'hi & del *'], 'win32'), null);
+  assert.equal(lc(shim, ['-p', 'two words'], 'win32'), null);
+  assert.equal(lc('C:\\x\\a&b.cmd', ['exec'], 'win32'), null);
+  // Real executables are run directly with any arguments.
+  assert.deepEqual(lc('C:\\x\\claude.exe', ['-p', 'hi & bye'], 'win32'), { file: 'C:\\x\\claude.exe', args: ['-p', 'hi & bye'], options: {} });
+  assert.deepEqual(lc('/usr/bin/codex.cmd', ['-p', 'a b'], 'linux').args, ['-p', 'a b']);
+});
+
+test('resolveExecutable: configured path, then `where` on Windows (.exe first, npm .cmd shims found)', () => {
+  const r = AgentRunner.resolveExecutable;
+  const agent = { path: 'C:\\nope\\codex.exe', command: 'codex.exe' };
+  assert.equal(r({ ...agent, path: 'C:\\ok\\codex.exe' }, { platform: 'win32', exists: () => true, where: () => [] }), 'C:\\ok\\codex.exe');
+
+  const npm = { 'codex': ['C:\\npm\\codex', 'C:\\npm\\codex.cmd'] };
+  assert.equal(r(agent, { platform: 'win32', exists: () => false, where: n => npm[n] || [] }), 'C:\\npm\\codex.cmd', 'codex.exe missing, codex.cmd found');
+
+  const both = { 'codex': ['C:\\npm\\codex.cmd', 'C:\\bin\\codex.exe'] };
+  assert.equal(r({ ...agent, command: 'codex' }, { platform: 'win32', exists: () => false, where: n => both[n] || [] }), 'C:\\bin\\codex.exe');
+
+  assert.equal(r(agent, { platform: 'win32', exists: () => false, where: () => [] }), 'codex.exe', 'nothing found: spawn reports it');
+  assert.equal(r({ path: '/nope', command: 'codex' }, { platform: 'linux', exists: () => false, where: () => { throw new Error('not used'); } }), 'codex');
+});
+
+test('codex gets the whole prompt on stdin, shell characters and new lines intact', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { runner, sent } = makeRunner();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-codex-'));
+  // A stand-in Codex: node, printing its arguments and what it read on stdin.
+  const script = path.join(dir, 'fake.js');
+  fs.writeFileSync(script, "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.stringify({args:process.argv.slice(2),stdin:s})));");
+  runner.agents.codex.path = process.execPath;
+  runner._buildAgentArgs = () => ({ args: [script, 'exec', '-'], stdin: 'hi & "you" | %PATH%\nline 2' });
+  runner.workingDir = dir;
+
+  const done = new Promise(resolve => { runner._send = (ch, d) => { sent.push({ ch, d }); if (ch === 'agent:done') resolve(d); }; });
+  assert.equal(runner.run(req({ vendor: 'codex', prompt: 'ignored' })), true);
+  const result = await done;
+  assert.equal(result.code, 0);
+  const out = JSON.parse(sent.filter(s => s.ch === 'agent:output' && s.d.stream === 'stdout').map(s => s.d.text).join(''));
+  assert.deepEqual(out.args, ['exec', '-']);
+  assert.equal(out.stdin, 'hi & "you" | %PATH%\nline 2');
 });
 
 test('versionCommand runs executables directly and only routes safe Windows batch shims through cmd.exe', () => {
@@ -75,8 +142,7 @@ test('scanAgents falls back to "Installed" when the --version check fails', asyn
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-scan-'));
   const notExe = path.join(dir, 'not-an-executable.txt');
   fs.writeFileSync(notExe, 'hello');
-  runner.agents = { testagent: { id: 'testagent', name: 'Test Agent', role: 'tester', title: 't', path: notExe, command: 'testagent', status: 'idle', externalPid: null } };
-  runner.hookSessions = { testagent: new Map() };
+  runner.agents = { testagent: { id: 'testagent', name: 'Test Agent', path: notExe, command: 'testagent', status: 'idle' } };
 
   const results = await runner.scanAgents();
 
@@ -90,8 +156,7 @@ test('scanAgents falls back to "Installed" when the --version check fails', asyn
 
 test('scanAgents reports an agent missing from PATH as not installed and logs why', async () => {
   const { runner, logEvents } = makeRunner();
-  runner.agents = { 'fake-agent': { id: 'fake-agent', name: 'Fake Agent', role: 'tester', title: 't', path: '/definitely/does/not/exist/fake-agent-bin', command: 'this_command_does_not_exist_at_all_12345', status: 'sleeping', externalPid: null } };
-  runner.hookSessions['fake-agent'] = new Map();
+  runner.agents = { 'fake-agent': { id: 'fake-agent', name: 'Fake Agent', path: '/definitely/does/not/exist/fake-agent-bin', command: 'this_command_does_not_exist_at_all_12345', status: 'idle' } };
 
   const results = await runner.scanAgents();
 
@@ -105,52 +170,189 @@ test('scanAgents reports an agent missing from PATH as not installed and logs wh
   assert.ok(dbg.data.error.length > 0, 'the underlying error message is captured');
 });
 
-test('checkExternalProcesses catches a listProcesses failure and warns exactly once', async () => {
+test('stop logs a warning if child.kill throws and still clears the process', () => {
   const { runner, logEvents } = makeRunner();
-  runner.listProcesses = () => { throw new Error('Simulated tasklist failure'); };
-  const warns = () => logEvents.filter(l => l.level === 'warn');
+  // No pid: on Windows killTree would run a real taskkill on it instead of kill().
+  runner.processes.set('chat1/m1', { vendor: 'claude', run: 1, kill() { throw new Error('kill failed hard'); } });
 
-  assert.equal(runner.scanErrorLogged, false);
-  await runner.checkExternalProcesses();
-  assert.equal(runner.scanErrorLogged, true);
-  assert.equal(warns().length, 1);
-  assert.equal(warns()[0].data.error, 'Simulated tasklist failure');
-
-  await runner.checkExternalProcesses(); // should not log again
-  assert.equal(warns().length, 1);
-});
-
-test('stopAgent logs a warning if child.kill throws and still clears the process', () => {
-  const { runner, logEvents } = makeRunner();
-  runner.processes.set('claude', { pid: 4242, kill() { throw new Error('kill failed hard'); } });
-
-  runner.stopAgent('claude');
+  runner.stop('chat1/m1');
 
   const warn = logEvents.find(l => l.level === 'warn' && l.msg === 'kill failed');
   assert.ok(warn, 'a "kill failed" warning is logged');
   assert.equal(warn.agentId, 'claude');
   assert.equal(warn.data.error, 'kill failed hard');
-  assert.equal(runner.processes.has('claude'), false, 'the dead handle is dropped anyway');
-  assert.equal(runner.agents.claude.status, 'sleeping');
+  assert.equal(runner.processes.has('chat1/m1'), false, 'the dead handle is dropped anyway');
 });
 
-test('overlapping scans are skipped while a slow listProcesses is still running', async () => {
+test('agent output reaches the window as plain text too, tagged with the run', () => {
+  const { runner, sent } = makeRunner();
+  runner.emitOutput({ runKey: 'chat1/m1', vendor: 'claude', run: 3 }, '\x1b[1mHello\x1b[0m there');
+  const out = sent.find(s => s.ch === 'agent:output').d;
+  assert.equal(out.runKey, 'chat1/m1');
+  assert.equal(out.text, 'Hello there');
+  assert.equal(out.raw, '\x1b[1mHello\x1b[0m there');
+  assert.equal(out.run, 3);
+  assert.equal(out.stream, 'stdout');
+});
+
+test('killTree uses taskkill /T on Windows so a .cmd shim\'s children die too', () => {
+  const calls = [];
+  const child = { pid: 99, kill: () => calls.push('kill') };
+  AgentRunner.killTree(child, 'win32', (file, args) => calls.push([file, args]));
+  assert.deepEqual(calls, [['taskkill', ['/pid', '99', '/T', '/F']]]);
+  calls.length = 0;
+  AgentRunner.killTree(child, 'linux', () => calls.push('taskkill'));
+  assert.deepEqual(calls, ['kill']);
+});
+
+test('Stop ends a running agent and its done event says it was stopped', async () => {
+  const os = require('node:os');
   const { runner } = makeRunner();
-  let calls = 0;
-  let release;
-  runner.listProcesses = () => {
-    calls++;
-    if (calls > 1) return Promise.resolve(new Map());
-    return new Promise(resolve => { release = () => resolve(new Map()); }); // only the first scan stalls
-  };
+  runner.agents.claude.path = process.execPath;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("partial"); setInterval(() => {}, 1000)'], stdin: null });
+  runner.workingDir = os.tmpdir();
+  const events = [];
+  const done = new Promise(resolve => { runner._send = (ch, d) => { events.push({ ch, d }); if (ch === 'agent:done') resolve(d); }; });
+  runner.run(req());
+  await new Promise(r => setTimeout(r, 300));
+  runner.stop('chat1/m1');
+  const d = await done;
+  assert.equal(d.stopped, true);
+  assert.equal(d.runKey, 'chat1/m1');
+  assert.equal(runner.processes.has('chat1/m1'), false);
+});
 
-  const first = runner.checkExternalProcesses();
-  await runner.checkExternalProcesses(); // first is still in flight: this tick is skipped
-  assert.equal(calls, 1);
+test('two runs of one vendor are separate', async () => {
+  const os = require('node:os');
+  const { runner } = makeRunner();
+  runner.agents.claude.path = process.execPath;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'setInterval(() => {}, 1000)'], stdin: null });
+  runner.workingDir = os.tmpdir();
+  const done = {};
+  const ended = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') { done[d.runKey] = d; if (Object.keys(done).length === 2) resolve(); } }; });
+  assert.equal(runner.run(req({ runKey: 'a/m1' })), true);
+  assert.equal(runner.run(req({ runKey: 'b/m1' })), true);
+  runner.stop('a/m1');
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(runner.processes.has('a/m1'), false);
+  assert.equal(runner.processes.has('b/m1'), true, 'the other Claude keeps going');
+  runner.stop('b/m1');
+  await ended;
+  assert.equal(done['a/m1'].stopped, true);
+});
 
-  release();
-  await first;
-  assert.equal(runner.scanInFlight, false);
-  await runner.checkExternalProcesses();
-  assert.equal(calls, 2);
+test('a reply that runs past its timeout is stopped and reported as timed out', async () => {
+  const os = require('node:os');
+  const { runner, logEvents } = makeRunner();
+  runner.agents.claude.path = process.execPath;
+  runner.agents.claude.timeoutSec = 0.3;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'setInterval(() => {}, 1000)'], stdin: null });
+  runner.workingDir = os.tmpdir();
+  const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
+  runner.run(req());
+  const d = await done;
+  assert.equal(d.timedOut, true);
+  assert.equal(d.stopped, false);
+  assert.equal(d.timeoutSec, 0.3);
+  assert.ok(logEvents.find(l => l.msg === 'timed out, stopping'));
+  assert.equal(runner.processes.has('chat1/m1'), false);
+});
+
+test('a reply that finishes in time does not trip the timeout', async () => {
+  const os = require('node:os');
+  const { runner } = makeRunner();
+  runner.agents.claude.path = process.execPath;
+  runner.agents.claude.timeoutSec = 2;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("ok")'], stdin: null });
+  runner.workingDir = os.tmpdir();
+  const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
+  runner.run(req());
+  const d = await done;
+  assert.equal(d.code, 0);
+  assert.equal(d.timedOut, false);
+});
+
+test('applyConfig picks up per-agent timeouts', () => {
+  const { runner } = makeRunner();
+  runner.applyConfig({ agents: { antigravity: { timeoutSec: 600 } } });
+  assert.equal(runner.agents.antigravity.timeoutSec, 600);
+});
+
+test('a name from config replaces the default everywhere the window looks', () => {
+  const { runner } = makeRunner();
+  runner.applyConfig({ agents: { claude: { name: 'Cyclops' } } });
+  assert.equal(runner.getConfigs().find(a => a.id === 'claude').name, 'Cyclops');
+});
+
+test('agy model list is parsed', () => {
+  const text = 'Fetching available models...\ngemini-4-argon-high\tGemini 4 Argon (High)\r\nclaude-opus-5-5-low\tClaude Opus 5.5 (Low)\n\n';
+  assert.deepEqual(AgentRunner.parseAgyModels(text), [
+    { id: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High)' },
+    { id: 'claude-opus-5-5-low', label: 'Claude Opus 5.5 (Low)' }
+  ]);
+});
+
+test('listModels: Antigravity from agy, Claude fixed, Codex typed; agy failing leaves it empty', async () => {
+  const { runner } = makeRunner();
+  runner._agyModelsText = async () => 'x\tX model\n';
+  const m = await runner.listModels();
+  assert.deepEqual(m.antigravity, [{ id: 'x', label: 'X model' }]);
+  assert.deepEqual(m.claude.map(x => x.id), ['opus', 'sonnet', 'haiku']);
+  assert.deepEqual(m.codex, []);
+  const { runner: r2 } = makeRunner();
+  r2._agyModelsText = async () => { throw new Error('agy missing'); };
+  assert.deepEqual((await r2.listModels()).antigravity, []);
+});
+
+// ---- Vendor sessions (TM-55 Batch 1) ----
+const { parseEvent } = AgentRunner;
+
+test('claude stream-json: text, session, usage with context window, plan usage', () => {
+  assert.deepEqual(parseEvent('claude', JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' })), { sessionId: 's1' });
+  assert.deepEqual(parseEvent('claude', JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hel' }, { type: 'tool_use' }, { type: 'text', text: 'lo' }] } })), { text: 'Hello' });
+  const r = parseEvent('claude', JSON.stringify({ type: 'result', session_id: 's1', usage: { input_tokens: 4, cache_read_input_tokens: 60459, cache_creation_input_tokens: 71789, output_tokens: 11 },
+    modelUsage: { 'claude-opus-5-5[1m]': { contextWindow: 1000000 } } }));
+  assert.deepEqual(r, { sessionId: 's1', usage: { inputTokens: 132252, outputTokens: 11, contextWindow: 1000000 } });
+  const rl = parseEvent('claude', JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.03, resetsAt: 1 }, seven_day: { utilization: 0.04, resetsAt: 2 } } } }));
+  assert.deepEqual(rl, { plan: { status: 'allowed', fiveHour: { used: 0.03, resetsAt: 1 }, sevenDay: { used: 0.04, resetsAt: 2 } } });
+  assert.equal(parseEvent('claude', 'not json'), null);
+});
+
+test('codex --json: thread id, agent message, turn usage', () => {
+  assert.deepEqual(parseEvent('codex', '{"type":"thread.started","thread_id":"t1"}'), { sessionId: 't1' });
+  assert.deepEqual(parseEvent('codex', '{"type":"item.completed","item":{"type":"agent_message","text":"pineapple"}}'), { text: 'pineapple' });
+  assert.equal(parseEvent('codex', '{"type":"item.completed","item":{"type":"reasoning","text":"hmm"}}'), null);
+  assert.deepEqual(parseEvent('codex', '{"type":"turn.completed","usage":{"input_tokens":51646,"cached_input_tokens":21504,"output_tokens":11}}'), { usage: { inputTokens: 51646, outputTokens: 11 } });
+});
+
+test('antigravity json: the whole envelope', () => {
+  assert.deepEqual(parseEvent('antigravity', '{"conversation_id":"c1","status":"SUCCESS","response":"pineapple\\n","usage":{"input_tokens":26117,"output_tokens":521}}'),
+    { sessionId: 'c1', text: 'pineapple\n', usage: { inputTokens: 26117, outputTokens: 521 } });
+});
+
+test('resuming: each vendor gets its session flag, still safe for a codex.cmd shim', () => {
+  const { runner } = makeRunner();
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', null, 's1').args, ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', '--resume', 's1', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'm', 'c1').args, ['--mode', 'accept-edits', '--output-format', 'json', '--model', 'm', '--conversation', 'c1', '-p', 'hi']);
+  const codex = runner._buildAgentArgs('codex', 'hi', 'gpt-6-astra', '01a16915-c682-73f1-bf39-7e19fbecb8a1');
+  assert.deepEqual(codex, { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', '-m', 'gpt-6-astra', '01a16915-c682-73f1-bf39-7e19fbecb8a1', '-'], stdin: 'hi' });
+  assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', codex.args, 'win32'), 'safe for codex.cmd');
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi').args, ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-']);
+});
+
+test('a session id that is not a plain id is refused before launch', () => {
+  const { runner, sent } = makeRunner();
+  runner._spawnAgentProcess = () => { throw new Error('must not launch'); };
+  assert.equal(runner.run({ runKey: 'c/m1', vendor: 'codex', model: null, sessionId: 'x & del *', prompt: 'hi' }), false);
+  assert.match(sent.find(s => s.ch === 'agent:output').d.text, /session/);
+});
+
+test('session ids: no leading hyphen, and ids the CLIs report are checked too', () => {
+  const { runner, sent } = makeRunner();
+  runner._spawnAgentProcess = () => { throw new Error('must not launch'); };
+  assert.equal(runner.run({ runKey: 'c/m1', vendor: 'claude', model: null, sessionId: '-rf', prompt: 'hi' }), false);
+  assert.match(sent.find(s => s.ch === 'agent:output').d.text, /session/);
+  assert.equal(parseEvent('codex', '{"type":"thread.started","thread_id":"--yolo"}'), null);
+  assert.equal(parseEvent('claude', JSON.stringify({ type: 'system', subtype: 'init', session_id: { x: 1 } })), null);
+  assert.deepEqual(parseEvent('antigravity', '{"conversation_id":"-x","response":"hi"}'), { text: 'hi' }, 'a bad id is dropped, the reply kept');
 });

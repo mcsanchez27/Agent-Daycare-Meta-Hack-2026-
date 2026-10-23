@@ -1,31 +1,143 @@
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const { StringDecoder } = require('string_decoder');
 
 const execFileAsync = promisify(execFile);
 
-// Windows will not spawn a .cmd/.bat shim (how npm installs claude, grok, ...)
-// without a shell, so `--version` on one fails with EINVAL and the scan can
-// only say "Installed". For those we go through cmd.exe with a fixed, fully
+// Windows will not spawn a .cmd/.bat shim (how npm installs codex, ...)
+// without a shell. For those we go through cmd.exe with a fixed, fully
 // quoted command line. The path must pass this allow-list first: no quotes,
-// no cmd metacharacters (& | < > ^ % !), so nothing in it can reach the shell.
-// Everything else is run directly, as the command-injection fix intended.
+// no cmd metacharacters (& | < > ^ % !), and so must every argument (plain
+// words and flags only), so nothing can reach the shell. That is why Codex
+// gets its prompt on stdin rather than as an argument.
+// Everything else is run directly.
 const SAFE_BATCH_PATH = /^[A-Za-z]:\\[A-Za-z0-9 _.\-\\()~@+,=]+\.(cmd|bat)$/i;
+const SAFE_BATCH_ARG = /^[A-Za-z0-9_.=-]+$/;
 
-function versionCommand(exe, platform = process.platform, env = process.env) {
+// A model name typed or picked for a chat member (TM-54). It goes on the
+// command line, so it is held to plain characters (still safe for a .cmd shim).
+const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+// A vendor session id goes on the command line (TM-55): plain ids only.
+// No leading hyphen, so an id can never be read as a flag.
+const SESSION_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,79}$/;
+const sessionOk = (id) => typeof id === 'string' && SESSION_ID.test(id);
+// agy prints its whole answer at the end; past this much, it's passed on as plain text.
+const MAX_PENDING = 4 * 1024 * 1024;
+
+// One line of a CLI's JSON output (TM-55) as what the app needs from it:
+// { text?, sessionId?, usage?: { inputTokens, outputTokens, contextWindow? },
+// plan? (Claude only: 5-hour and 7-day use) }, or null for anything else.
+function parseEvent(vendor, line) {
+  let j;
+  try { j = JSON.parse(line); } catch (_) { return null; }
+  if (!j || typeof j !== 'object') return null;
+  if (vendor === 'claude') {
+    if (j.type === 'system' && j.subtype === 'init') return sessionOk(j.session_id) ? { sessionId: j.session_id } : null;
+    if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
+      const text = j.message.content.filter(c => c.type === 'text').map(c => c.text).join('');
+      return text ? { text } : null;
+    }
+    if (j.type === 'result') {
+      const u = j.usage || {};
+      const windows = Object.values(j.modelUsage || {}).map(m => m.contextWindow).filter(Boolean);
+      const usage = { inputTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0), outputTokens: u.output_tokens || 0 };
+      if (windows.length) usage.contextWindow = Math.max(...windows);
+      return sessionOk(j.session_id) ? { sessionId: j.session_id, usage } : { usage };
+    }
+    if (j.type === 'rate_limit_event' && j.rate_limit_info) {
+      const w = j.rate_limit_info.unifiedWindows || {};
+      const win = (x) => (x ? { used: x.utilization, resetsAt: x.resetsAt } : null);
+      return { plan: { status: j.rate_limit_info.status, fiveHour: win(w.five_hour), sevenDay: win(w.seven_day) } };
+    }
+    return null;
+  }
+  if (vendor === 'codex') {
+    if (j.type === 'thread.started') return sessionOk(j.thread_id) ? { sessionId: j.thread_id } : null;
+    if (j.type === 'item.completed' && j.item && j.item.type === 'agent_message' && j.item.text) return { text: j.item.text };
+    if (j.type === 'turn.completed' && j.usage) return { usage: { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 } };
+    return null;
+  }
+  if (j.conversation_id || j.response) {
+    const out = {};
+    if (sessionOk(j.conversation_id)) out.sessionId = j.conversation_id;
+    if (typeof j.response === 'string' && j.response) out.text = j.response;
+    if (j.usage) out.usage = { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 };
+    return out;
+  }
+  return null;
+}
+
+const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
+
+// `agy models` prints a header, then one "id<TAB>label" line per model.
+function parseAgyModels(text) {
+  return String(text).split(/\r?\n/).map(l => l.split('\t')).filter(p => p.length === 2 && MODEL_TEXT.test(p[0].trim()))
+    .map(([id, label]) => ({ id: id.trim(), label: label.trim() }));
+}
+
+// How to run exe with args: { file, args, options }, or null when it is a
+// Windows batch shim that cannot be run safely with these arguments.
+function launchCommand(exe, args, platform = process.platform, env = process.env) {
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(exe)) {
-    if (!SAFE_BATCH_PATH.test(exe)) return null;
+    if (!SAFE_BATCH_PATH.test(exe) || !args.every(a => SAFE_BATCH_ARG.test(a))) return null;
     return {
       file: env.ComSpec || 'cmd.exe',
-      args: ['/d', '/s', '/c', `""${exe}" --version"`],
+      args: ['/d', '/s', '/c', `""${exe}" ${args.join(' ')}"`],
       options: { windowsVerbatimArguments: true, windowsHide: true }
     };
   }
-  return { file: exe, args: ['--version'], options: {} };
+  return { file: exe, args, options: {} };
+}
+
+function versionCommand(exe, platform = process.platform, env = process.env) {
+  return launchCommand(exe, ['--version'], platform, env);
+}
+
+// Finds the file to launch. The configured path wins if it exists. On Windows
+// we otherwise ask `where`, trying the command as configured and without
+// ".exe" (an npm install is codex.cmd, not codex.exe), and keep only files
+// Windows can launch, .exe first. Elsewhere spawn searches PATH itself.
+function resolveExecutable(agent, { platform = process.platform, exists = fs.existsSync, where = whereSync } = {}) {
+  if (agent.path && exists(agent.path)) return agent.path;
+  if (platform !== 'win32') return agent.command;
+  const names = [...new Set([agent.command, agent.command.replace(/\.exe$/i, '')])];
+  for (const name of names) {
+    const hits = where(name).filter(f => /\.(exe|cmd|bat)$/i.test(f));
+    const best = hits.find(f => /\.exe$/i.test(f)) || hits[0];
+    if (best) return best;
+  }
+  return agent.command;
+}
+
+// Stops a child and everything it started. On Windows a plain kill stops only
+// the top process, which for a .cmd shim is cmd.exe while Codex keeps going,
+// so the whole tree goes through taskkill.
+function killTree(child, platform = process.platform, run = execFile) {
+  if (platform === 'win32' && child.pid) {
+    run('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+  } else {
+    child.kill('SIGTERM');
+  }
+}
+
+function whereSync(name) {
+  try {
+    return String(execFileSync('where', [name], { encoding: 'utf8', timeout: 2500, windowsHide: true }))
+      .split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  } catch (_) {
+    return [];
+  }
 }
 
 const { parseAnsi } = require('./utils/ansi.js');
+const { stripAnsi } = require('./logger');
+const { DEFAULT_TIMEOUT_SEC } = require('./config');
+
+// Lines Codex prints to stderr that are not part of its answer: its banner,
+// session metadata, token counts and MCP login noise.
+const CODEX_STDERR_NOISE = /^(Reading additional input|OpenAI Codex|--------|workdir:|model:|provider:|approval:|sandbox:|reasoning effort:|reasoning summaries:|session id:|user$|tokens used|\d{1,3}(,\d{3})*$|codex$|\S*Z (ERROR|WARN) )/i;
 
 class AgentRunner {
   constructor(mainWindow, logger, config = null) {
@@ -33,89 +145,16 @@ class AgentRunner {
     this.log = logger;
     this.workingDir = null; // set by applyConfig
     this.processes = new Map();
-    this.promptTimers = new Map();
     this.runCounts = new Map();
-    this.scanErrorLogged = false;
-    this.scanInFlight = false; // one tasklist at a time, see checkExternalProcesses
-    // Sessions reported by the agent's own hooks (see hook-server.js), keyed by session id.
-    this.hookSessions = { antigravity: new Map(), claude: new Map(), codex: new Map(), grok: new Map() };
 
-    // Default verified agent definitions on this PC
+    // The three vendors' CLIs. Chats pick their agents (members) from these.
     this.agents = {
-      antigravity: {
-        id: 'antigravity',
-        name: 'Antigravity',
-        title: 'Team Lead & Orchestrator',
-        role: 'lead',
-        command: 'agy.exe',
-        path: 'agy.exe',
-        processFilter: 'agy.exe',
-        color: '#7b2cbf',
-        accent: '#9d4edd',
-        theme: 'indigo',
-        status: 'sleeping',
-        installed: true,
-        version: '1.2.6',
-        externalPid: null,
-        unreadPrompt: null
-      },
-      claude: {
-        id: 'claude',
-        name: 'Claude Code',
-        title: 'Code Architect & Builder',
-        role: 'architect',
-        command: 'claude.exe',
-        path: 'claude.exe',
-        processFilter: 'claude.exe',
-        color: '#e76f51',
-        accent: '#f4a261',
-        theme: 'orange',
-        status: 'sleeping',
-        installed: true,
-        version: '2.1.276',
-        externalPid: null,
-        unreadPrompt: null
-      },
-      codex: {
-        id: 'codex',
-        name: 'Codex',
-        title: 'QA & Logic Engineer',
-        role: 'tester',
-        command: 'codex.exe',
-        path: 'codex.exe',
-        processFilter: 'codex.exe',
-        color: '#2a9d8f',
-        accent: '#52b788',
-        theme: 'teal',
-        status: 'sleeping',
-        installed: true,
-        version: '0.155.0',
-        externalPid: null,
-        unreadPrompt: null
-      },
-      grok: {
-        id: 'grok',
-        name: 'Grok',
-        title: 'Sentry & Code Reviewer',
-        role: 'reviewer',
-        command: 'grok.exe',
-        path: 'grok.exe',
-        processFilter: 'grok.exe',
-        color: '#212529',
-        accent: '#00f5d4',
-        theme: 'cyber',
-        status: 'sleeping',
-        installed: true,
-        version: '1.0.34',
-        externalPid: null,
-        unreadPrompt: null
-      }
+      antigravity: { id: 'antigravity', name: 'Antigravity', command: 'agy.exe', path: 'agy.exe', color: '#9d4edd', installed: true, version: 'Unknown' },
+      claude: { id: 'claude', name: 'Claude', command: 'claude.exe', path: 'claude.exe', color: '#e76f51', installed: true, version: 'Unknown' },
+      codex: { id: 'codex', name: 'Codex', command: 'codex.exe', path: 'codex.exe', color: '#2a9d8f', installed: true, version: 'Unknown' }
     };
 
     if (config) this.applyConfig(config);
-
-    // Start background process scanner
-    this.startProcessScanner();
   }
 
   // Applies user settings (see config.js): executable paths and working folder.
@@ -124,125 +163,26 @@ class AgentRunner {
     for (const [id, cfg] of Object.entries(config.agents || {})) {
       const agent = this.agents[id];
       if (!agent || !cfg) continue;
-      if (cfg.command) {
-        agent.command = cfg.command;
-        agent.processFilter = cfg.command;
-      }
+      if (cfg.name) agent.name = cfg.name;
+      if (cfg.command) agent.command = cfg.command;
       if (cfg.path) agent.path = cfg.path;
+      if (Number.isFinite(cfg.timeoutSec)) agent.timeoutSec = cfg.timeoutSec;
     }
     this.log.info('app', 'config applied', { workingDir: this.workingDir, paths: Object.fromEntries(Object.values(this.agents).map(a => [a.id, a.path])) });
   }
 
   // Each agent launch gets a run number so log lines from a restart are distinguishable.
-  currentRun(agentId) {
-    return this.runCounts.get(agentId) || 0;
+  currentRun(vendor) {
+    return this.runCounts.get(vendor) || 0;
   }
 
   shutdown() {
-    clearInterval(this.scanInterval);
-    const activeAgents = [...this.processes.keys()];
-    for (const agentId of activeAgents) {
-      this.stopAgent(agentId);
-    }
-
-    // Clear any timers not associated with processes (edge case)
-    if (this.promptTimers.size > 0) {
-      for (const timer of this.promptTimers.values()) clearTimeout(timer);
-      this.promptTimers.clear();
-    }
-
+    for (const runKey of [...this.processes.keys()]) this.stop(runKey);
     this.log.info('app', 'agent runner shut down');
   }
 
-  startProcessScanner() {
-    this.scanInterval = setInterval(() => {
-      this.checkExternalProcesses();
-    }, 2500);
-    setTimeout(() => this.checkExternalProcesses(), 500);
-  }
-
-  // Returns Map<lowercased image name, pid>. Windows only; tests replace this.
-  // Async so the 2.5 s scan never stalls the main thread: tasklist takes
-  // 10-30 ms on a busy PC and used to block every IPC call for that long.
-  async listProcesses() {
-    const { stdout: output } = await execFileAsync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 3000, windowsHide: true });
-    const activeFilters = new Map();
-    const regex = /^"([^"]+)","([^"]+)"/gm;
-    let match;
-    while ((match = regex.exec(output)) !== null) {
-      activeFilters.set(match[1].toLowerCase(), match[2]);
-    }
-    return activeFilters;
-  }
-
-  async checkExternalProcesses() {
-    // A slow tasklist must not pile up overlapping scans; skip this tick instead.
-    if (this.scanInFlight) return;
-    this.scanInFlight = true;
-    try {
-      const activeFilters = await this.listProcesses();
-
-      let changed = false;
-
-      Object.values(this.agents).forEach(agent => {
-        const filter = (agent.processFilter || agent.command).toLowerCase();
-        const foundPid = activeFilters.get(filter);
-
-        const wasExternal = agent.externalPid !== null;
-        const isExternal = !!foundPid && !this.processes.has(agent.id);
-
-        const hasHookSessions = this.hookSessions[agent.id].size > 0;
-
-        if (isExternal && agent.externalPid !== foundPid) {
-          agent.externalPid = foundPid;
-          if (!hasHookSessions && (agent.status === 'sleeping' || agent.status === 'idle')) {
-            agent.status = 'working';
-          }
-          changed = true;
-          this.broadcastTeamMessage({
-            agentId: agent.id,
-            agentName: agent.name,
-            type: 'start',
-            text: `🔗 Linked to active terminal session: ${agent.name} (PID: ${foundPid})`
-          });
-        } else if (!isExternal && wasExternal) {
-          agent.externalPid = null;
-          if (hasHookSessions && !foundPid) {
-            // Terminal closed without a SessionEnd hook: forget its sessions.
-            this.log.info(agent.id, 'process gone; clearing hook sessions', { sessions: this.hookSessions[agent.id].size });
-            this.hookSessions[agent.id].clear();
-          }
-          if (!this.processes.has(agent.id)) {
-            agent.status = 'sleeping';
-          }
-          changed = true;
-          this.broadcastTeamMessage({
-            agentId: agent.id,
-            agentName: agent.name,
-            type: 'exit',
-            text: `Terminal session for ${agent.name} was closed.`
-          });
-        }
-      });
-
-      if (this.expireHookSessions()) changed = true;
-
-      if (changed) {
-        this.broadcastAllStatus();
-      }
-    } catch (err) {
-      if (!this.scanErrorLogged) {
-        this.scanErrorLogged = true;
-        this.log.warn('app', 'external process scan failed (will not retry logging)', { error: err.message });
-      }
-    } finally {
-      this.scanInFlight = false;
-    }
-  }
-
   async scanAgents() {
-    const agentList = Object.values(this.agents);
-    const results = await Promise.all(agentList.map(async agent => {
+    return Promise.all(Object.values(this.agents).map(async agent => {
       let isInstalled = false;
       let version = 'Unknown';
       let verifiedPath = agent.path;
@@ -259,7 +199,6 @@ class AgentRunner {
           verifiedPath = agent.command;
           versionTarget = String(stdout).split(/\r?\n/)[0].trim() || agent.command;
         } catch (err) {
-          isInstalled = false;
           this.log.debug(agent.id, 'not found on PATH', { path: agent.path, error: err.message });
         }
       }
@@ -272,8 +211,7 @@ class AgentRunner {
         } else {
           try {
             const { stdout } = await execFileAsync(cmd.file, cmd.args, { ...cmd.options, encoding: 'utf8', timeout: 2500 });
-            const vOut = stdout.trim();
-            version = vOut.split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
+            version = stdout.trim().split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
           } catch (err) {
             version = 'Installed';
             this.log.debug(agent.id, '--version check failed', { path: versionTarget, error: err.message });
@@ -286,144 +224,181 @@ class AgentRunner {
       agent.version = version;
       agent.path = verifiedPath;
 
-      return {
-        id: agent.id,
-        name: agent.name,
-        role: agent.role,
-        title: agent.title,
-        installed: isInstalled,
-        version: version,
-        path: verifiedPath,
-        externalPid: agent.externalPid,
-        status: agent.status,
-        hookSessions: this.hookSessions[agent.id] ? this.hookSessions[agent.id].size : 0
-      };
+      return { id: agent.id, name: agent.name, installed: isInstalled, version, path: verifiedPath };
     }));
-
-    return results;
   }
 
   getConfigs() {
     return Object.values(this.agents);
   }
 
-  updateRole(agentId, role, title) {
-    if (this.agents[agentId]) {
-      if (role === 'lead') {
-        for (const agent of Object.values(this.agents)) {
-          if (agent.role === 'lead' && agent.id !== agentId) {
-            agent.role = 'architect';
-            agent.title = 'Code Architect & Builder';
-            this.broadcastStatus(agent.id, agent.status);
-          }
-        }
-      }
-      this.agents[agentId].role = role;
-      if (title) this.agents[agentId].title = title;
-      this.broadcastStatus(agentId, this.agents[agentId].status);
-      return this.agents[agentId];
+  // The models a new chat member can pick, per vendor (TM-54). Antigravity
+  // lists its own (`agy models`); Claude takes these aliases; Codex has no
+  // list, so its model is typed. Asked once, then cached.
+  listModels() {
+    if (!this._models) {
+      this._models = this._agyModelsText()
+        .then(parseAgyModels)
+        .catch((err) => {
+          this.log.warn('antigravity', 'could not list models', { error: err.message });
+          return [];
+        })
+        .then(antigravity => ({ antigravity, claude: CLAUDE_MODELS, codex: [] }));
     }
-    return null;
+    return this._models;
   }
 
+  async _agyModelsText() {
+    const cmd = launchCommand(this._getExecutable(this.agents.antigravity), ['models']);
+    if (!cmd) throw new Error('agy path is not safe to run');
+    const { stdout } = await execFileAsync(cmd.file, cmd.args, { ...cmd.options, encoding: 'utf8', timeout: 10000, windowsHide: true });
+    return stdout;
+  }
 
-  // Start agent with precise argument formatting & shell: false
-  startAgent(agentId, initialPrompt = '') {
-    const agent = this.agents[agentId];
-    if (!agent) throw new Error(`Agent ${agentId} not found`);
+  // Launches one chat member's reply. Each message is a fresh one-shot process
+  // (stdin closed), so there is no memory between launches; the chat window
+  // puts recent history into the prompt (see renderer/thread.js buildPrompt).
+  // runKey (`<chatId>/<memberId>`, TM-54) names the run: events carry it, and
+  // Stop and the timeout act on it alone, so two members of one vendor can
+  // answer at once. model is the vendor's model id, or null for its default.
+  run({ runKey, vendor, model = null, sessionId = null, prompt = '' }) {
+    const agent = this.agents[vendor];
+    if (!agent) throw new Error(`Agent ${vendor} not found`);
+    const p = String(prompt || '').trim();
+    if (!p) throw new Error('A prompt is required');
 
-    if (this.processes.has(agentId)) {
-      this.stopAgent(agentId);
+    const run = this.currentRun(vendor) + 1;
+    this.runCounts.set(vendor, run);
+    const ctx = { runKey, vendor, run };
+    if (model !== null && !MODEL_TEXT.test(model)) {
+      this.log.warn(vendor, 'refused model name', { run, runKey, model });
+      this.emitOutput(ctx, `[Can't launch ${agent.name}]: "${model}" isn't a model name it can take (letters, digits, . _ : - only).\r\n`, 'stderr');
+      return false;
     }
+    if (sessionId !== null && !SESSION_ID.test(sessionId)) {
+      this.log.warn(vendor, 'refused session id', { run, runKey, sessionId });
+      this.emitOutput(ctx, `[Can't launch ${agent.name}]: its saved session id "${sessionId}" isn't one it can resume.\r\n`, 'stderr');
+      return false;
+    }
+
+    if (this.processes.has(runKey)) this.stop(runKey);
 
     const exe = this._getExecutable(agent);
     const workingDir = this.workingDir || process.cwd();
-    const isPromptMode = !!(initialPrompt && initialPrompt.trim());
-    const args = this._buildAgentArgs(agentId, isPromptMode, initialPrompt);
+    const { args, stdin } = this._buildAgentArgs(vendor, p, model, sessionId);
+    this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, cwd: workingDir });
 
-    const run = this.currentRun(agentId) + 1;
-    this.runCounts.set(agentId, run);
+    const cmd = launchCommand(exe, args);
+    if (!cmd) {
+      this.log.warn(vendor, 'refused to launch batch file with unsafe path or arguments', { run, exe });
+      this.emitOutput(ctx, `[Can't launch ${agent.name}]: ${exe} is a .cmd/.bat file in a folder name Windows' command shell could misread. Point ${agent.name}'s path in config.json at a plain folder.\r\n`, 'stderr');
+      return false;
+    }
 
-    this.emitOutput(agentId, `\x1b[36m> [Mission Control] Launching ${agent.name}...\x1b[0m\r\n\r\n`);
-    this.log.info(agentId, 'launching', { run, exe, args, cwd: workingDir, promptMode: isPromptMode });
-
-    const child = this._spawnAgentProcess(agentId, agent, exe, args, workingDir, isPromptMode, run);
+    const child = this._spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin);
     if (!child) return false;
+    Object.assign(child, ctx);
 
-    this.processes.set(agentId, child);
-    agent.status = 'working';
-    agent.unreadPrompt = null;
-    this.broadcastStatus(agentId, 'working');
-
-    this.broadcastTeamMessage({
-      agentId,
-      agentName: agent.name,
-      type: 'start',
-      text: `${agent.name} started working on: "${initialPrompt || 'Interactive Session'}"`
-    });
-
-    this._attachProcessStreams(agentId, agent, child, run);
-
+    this.processes.set(runKey, child);
+    // Timeout (TM-53): a reply that takes too long is stopped like Stop.
+    const timeoutSec = agent.timeoutSec || DEFAULT_TIMEOUT_SEC;
+    child.timeoutSec = timeoutSec;
+    child.timer = setTimeout(() => {
+      if (this.processes.get(runKey) !== child) return;
+      this.log.warn(vendor, 'timed out, stopping', { run, runKey, timeoutSec });
+      this.stop(runKey, 'timeout');
+    }, timeoutSec * 1000);
+    this._attachProcessStreams(child);
     return true;
   }
 
   _getExecutable(agent) {
-    let exe = agent.path;
-    if (!fs.existsSync(exe)) {
-      exe = agent.command;
-    }
-    return exe;
+    return resolveExecutable(agent);
   }
 
-  _buildAgentArgs(agentId, isPromptMode, initialPrompt) {
-    if (!isPromptMode) return [];
-
-    const p = initialPrompt.trim();
-    if (agentId === 'antigravity') {
-      return ['-p', p];
-    } else if (agentId === 'claude') {
-      return ['-p', p];
-    } else if (agentId === 'codex') {
-      return ['exec', '--skip-git-repo-check', p];
-    } else if (agentId === 'grok') {
-      return ['-p', p, '--output-format', 'plain'];
-    } else {
-      return [p];
-    }
+  // args, plus the text to write to stdin (null = stdin closed). Codex reads
+  // its prompt from stdin ("-") so the prompt never passes through cmd.exe
+  // when Codex is an npm codex.cmd shim.
+  // Access (TM-53): every agent may write inside the working folder without
+  // asking. Claude: acceptEdits. Codex: the workspace-write sandbox.
+  // Antigravity: --mode accept-edits. A model (TM-54) adds the vendor's model
+  // flag; null leaves the CLI on its default.
+  // Output (TM-55): each CLI's JSON, read by parseEvent, so the reply's
+  // session can be resumed. sessionId resumes that session; codex's resume
+  // takes no --sandbox, so the same setting goes in as -c.
+  _buildAgentArgs(vendor, p, model = null, sessionId = null) {
+    const m = model ? ['-m', model] : [];
+    if (vendor === 'codex' && sessionId) return { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...m, sessionId, '-'], stdin: p };
+    if (vendor === 'codex') return { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...m, '-'], stdin: p };
+    const flag = model ? ['--model', model] : [];
+    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    // antigravity (agy): -p takes the next word as the prompt, so it goes last
+    return { args: ['--mode', 'accept-edits', '--output-format', 'json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }
 
-  _spawnAgentProcess(agentId, agent, exe, args, workingDir, isPromptMode, run) {
+  _spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin = null) {
     try {
-      const spawnOptions = {
+      const child = spawn(cmd.file, cmd.args, {
+        ...cmd.options,
         cwd: workingDir,
         shell: false,
-        env: { ...process.env, FORCE_COLOR: '1' }
-      };
-
-      if (isPromptMode) {
-        // Closes stdin stream explicitly so Claude and Codex do not wait on stdin
-        spawnOptions.stdio = ['ignore', 'pipe', 'pipe'];
+        // No FORCE_COLOR: replies are shown as plain text in chat bubbles.
+        env: process.env,
+        // stdin is closed (or closed right after the prompt is written) so the
+        // CLIs never sit waiting for input
+        stdio: [stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe']
+      });
+      if (stdin != null && child.stdin) {
+        child.stdin.on('error', (err) => this.log.warn(vendor, 'could not write prompt to stdin', { run: ctx.run, error: err.message }));
+        child.stdin.end(stdin);
       }
-
-      return spawn(exe, args, spawnOptions);
+      return child;
     } catch (err) {
-      this.log.exception(agentId, err, { run, phase: 'spawn' });
-      this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
+      this.log.exception(vendor, err, { run: ctx.run, phase: 'spawn' });
+      this.emitOutput(ctx, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
       return null;
     }
   }
 
-  _attachProcessStreams(agentId, agent, child, run) {
+  // child carries its run: { runKey, vendor, run }.
+  _attachProcessStreams(child) {
+    const { runKey, vendor, run } = child;
     // StringDecoder keeps multi-byte characters intact when they straddle two chunks.
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
-    const stdoutSink = this.log.createLineSink(agentId, { run, stream: 'stdout' });
-    const stderrSink = this.log.createLineSink(agentId, { run, stream: 'stderr', level: 'warn' });
+    const stdoutSink = this.log.createLineSink(vendor, { run, runKey, stream: 'stdout' });
+    const stderrSink = this.log.createLineSink(vendor, { run, runKey, stream: 'stderr', level: 'warn' });
 
+    // stdout is JSON, one event per line (TM-55): the reply text goes to the
+    // window as it comes; the session id and usage ride along on agent:done.
+    // agy prints one envelope at the end, possibly over several lines.
+    child.meta = {};
+    let pendingLine = '';
+    const take = (line) => {
+      const ev = parseEvent(vendor, line);
+      if (!ev) return false;
+      if (ev.text) this.emitOutput(child, ev.text);
+      if (ev.sessionId) child.meta.sessionId = ev.sessionId;
+      if (ev.usage) child.meta.usage = { ...child.meta.usage, ...ev.usage };
+      if (ev.plan) child.meta.plan = ev.plan;
+      return true;
+    };
     if (child.stdout) {
       child.stdout.on('data', (data) => {
         stdoutSink.push(data);
-        this.handleOutput(agentId, stdoutDecoder.write(data));
+        const lines = (pendingLine + stdoutDecoder.write(data)).split('\n');
+        pendingLine = lines.pop();
+        if (vendor !== 'antigravity') lines.forEach(take);
+        else if (lines.length) pendingLine = lines.concat(pendingLine).join('\n');
+        if (pendingLine.length > MAX_PENDING) {
+          this.log.warn(vendor, 'output too large to read as JSON, shown as text', { run, runKey, bytes: pendingLine.length });
+          this.emitOutput(child, pendingLine);
+          pendingLine = '';
+        }
+      });
+      child.stdout.on('end', () => {
+        if (pendingLine.trim() && !take(pendingLine.trim())) this.emitOutput(child, pendingLine);
+        pendingLine = '';
       });
     }
 
@@ -431,373 +406,71 @@ class AgentRunner {
       child.stderr.on('data', (data) => {
         stderrSink.push(data);
         const rawText = stderrDecoder.write(data);
-
-        // Filter out Codex's verbose startup banner & metadata from the UI
-        if (agentId === 'codex') {
-          const cleaned = rawText
-            .split('\n')
-            .filter(line => !/^(Reading additional input|OpenAI Codex|--------|workdir:|model:|provider:|approval:|sandbox:|reasoning effort:|reasoning summaries:|session id:|user$|tokens used|\d{1,3}(,\d{3})*$|codex$)/i.test(line.trim()))
-            .join('\n');
-          if (cleaned.trim()) {
-            this.handleOutput(agentId, cleaned);
-          }
+        if (vendor === 'codex') {
+          // Codex echoes its whole session to stderr; keep only real content.
+          const cleaned = rawText.split('\n').filter(line => !CODEX_STDERR_NOISE.test(line.trim())).join('\n');
+          if (cleaned.trim()) this.emitOutput(child, cleaned, 'stderr');
         } else {
-          this.handleOutput(agentId, rawText);
+          this.emitOutput(child, rawText, 'stderr');
         }
       });
     }
 
     child.on('close', (code) => {
-      // Clear any pending prompt timers for this agent so alert doesn't linger
-      clearTimeout(this.promptTimers.get(agentId));
-      this.promptTimers.delete(agentId);
-
-      this.processes.delete(agentId);
+      clearTimeout(child.timer);
+      if (this.processes.get(runKey) === child) this.processes.delete(runKey);
       stdoutSink.flush();
       stderrSink.flush();
-      this.log[code === 0 ? 'info' : 'warn'](agentId, 'process exited', { run, code });
-      agent.status = agent.externalPid ? 'working' : 'sleeping';
-      agent.unreadPrompt = null;
-      this.broadcastStatus(agentId, agent.status);
-      this.emitOutput(agentId, `\r\n\x1b[90m[Process finished with code ${code}]\x1b[0m\r\n`);
-      
-      this.broadcastTeamMessage({
-        agentId,
-        agentName: agent.name,
-        type: 'exit',
-        text: `${agent.name} finished task (exit code: ${code}).`
+      this.log[code === 0 ? 'info' : 'warn'](vendor, 'process exited', { run, runKey, code });
+      this._send('agent:done', {
+        runKey, vendor, run, code,
+        stopped: child.stopReason === 'user',
+        timedOut: child.stopReason === 'timeout',
+        timeoutSec: child.timeoutSec,
+        ...child.meta
       });
     });
 
     child.on('error', (err) => {
-      clearTimeout(this.promptTimers.get(agentId));
-      this.promptTimers.delete(agentId);
-      this.log.exception(agentId, err, { run, phase: 'process' });
-      this.emitOutput(agentId, `\x1b[31m[Process error]: ${err.message}\x1b[0m\r\n`);
-      agent.status = 'idle';
-      this.broadcastStatus(agentId, 'idle');
+      this.log.exception(vendor, err, { run, runKey, phase: 'process' });
+      this.emitOutput(child, `\x1b[31m[Process error]: ${err.message}\x1b[0m\r\n`, 'stderr');
     });
   }
 
-  stopAgent(agentId) {
-    clearTimeout(this.promptTimers.get(agentId));
-    this.promptTimers.delete(agentId);
-    const child = this.processes.get(agentId);
-    if (child) {
-      this.log.info(agentId, 'stopping process', { run: this.currentRun(agentId), pid: child.pid });
-      try {
-        child.kill('SIGTERM');
-      } catch (err) {
-        this.log.warn(agentId, 'kill failed', { run: this.currentRun(agentId), error: err.message });
-      }
-      this.processes.delete(agentId);
+  // reason: 'user' (Stop button, a new launch, quitting) or 'timeout'.
+  stop(runKey, reason = 'user') {
+    const child = this.processes.get(runKey);
+    if (!child) return;
+    this.log.info(child.vendor, 'stopping process', { run: child.run, runKey, pid: child.pid, reason });
+    child.stopReason = reason;
+    clearTimeout(child.timer);
+    try {
+      killTree(child);
+    } catch (err) {
+      this.log.warn(child.vendor, 'kill failed', { run: child.run, runKey, error: err.message });
     }
-    const agent = this.agents[agentId];
-    if (agent) {
-      agent.status = agent.externalPid ? 'working' : 'sleeping';
-      agent.unreadPrompt = null;
-      this.broadcastStatus(agentId, agent.status);
-    }
+    this.processes.delete(runKey);
   }
 
-  sendInput(agentId, input) {
-    // Clear any active alert state on backend immediately
-    clearTimeout(this.promptTimers.get(agentId));
-    this.promptTimers.delete(agentId);
-
-    const child = this.processes.get(agentId);
-    const agent = this.agents[agentId];
-    
-    if (agent) {
-      agent.unreadPrompt = null;
-      agent.status = 'working';
-      this.broadcastStatus(agentId, 'working');
-    }
-
-    // If active process with open writable stdin
-    if (child && child.stdin && child.stdin.writable && !child.stdin.destroyed) {
-      try {
-        child.stdin.write(input + '\r\n');
-        this.log.info(agentId, 'input sent to running process', { run: this.currentRun(agentId), input });
-        this.emitOutput(agentId, `\x1b[36m> ${input}\x1b[0m\r\n`);
-        return true;
-      } catch (err) {
-        this.log.warn(agentId, 'stdin write failed, relaunching instead', { run: this.currentRun(agentId), error: err.message });
-      }
-    }
-
-    // Auto-launch with prompt
-    if (agent) {
-      this.log.info(agentId, 'no writable stdin; launching a new process for this input', { input });
-      return this.startAgent(agentId, input);
-    }
-
-    return false;
+  // ctx: { runKey, vendor, run } (a running child carries these).
+  emitOutput({ runKey, vendor, run }, rawText, stream = 'stdout') {
+    // text: colour and cursor codes removed, for the chat bubbles.
+    this._send('agent:output', { runKey, vendor, stream, run, raw: rawText, text: stripAnsi(rawText), html: parseAnsi(rawText) });
   }
 
-  handleOutput(agentId, rawText) {
-    this.emitOutput(agentId, rawText);
-    this.detectPrompt(agentId, rawText);
-  }
-
-  detectPrompt(agentId, rawText) {
-    const agent = this.agents[agentId];
-    if (!agent) return;
-
-    // Only detect prompt alerts if the process is currently active
-    if (!this.processes.has(agentId)) return;
-
-    const promptPatterns = [
-      /\?\s+[\w\s]{3,}\??/i,
-      /\[y\/n\]|\(y\/n\)|\[yes\/no\]/i,
-      /approval required|approve change/i,
-      /select an option|choose one/i,
-      /enter prompt|type your/i,
-      />\s*$/,
-      /waiting for input/i
-    ];
-
-    const hasPromptCue = promptPatterns.some(pattern => pattern.test(rawText));
-
-    if (hasPromptCue) {
-      clearTimeout(this.promptTimers.get(agentId));
-      const timer = setTimeout(() => {
-        agent.status = 'needs_input';
-        agent.unreadPrompt = rawText.trim().slice(-120);
-        this.log.info(agentId, 'prompt detected, alerting user', { run: this.currentRun(agentId), snippet: agent.unreadPrompt });
-        this.broadcastStatus(agentId, 'needs_input');
-        
-        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-          this.mainWindow.webContents.send('agent:prompt', {
-            agentId,
-            agentName: agent.name,
-            promptSnippet: agent.unreadPrompt
-          });
-        }
-
-        this.broadcastTeamMessage({
-          agentId,
-          agentName: agent.name,
-          type: 'alert',
-          text: `🚨 ${agent.name} needs your input: "${agent.unreadPrompt}"`
-        });
-      }, 300);
-
-      this.promptTimers.set(agentId, timer);
-    }
-  }
-
-  // ---- Hook-reported activity -------------------------------------------
-  //
-  // Claude Code (and later others) POST their lifecycle events to HookServer,
-  // which calls this. The agent's status is then computed from what its
-  // sessions actually said rather than guessed from terminal text.
-
-  static HOOK_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
-
-  handleHookEvent(agentId, event) {
-    const agent = this.agents[agentId];
-    if (!agent) {
-      this.log.warn('app', 'hook event for unknown agent', { agentId });
-      return false;
-    }
-
-    const { name, sid, message } = AgentRunner.normalizeHookEvent(event);
-    const sessions = this.hookSessions[agentId];
-    const now = Date.now();
-
-    let session = sessions.get(sid);
-    const isNew = !session;
-    if (isNew) {
-      session = { id: sid, state: 'working', cwd: event.cwd || null, startedAt: now };
-      sessions.set(sid, session);
-    }
-    session.updatedAt = now;
-    session.lastEvent = name;
-    if (event.cwd) session.cwd = event.cwd;
-
-    const cwdLabel = session.cwd ? ` in ${session.cwd}` : '';
-    let alert = null;
-
-    switch (name) {
-      case 'SessionStart':
-        session.state = 'idle';
-        this.emitOutput(agentId, `\x1b[36m[Hook] ${agent.name} session started${cwdLabel}\x1b[0m\r\n`);
-        this.broadcastTeamMessage({ agentId, agentName: agent.name, type: 'start', text: `🔗 ${agent.name} session started${cwdLabel}` });
-        break;
-      case 'UserPromptSubmit':
-        session.state = 'working';
-        if (event.prompt) this.emitOutput(agentId, `\x1b[90m[Hook] prompt: ${String(event.prompt).slice(0, 200)}\x1b[0m\r\n`);
-        break;
-      case 'PreToolUse':
-        session.state = 'working';
-        session.lastTool = event.tool_name || null;
-        break;
-      case 'Notification':
-        session.state = 'needs_input';
-        session.prompt = event.message || event.title || 'needs your attention';
-        session.notificationType = event.notification_type || null;
-        alert = session;
-        this.emitOutput(agentId, `\x1b[33m[Hook] ${agent.name} needs you: ${session.prompt}\x1b[0m\r\n`);
-        break;
-      case 'Stop':
-        session.state = 'idle';
-        this.emitOutput(agentId, `\x1b[32m[Hook] ${agent.name} finished its turn and is waiting for you\x1b[0m\r\n`);
-        if (message) this.emitOutput(agentId, `\x1b[90m${message.slice(0, 400)}\x1b[0m\r\n`);
-        this.broadcastTeamMessage({ agentId, agentName: agent.name, type: 'exit', text: `✅ ${agent.name} finished a turn${cwdLabel}` });
-        break;
-      case 'SessionEnd':
-        sessions.delete(sid);
-        this.emitOutput(agentId, `\x1b[90m[Hook] ${agent.name} session ended\x1b[0m\r\n`);
-        this.broadcastTeamMessage({ agentId, agentName: agent.name, type: 'exit', text: `${agent.name} session ended${cwdLabel}` });
-        break;
-      default:
-        this.log.debug(agentId, 'unhandled hook event', { event: name });
-    }
-
-    this.log.info(agentId, `hook: ${name}`, {
-      session: sid,
-      newSession: isNew,
-      cwd: session.cwd,
-      tool: event.tool_name,
-      notificationType: event.notification_type,
-      message: event.message
-    });
-
-    this.refreshHookStatus(agentId, alert);
-    return true;
-  }
-
-  // Claude Code sends { hook_event_name, session_id, ... }. Codex's notify sends
-  // { type: "agent-turn-complete", "turn-id", "thread-id"?, "last-assistant-message" }.
-  static normalizeHookEvent(event) {
-    if (event.hook_event_name) {
-      return { name: event.hook_event_name, sid: String(event.session_id || 'unknown'), message: null };
-    }
-    if (event.type === 'agent-turn-complete') {
-      return {
-        name: 'Stop',
-        sid: String(event['thread-id'] || event.thread_id || 'codex'),
-        message: event['last-assistant-message'] || event.last_assistant_message || null
-      };
-    }
-    return { name: event.type || 'unknown', sid: String(event.session_id || event['thread-id'] || 'unknown'), message: null };
-  }
-
-  // Recomputes an agent's status from its hook sessions and broadcasts it.
-  refreshHookStatus(agentId, alertSession = null) {
-    const agent = this.agents[agentId];
-    const sessions = [...this.hookSessions[agentId].values()];
-    let next;
-    if (sessions.some(s => s.state === 'needs_input')) next = 'needs_input';
-    else if (sessions.some(s => s.state === 'working')) next = 'working';
-    else if (sessions.length) next = 'idle';
-    else if (this.processes.has(agentId)) next = agent.status;   // our own spawned process decides
-    else next = agent.externalPid ? 'working' : 'sleeping';
-
-    agent.status = next;
-    if (next === 'needs_input') {
-      const waiting = alertSession || sessions.find(s => s.state === 'needs_input');
-      agent.unreadPrompt = waiting.prompt;
-    } else {
-      agent.unreadPrompt = null;
-    }
-
-    this.broadcastStatus(agentId, next);
-
-    if (alertSession) {
-      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-        this.mainWindow.webContents.send('agent:prompt', {
-          agentId,
-          agentName: agent.name,
-          promptSnippet: alertSession.prompt
-        });
-      }
-      this.broadcastTeamMessage({
-        agentId,
-        agentName: agent.name,
-        type: 'alert',
-        text: `🚨 ${agent.name} needs your input: "${alertSession.prompt}"`
-      });
-    }
-  }
-
-  // Drops sessions that haven't reported in a long time (terminal killed, hook
-  // never fired). Returns true if anything changed.
-  expireHookSessions() {
-    const cutoff = Date.now() - AgentRunner.HOOK_SESSION_TTL_MS;
-    let changed = false;
-    for (const [agentId, sessions] of Object.entries(this.hookSessions)) {
-      let dropped = 0;
-      for (const [sid, session] of sessions) {
-        if (session.updatedAt < cutoff) {
-          sessions.delete(sid);
-          dropped++;
-        }
-      }
-      if (dropped) {
-        this.log.info(agentId, 'expired stale hook sessions', { dropped });
-        this.refreshHookStatus(agentId);
-        changed = true;
-      }
-    }
-    return changed;
-  }
-
-  forwardToAgent(fromAgentId, toAgentId, text) {
-    const fromAgent = this.agents[fromAgentId];
-    const toAgent = this.agents[toAgentId];
-    if (!fromAgent || !toAgent) return false;
-
-    const success = this.sendInput(toAgentId, text);
-
-    this.broadcastTeamMessage({
-      agentId: fromAgentId,
-      agentName: fromAgent.name,
-      type: 'forward',
-      text: `🔄 ${fromAgent.name} forwarded context to ${toAgent.name}: "${text.slice(0, 80)}..."`
-    });
-
-    return success;
-  }
-
-  emitOutput(agentId, rawText) {
+  _send(channel, payload) {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      const html = parseAnsi(rawText);
-      this.mainWindow.webContents.send('agent:output', { agentId, raw: rawText, html });
-    }
-  }
-
-  broadcastStatus(agentId, status) {
-    const agent = this.agents[agentId];
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send('agent:status', { 
-        agentId, 
-        status, 
-        role: agent?.role, 
-        title: agent?.title,
-        externalPid: agent?.externalPid,
-        hookSessions: agent ? this.hookSessions[agent.id].size : 0
-      });
-    }
-  }
-
-  broadcastAllStatus() {
-    Object.values(this.agents).forEach(agent => {
-      this.broadcastStatus(agent.id, agent.status);
-    });
-  }
-
-  broadcastTeamMessage(messageObj) {
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send('agent:team-message', {
-        ...messageObj,
-        timestamp: new Date().toLocaleTimeString()
-      });
+      this.mainWindow.webContents.send(channel, payload);
     }
   }
 }
 
 AgentRunner.versionCommand = versionCommand;
+AgentRunner.launchCommand = launchCommand;
+AgentRunner.resolveExecutable = resolveExecutable;
+AgentRunner.killTree = killTree;
+AgentRunner.MODEL_TEXT = MODEL_TEXT;
+AgentRunner.parseAgyModels = parseAgyModels;
+AgentRunner.parseEvent = parseEvent;
 
 module.exports = AgentRunner;

@@ -1,14 +1,23 @@
 // User settings: where each agent's executable lives and which folder agents
 // work in. Stored as config.json next to the app while developing (or in the
 // OS user-data folder when packaged). The file is created with defaults on
-// first run so it can be edited by hand, and the Scan Agents window edits it
-// with Browse… buttons.
+// first run so it can be edited by hand.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const AGENT_IDS = ['antigravity', 'claude', 'codex', 'grok'];
+const AGENT_IDS = ['antigravity', 'claude', 'codex'];
+
+// How long one reply may take before the app stops the agent (TM-53).
+const DEFAULT_TIMEOUT_SEC = 300;
+
+// What each agent is called in the chat (TM-53). Matt can rename them here;
+// the picker, bubbles, relay buttons and prompts all use this name.
+const DEFAULT_NAMES = { antigravity: 'Antigravity', claude: 'Claude', codex: 'Codex' };
+const MAX_NAME_LENGTH = 24;
+const MIN_TIMEOUT_SEC = 10;
+const MAX_TIMEOUT_SEC = 3600;
 
 async function defaultAgentPaths() {
   const home = os.homedir();
@@ -32,19 +41,49 @@ async function defaultAgentPaths() {
   return {
     antigravity: { command: win ? 'agy.exe' : 'agy', path: win ? path.join(local, 'agy', 'bin', 'agy.exe') : path.join(home, '.local', 'bin', 'agy') },
     claude: { command: win ? 'claude.exe' : 'claude', path: path.join(home, '.local', 'bin', win ? 'claude.exe' : 'claude') },
-    codex: { command: win ? 'codex.exe' : 'codex', path: codexPath },
-    grok: { command: win ? 'grok.exe' : 'grok', path: path.join(home, '.grok', 'bin', win ? 'grok.exe' : 'grok') }
+    codex: { command: win ? 'codex.exe' : 'codex', path: codexPath }
   };
 }
 
+function withTimeouts(agents) {
+  for (const [id, a] of Object.entries(agents)) {
+    a.name = DEFAULT_NAMES[id];
+    a.timeoutSec = DEFAULT_TIMEOUT_SEC;
+  }
+  return agents;
+}
+
+// Agents run in a folder of their own, never a real project: Codex writes
+// files without asking in headless mode (TM-47 Batch 0).
+function chatDir() {
+  return path.join(os.homedir(), 'AgentDaycare', 'chat');
+}
+
 async function defaultWorkingDir() {
-  // The folder the prototype used; fall back to the home folder if it's gone.
-  const legacy = path.join(os.homedir(), '.gemini', 'antigravity', 'scratch', 'cli-companions');
-  return await fs.promises.access(legacy).then(() => true).catch(() => false) ? legacy : os.homedir();
+  return chatDir();
+}
+
+// Working folders the old dashboard defaulted to. A config still pointing at
+// one of these was never chosen on purpose, so it moves to the chat folder.
+function legacyWorkingDirs() {
+  const home = os.homedir();
+  return [home, path.join(home, '.gemini', 'antigravity', 'scratch', 'cli-companions')]
+    .map(d => path.resolve(d).toLowerCase());
+}
+
+function isLegacyWorkingDir(dir) {
+  return typeof dir === 'string' && dir.trim() !== '' && legacyWorkingDirs().includes(path.resolve(dir.trim()).toLowerCase());
+}
+
+// Creates the working folder if it does not exist yet, so the first launch
+// does not fail on a missing cwd.
+async function ensureWorkingDir(dir) {
+  await fs.promises.mkdir(dir, { recursive: true });
+  return dir;
 }
 
 async function defaults() {
-  return { workingDir: await defaultWorkingDir(), agents: await defaultAgentPaths() };
+  return { workingDir: await defaultWorkingDir(), agents: withTimeouts(await defaultAgentPaths()) };
 }
 
 // Keeps only the fields we know, with sane types. Unknown agents are dropped.
@@ -56,9 +95,14 @@ function sanitize(input, base) {
   for (const id of AGENT_IDS) {
     const b = base.agents[id];
     const u = input && input.agents && input.agents[id];
+    const name = u && typeof u.name === 'string' ? u.name.trim().replace(/\s+/g, ' ').slice(0, MAX_NAME_LENGTH) : '';
     out.agents[id] = {
+      name: name || b.name,
       command: u && typeof u.command === 'string' && u.command.trim() ? u.command.trim() : b.command,
-      path: u && typeof u.path === 'string' && u.path.trim() ? u.path.trim() : b.path
+      path: u && typeof u.path === 'string' && u.path.trim() ? u.path.trim() : b.path,
+      timeoutSec: u && Number.isFinite(u.timeoutSec)
+        ? Math.min(MAX_TIMEOUT_SEC, Math.max(MIN_TIMEOUT_SEC, Math.round(u.timeoutSec)))
+        : b.timeoutSec
     };
   }
   return out;
@@ -85,7 +129,23 @@ async function load(file) {
   }
   try {
     const parsed = raw.trim() ? JSON.parse(raw) : {};
-    return { config: sanitize(parsed, base), file };
+    if (isLegacyWorkingDir(parsed.workingDir)) {
+      const migratedFrom = parsed.workingDir;
+      delete parsed.workingDir;
+      const clean = await save(file, parsed);
+      return { config: clean, file, migratedFrom };
+    }
+    const clean = sanitize(parsed, base);
+    // Write back settings added since the file was made (e.g. timeoutSec), so
+    // they show up in config.json for hand editing. The file was valid JSON.
+    if (JSON.stringify(clean) !== JSON.stringify(parsed)) {
+      try {
+        await save(file, clean);
+      } catch (_) {
+        // Still usable this run; the next save will try again.
+      }
+    }
+    return { config: clean, file };
   } catch (err) {
     return { config: base, file, error: `config.json is not valid JSON (${err.message}); using defaults` };
   }
@@ -98,4 +158,4 @@ async function save(file, config) {
   return clean;
 }
 
-module.exports = { load, save, defaults, sanitize, AGENT_IDS };
+module.exports = { load, save, defaults, sanitize, chatDir, ensureWorkingDir, isLegacyWorkingDir, AGENT_IDS, DEFAULT_TIMEOUT_SEC };

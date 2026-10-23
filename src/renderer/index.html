@@ -1,174 +1,59 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Daycare (Batcave Predecessor)</title>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Agent Daycare</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- Window Titlebar & Controls -->
-  <header class="titlebar">
-    <div class="titlebar-brand">
-      <span class="titlebar-logo">👾</span>
-      <span class="titlebar-text">AGENT DAYCARE</span>
-      <span class="titlebar-badge">Batcave Predecessor</span>
-    </div>
+  <aside class="sidebar">
+    <div class="brand">Agent Daycare</div>
+    <button type="button" class="new-chat" id="new-chat">+ New chat</button>
+    <nav class="chat-list" id="chat-list" aria-label="Chats"></nav>
+    <div class="plan" id="plan" hidden></div>
+  </aside>
 
-    <div class="titlebar-controls">
-      <button id="scanAgentsBtn" class="title-btn" title="Scan PC for Installed Agents">
-        <span>🔍</span> Scan Agents
-      </button>
-      <button id="openLogsBtn" class="title-btn" title="Open the folder containing logs/latest.log">
-        <span>📄</span> Logs
-      </button>
-      <button id="soundToggleBtn" class="title-btn" title="Toggle 8-bit Audio">
-        <span id="soundIcon">🔊</span> <span id="soundText">Sound</span>
-      </button>
-      <button id="manageRolesBtn" class="title-btn" title="Reassign Agent Roles">
-        <span>👑</span> Roles
-      </button>
-      <button id="demoAlertBtn" class="title-btn" title="Test Alert (!) Flow">
-        <span>⚡</span> Test Alert
-      </button>
-      <span style="color: var(--border-color); margin: 0 4px;">|</span>
-      <button id="winMinBtn" class="title-btn" title="Minimize">—</button>
-      <button id="winMaxBtn" class="title-btn" title="Maximize">□</button>
-      <button id="winCloseBtn" class="title-btn window-close" title="Close">✕</button>
-    </div>
-  </header>
+  <section class="chat">
+    <header class="top">
+      <div class="members" id="members" aria-label="Agents in this chat"></div>
+      <button type="button" class="add-agent" id="add-agent" title="Add a new agent, or one from another chat">+ Add agent</button>
+      <div class="folder" id="folder" title="Agents work in this folder">Working folder: …</div>
+    </header>
 
-  <!-- Main App Layout -->
-  <main class="app-container">
-    <!-- The Office / Mascot Stage -->
-    <section class="stage-section">
-      <div class="stage-header">
-        <div class="stage-title-group">
-          <span class="stage-title">Agent Office & Desk Pets</span>
-          <span class="stage-status-summary" id="stageSummary">Scanning system agents...</span>
-        </div>
-        <div class="stage-tools">
-          <button id="summonAllBtn" class="stage-tool-btn">▶ Summon Team</button>
-          <button id="sleepAllBtn" class="stage-tool-btn">💤 All Sleep</button>
-        </div>
-      </div>
+    <section class="chooser" id="chooser" hidden aria-label="Pick an agent for the new chat"></section>
 
-      <!-- Grid of Agent Cards -->
-      <div class="agents-grid" id="agentsGrid">
-        <!-- Dynamically rendered by app.js -->
-      </div>
-    </section>
+    <main class="thread" id="thread" aria-live="polite">
+      <p class="empty" id="empty">Say hi.</p>
+    </main>
 
-    <!-- Embedded Terminal Dialogue Drawer -->
-    <section class="terminal-section">
-      <!-- Tabs -->
-      <div class="terminal-tabs" id="terminalTabs">
-        <button class="terminal-tab active" data-agent="antigravity">
-          <span>🔵 Antigravity</span>
-          <span class="tab-badge-alert hidden" id="badge-antigravity">!</span>
-        </button>
-        <button class="terminal-tab" data-agent="claude">
-          <span>🟠 Claude Code</span>
-          <span class="tab-badge-alert hidden" id="badge-claude">!</span>
-        </button>
-        <button class="terminal-tab" data-agent="codex">
-          <span>🟢 Codex</span>
-          <span class="tab-badge-alert hidden" id="badge-codex">!</span>
-        </button>
-        <button class="terminal-tab" data-agent="grok">
-          <span>⚫ Grok</span>
-          <span class="tab-badge-alert hidden" id="badge-grok">!</span>
-        </button>
-        <button class="terminal-tab team-tab" data-agent="team">
-          <span>📻 Team Radio</span>
-        </button>
+    <form class="composer" id="composer" autocomplete="off">
+      <div class="mentions" id="mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
+      <div class="input-row">
+        <textarea id="message" rows="1" placeholder="Message Claude… (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
+        <button type="submit" id="send">Send</button>
       </div>
+    </form>
+  </section>
 
-      <!-- Output Screen -->
-      <div class="terminal-body" id="terminalOutput">
-        <!-- Live terminal text with ANSI styling streams here -->
+  <!-- Threads open beside the main chat (TM-54 Batch 4). -->
+  <aside class="thread-panel" id="thread-panel" hidden aria-label="Thread">
+    <header class="panel-top">
+      <span class="panel-label" id="panel-label">Thread</span>
+      <button type="button" class="panel-close" id="panel-close" title="Close the thread">×</button>
+    </header>
+    <div class="thread" id="panel-thread" aria-live="polite"></div>
+    <form class="composer" id="panel-composer" autocomplete="off">
+      <div class="mentions" id="panel-mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
+      <div class="input-row">
+        <textarea id="panel-message" rows="1" aria-label="Reply in the thread"></textarea>
+        <button type="submit" id="panel-send">Send</button>
       </div>
+    </form>
+  </aside>
 
-      <!-- Quick Action & Reply Chips -->
-      <div class="action-bar">
-        <div class="quick-replies">
-          <span class="quick-reply-label">Quick Reply:</span>
-          <button class="chip-btn chip-yes" data-reply="y">y (Yes)</button>
-          <button class="chip-btn chip-no" data-reply="n">n (No)</button>
-          <button class="chip-btn" data-reply="">[ Enter ]</button>
-          <button class="chip-btn" data-reply="cancel">Cancel</button>
-        </div>
-
-        <div class="agent-controls">
-          <button id="startAgentBtn" class="control-btn start">▶ Start</button>
-          <button id="stopAgentBtn" class="control-btn stop">⏹ Stop</button>
-          <button id="forwardBtn" class="control-btn">🔄 Forward to...</button>
-          <button id="promoteBtn" class="control-btn">👑 Make Lead</button>
-        </div>
-      </div>
-
-      <!-- Terminal Input Bar -->
-      <div class="input-bar">
-        <span class="input-prompt-label" id="inputPromptLabel">&gt;</span>
-        <input type="text" id="terminalInput" class="terminal-input" placeholder="Type prompt or command..." autocomplete="off" spellcheck="false">
-        <button id="sendBtn" class="send-btn">Send ↵</button>
-      </div>
-    </section>
-  </main>
-
-  <!-- Role Customizer Modal -->
-  <div class="modal-overlay hidden" id="roleModal">
-    <div class="modal-box">
-      <div class="modal-header">
-        <span class="modal-title">👑 Manage Agent Roles & Hierarchy</span>
-        <button id="closeModalBtn" class="title-btn">✕</button>
-      </div>
-      <div class="modal-body" id="roleModalBody">
-        <!-- Dynamically rendered -->
-      </div>
-      <div class="modal-footer">
-        <button id="saveRolesBtn" class="send-btn">Apply Changes</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Agent Diagnostics & Discovery Modal -->
-  <div class="modal-overlay hidden" id="diagnosticsModal">
-    <div class="modal-box" style="width: 620px;">
-      <div class="modal-header">
-        <span class="modal-title">🔍 Installed Agents & System Diagnostics</span>
-        <button id="closeDiagBtn" class="title-btn">✕</button>
-      </div>
-      <div class="modal-body" id="diagnosticsModalBody">
-        <div class="role-row" style="flex-direction: column; align-items: stretch; gap: 6px; margin-bottom: 10px;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong style="color: #fff; font-size: 12px;">📁 Project folder agents work in</strong>
-            <button id="pickWorkingDirBtn" class="send-btn" style="padding: 3px 10px; font-size: 10px;">Browse…</button>
-          </div>
-          <input type="text" id="workingDirInput" class="terminal-input" style="width: 100%; font-size: 11px;" spellcheck="false" placeholder="C:\\path\\to\\your\\project">
-          <div style="font-size: 10px; color: var(--text-dim);">Agents launched from this window run inside this folder. Change it per project.</div>
-        </div>
-        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-          Detected CLI agents on this machine (edit a path if one wasn't found):
-        </div>
-        <div id="diagnosticsList" style="display: flex; flex-direction: column; gap: 8px;">
-          <!-- Dynamically populated -->
-        </div>
-      </div>
-      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
-        <span style="font-size: 10px; color: var(--text-dim);" id="configFileLabel">Background scanner polls external processes every 2.5s</span>
-        <div style="display: flex; gap: 6px;">
-          <button id="saveConfigBtn" class="send-btn">💾 Save Settings</button>
-          <button id="refreshDiagBtn" class="send-btn">🔄 Re-scan System</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Scripts -->
-  <script src="audio.js"></script>
-  <script src="mascots.js"></script>
-  <script src="../utils/ansi.js"></script>
+  <script src="members.js"></script>
+  <script src="thread.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

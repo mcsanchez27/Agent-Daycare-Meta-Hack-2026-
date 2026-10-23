@@ -1,12 +1,11 @@
 {
   "name": "agent-daycare",
   "version": "1.0.0",
-  "description": "Agent Daycare (Batcave Predecessor) - Retro 16-Bit Multi-Agent Mission Control & Desk Pets",
+  "description": "Agent Daycare V1 - one chat window for Antigravity, Claude and Codex",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test",
-    "sentry:smoke": "node scripts/sentry-smoke.js"
+    "test": "node --test"
   },
   "keywords": [
     "agents",
@@ -14,18 +13,14 @@
     "antigravity",
     "claude",
     "codex",
-    "grok",
-    "retro",
-    "pixel-art",
-    "mission-control"
+    "chat"
   ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^34.5.8"
+    "electron": "^45.0.0"
   },
-  "dependencies": {
-    "@sentry/electron": "^7.19.0",
-    "@sentry/node": "^10.74.0"
+  "allowScripts": {
+    "electron@45.0.0": true
   }
 }

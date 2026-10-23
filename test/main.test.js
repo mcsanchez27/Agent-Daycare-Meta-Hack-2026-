@@ -46,13 +46,11 @@ const electronMock = {
 
 const agentRunnerMock = class {
   constructor() { this.started = false; }
-  startAgent(id) { this.started = true; return true; }
-  stopAgent() {}
-  sendInput() {}
+  run() { this.started = true; return true; }
+  stop() {}
+  listModels() { return {}; }
   getConfigs() { return []; }
   scanAgents() { return []; }
-  updateRole() {}
-  forwardToAgent() {}
   applyConfig() {}
   shutdown() {}
 };
@@ -64,28 +62,8 @@ const loggerMock = class {
   error() {}
   exception() {}
   open() {}
-  close() {}
+  close() { return Promise.resolve(); }
   log() {}
-};
-
-const hookServerMock = class {
-  constructor() {}
-  async start() {}
-  async stop() {}
-  hookUrl(id) { return `http://localhost/hook/${id}`; }
-};
-hookServerMock.DEFAULT_PORT = 12345;
-
-const hooksInstallerMock = {
-  status: () => ({ installed: true }),
-  install: () => ({ file: 'mock', events: 1 }),
-  uninstall: () => ({ file: 'mock' })
-};
-
-const codexNotifyMock = {
-  status: () => ({ installed: true }),
-  install: () => ({ file: 'mock', events: 1 }),
-  uninstall: () => ({ file: 'mock' })
 };
 
 const configMock = {
@@ -97,9 +75,6 @@ const mocks = {
   'electron': electronMock,
   [path.resolve(__dirname, '../src/agent-runner')]: agentRunnerMock,
   [path.resolve(__dirname, '../src/logger')]: { Logger: loggerMock },
-  [path.resolve(__dirname, '../src/hook-server')]: { HookServer: hookServerMock, DEFAULT_PORT: hookServerMock.DEFAULT_PORT },
-  [path.resolve(__dirname, '../src/hooks-installer')]: hooksInstallerMock,
-  [path.resolve(__dirname, '../src/codex-notify')]: codexNotifyMock,
   [path.resolve(__dirname, '../src/config')]: configMock
 };
 
@@ -131,29 +106,22 @@ test('main.js tests', async (t) => {
   require('../src/main');
 
   await t.test('ipc handlers are registered', () => {
-    assert.ok(electronMock.ipcMain.handlers['agent:start']);
-    assert.ok(electronMock.ipcMain.handlers['hooks:status']);
+    assert.ok(electronMock.ipcMain.handlers['agent:run']);
     assert.ok(electronMock.ipcMain.handlers['config:get']);
-    assert.ok(electronMock.ipcMain.listeners['window:minimize']);
+    // Dashboard-era channels are gone in V1
+    for (const ch of ['hooks:status', 'hooks:install', 'agent:update-role', 'agent:forward', 'agent:start', 'agent:send-input']) {
+      assert.equal(electronMock.ipcMain.handlers[ch], undefined, ch);
+    }
   });
 
-  await t.test('agent:start invokes AgentRunner.startAgent', async () => {
-    const result = await electronMock.ipcMain.invoke('agent:start', { agentId: 'claude', initialPrompt: 'hello' });
+  await t.test('agent:run invokes AgentRunner.run', async () => {
+    const result = await electronMock.ipcMain.invoke('agent:run', { runKey: 'c/m1', vendor: 'claude', model: null, prompt: 'hello' });
     assert.equal(result, true);
   });
 
   await t.test('config:pick-folder invokes dialog.showOpenDialog', async () => {
     const result = await electronMock.ipcMain.invoke('config:pick-folder', { current: '/some/path' });
     assert.equal(result, '/mock/selected/path');
-  });
-
-  await t.test('hooks:status returns hook info', async () => {
-    const result = await electronMock.ipcMain.invoke('hooks:status');
-    // The mocked HookServer never sets a url, so the listener reports offline
-    // and no hookUrl is handed out; installer status still comes through.
-    assert.equal(result.listening, false);
-    assert.deepEqual(result.agents.claude, { installed: true, hookUrl: null });
-    assert.deepEqual(result.agents.codex, { installed: true, hookUrl: null });
   });
 
   // Restore Module._load

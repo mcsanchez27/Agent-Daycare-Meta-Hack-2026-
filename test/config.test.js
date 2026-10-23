@@ -44,9 +44,9 @@ test('a corrupt file is reported, not overwritten, and defaults are used', async
 
 test('save round-trips and strips blanks/unknowns', async () => {
   const file = tmpFile();
-  const saved = await config.save(file, { workingDir: '  /w  ', agents: { grok: { path: '  ' }, claude: { path: 'C:\\c\\claude.exe' } } });
+  const saved = await config.save(file, { workingDir: '  /w  ', agents: { codex: { path: '  ' }, claude: { path: 'C:\\c\\claude.exe' } } });
   assert.equal(saved.workingDir, '/w');
-  assert.equal(saved.agents.grok.path, (await config.defaults()).agents.grok.path);
+  assert.equal(saved.agents.codex.path, (await config.defaults()).agents.codex.path);
   assert.equal(saved.agents.claude.path, 'C:\\c\\claude.exe');
   assert.deepEqual((await config.load(file)).config, saved);
 });
@@ -68,4 +68,66 @@ test('save fallback error is caught and reported when file is missing', async ()
   } finally {
     fs.promises.writeFile = originalWriteFile;
   }
+});
+
+test('the default working folder is the dedicated chat folder', async () => {
+  const d = await config.defaults();
+  assert.equal(d.workingDir, config.chatDir());
+  assert.equal(path.basename(d.workingDir), 'chat');
+  assert.equal(path.basename(path.dirname(d.workingDir)), 'AgentDaycare');
+});
+
+test('an old dashboard working folder moves to the chat folder', async () => {
+  for (const old of [os.homedir(), path.join(os.homedir(), '.gemini', 'antigravity', 'scratch', 'cli-companions')]) {
+    const file = tmpFile(JSON.stringify({ workingDir: old, agents: { claude: { path: '/opt/claude' } } }));
+    const r = await config.load(file);
+    assert.equal(r.migratedFrom, old);
+    assert.equal(r.config.workingDir, config.chatDir());
+    assert.equal(r.config.agents.claude.path, '/opt/claude', 'other settings are kept');
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).workingDir, config.chatDir(), 'the move is saved');
+  }
+});
+
+test('a folder Matt chose is left alone', async () => {
+  const file = tmpFile(JSON.stringify({ workingDir: path.join(os.homedir(), 'somewhere-else') }));
+  const r = await config.load(file);
+  assert.equal(r.migratedFrom, undefined);
+  assert.equal(r.config.workingDir, path.join(os.homedir(), 'somewhere-else'));
+});
+
+test('ensureWorkingDir creates a missing folder and is fine if it exists', async () => {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-chat-')), 'AgentDaycare', 'chat');
+  await config.ensureWorkingDir(dir);
+  assert.ok(fs.statSync(dir).isDirectory());
+  await config.ensureWorkingDir(dir);
+});
+
+test('each agent gets a 5-minute timeout by default, kept within 10s..1h', async () => {
+  const d = await config.defaults();
+  for (const id of config.AGENT_IDS) assert.equal(d.agents[id].timeoutSec, 300);
+  const file = tmpFile(JSON.stringify({ agents: { antigravity: { timeoutSec: 600 }, claude: { timeoutSec: 1 }, codex: { timeoutSec: 99999 } } }));
+  const r = await config.load(file);
+  assert.equal(r.config.agents.antigravity.timeoutSec, 600);
+  assert.equal(r.config.agents.claude.timeoutSec, 10);
+  assert.equal(r.config.agents.codex.timeoutSec, 3600);
+  const junk = await config.load(tmpFile(JSON.stringify({ agents: { claude: { timeoutSec: 'soon' } } })));
+  assert.equal(junk.config.agents.claude.timeoutSec, 300);
+});
+
+test('settings added later (timeoutSec) are written into an existing config.json', async () => {
+  const file = tmpFile(JSON.stringify({ workingDir: path.join(os.homedir(), 'mine'), agents: { claude: { path: '/opt/claude', command: 'claude' } } }));
+  await config.load(file);
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(onDisk.agents.claude.timeoutSec, 300);
+  assert.equal(onDisk.agents.claude.path, '/opt/claude', 'what was there is kept');
+  assert.equal(onDisk.workingDir, path.join(os.homedir(), 'mine'));
+});
+
+test('agents can be renamed in config.json; blank or overlong names are handled', async () => {
+  assert.equal((await config.defaults()).agents.codex.name, 'Codex');
+  const file = tmpFile(JSON.stringify({ agents: { claude: { name: '  Cyclops  ' }, codex: { name: '   ' }, antigravity: { name: 'A'.repeat(40) } } }));
+  const r = await config.load(file);
+  assert.equal(r.config.agents.claude.name, 'Cyclops');
+  assert.equal(r.config.agents.codex.name, 'Codex');
+  assert.equal(r.config.agents.antigravity.name.length, 24);
 });

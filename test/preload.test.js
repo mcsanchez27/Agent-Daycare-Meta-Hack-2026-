@@ -46,25 +46,25 @@ test('preload exposes api object in the main world', () => {
   assert.ok(global.api);
 });
 
-test('startAgent invokes agent:start', () => {
+test('run invokes agent:run with the whole request', () => {
   invocations.length = 0;
-  const res = global.api.startAgent('claude', 'hello');
-  assert.equal(res, 'result-agent:start');
-  assert.deepEqual(invocations[0], { channel: 'agent:start', data: { agentId: 'claude', initialPrompt: 'hello' } });
+  const req = { runKey: 'c1/m1', vendor: 'claude', model: 'opus', prompt: 'hello' };
+  const res = global.api.run(req);
+  assert.equal(res, 'result-agent:run');
+  assert.deepEqual(invocations[0], { channel: 'agent:run', data: req });
 });
 
-test('stopAgent invokes agent:stop', () => {
+test('stop invokes agent:stop with the run key', () => {
   invocations.length = 0;
-  const res = global.api.stopAgent('claude');
+  const res = global.api.stop('c1/m1');
   assert.equal(res, 'result-agent:stop');
-  assert.deepEqual(invocations[0], { channel: 'agent:stop', data: { agentId: 'claude' } });
+  assert.deepEqual(invocations[0], { channel: 'agent:stop', data: { runKey: 'c1/m1' } });
 });
 
-test('sendInput invokes agent:send-input', () => {
+test('listModels invokes agent:models', () => {
   invocations.length = 0;
-  const res = global.api.sendInput('claude', 'input text');
-  assert.equal(res, 'result-agent:send-input');
-  assert.deepEqual(invocations[0], { channel: 'agent:send-input', data: { agentId: 'claude', input: 'input text' } });
+  assert.equal(global.api.listModels(), 'result-agent:models');
+  assert.equal(invocations[0].channel, 'agent:models');
 });
 
 test('getAgentConfigs invokes agent:get-configs', () => {
@@ -79,41 +79,6 @@ test('scanAgents invokes agent:scan', () => {
   const res = global.api.scanAgents();
   assert.equal(res, 'result-agent:scan');
   assert.deepEqual(invocations[0], { channel: 'agent:scan', data: undefined });
-});
-
-test('updateAgentRole invokes agent:update-role', () => {
-  invocations.length = 0;
-  const res = global.api.updateAgentRole('claude', 'lead', 'Lead Dev');
-  assert.equal(res, 'result-agent:update-role');
-  assert.deepEqual(invocations[0], { channel: 'agent:update-role', data: { agentId: 'claude', role: 'lead', title: 'Lead Dev' } });
-});
-
-test('forwardToAgent invokes agent:forward', () => {
-  invocations.length = 0;
-  const res = global.api.forwardToAgent('claude', 'grok', 'hello');
-  assert.equal(res, 'result-agent:forward');
-  assert.deepEqual(invocations[0], { channel: 'agent:forward', data: { fromAgentId: 'claude', toAgentId: 'grok', text: 'hello' } });
-});
-
-test('getHookStatus invokes hooks:status', () => {
-  invocations.length = 0;
-  const res = global.api.getHookStatus();
-  assert.equal(res, 'result-hooks:status');
-  assert.deepEqual(invocations[0], { channel: 'hooks:status', data: undefined });
-});
-
-test('installHooks invokes hooks:install', () => {
-  invocations.length = 0;
-  const res = global.api.installHooks('claude');
-  assert.equal(res, 'result-hooks:install');
-  assert.deepEqual(invocations[0], { channel: 'hooks:install', data: { agentId: 'claude' } });
-});
-
-test('uninstallHooks invokes hooks:uninstall', () => {
-  invocations.length = 0;
-  const res = global.api.uninstallHooks('claude');
-  assert.equal(res, 'result-hooks:uninstall');
-  assert.deepEqual(invocations[0], { channel: 'hooks:uninstall', data: { agentId: 'claude' } });
 });
 
 test('getConfig invokes config:get', () => {
@@ -158,25 +123,6 @@ test('log sends log:write', () => {
   assert.deepEqual(sends[0], { channel: 'log:write', data: { level: 'info', message: 'msg', data: { extra: 'data' } } });
 });
 
-test('minimizeWindow sends window:minimize', () => {
-  sends.length = 0;
-  global.api.minimizeWindow();
-  assert.deepEqual(sends[0], { channel: 'window:minimize', data: undefined });
-});
-
-test('maximizeWindow sends window:maximize', () => {
-  sends.length = 0;
-  global.api.maximizeWindow();
-  assert.deepEqual(sends[0], { channel: 'window:maximize', data: undefined });
-});
-
-test('closeWindow sends window:close', () => {
-  sends.length = 0;
-  global.api.closeWindow();
-  assert.deepEqual(sends[0], { channel: 'window:close', data: undefined });
-});
-
-// Event Listeners
 test('onAgentOutput registers listener and passes data', () => {
   let cbData = null;
   global.api.onAgentOutput((data) => { cbData = data; });
@@ -187,37 +133,6 @@ test('onAgentOutput registers listener and passes data', () => {
   assert.equal(cbData, 'output-data');
 });
 
-test('onAgentStatus registers listener and passes data', () => {
-  let cbData = null;
-  global.api.onAgentStatus((data) => { cbData = data; });
-  assert.ok(eventListeners['agent:status']);
-
-  // Simulate the event from main process
-  eventListeners['agent:status']({}, 'status-data');
-  assert.equal(cbData, 'status-data');
-});
-
-test('onAgentPrompt registers listener and passes data', () => {
-  let cbData = null;
-  global.api.onAgentPrompt((data) => { cbData = data; });
-  assert.ok(eventListeners['agent:prompt']);
-
-  // Simulate the event from main process
-  eventListeners['agent:prompt']({}, 'prompt-data');
-  assert.equal(cbData, 'prompt-data');
-});
-
-test('onTeamMessage registers listener and passes data', () => {
-  let cbData = null;
-  global.api.onTeamMessage((data) => { cbData = data; });
-  assert.ok(eventListeners['agent:team-message']);
-
-  // Simulate the event from main process
-  eventListeners['agent:team-message']({}, 'team-message-data');
-  assert.equal(cbData, 'team-message-data');
-});
-
-// Cleanup Module._load
 test('cleanup', () => {
   Module._load = originalLoad;
 });

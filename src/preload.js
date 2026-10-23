@@ -1,27 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  // Agent Process Control
-  startAgent: (agentId, initialPrompt) => ipcRenderer.invoke('agent:start', { agentId, initialPrompt }),
-  stopAgent: (agentId) => ipcRenderer.invoke('agent:stop', { agentId }),
-  sendInput: (agentId, input) => ipcRenderer.invoke('agent:send-input', { agentId, input }),
+  // Agents: each reply is a one-shot launch of a chat member's CLI, named by
+  // its runKey (`<chatId>/<memberId>`).
+  run: (req) => ipcRenderer.invoke('agent:run', req),
+  stop: (runKey) => ipcRenderer.invoke('agent:stop', { runKey }),
+  listModels: () => ipcRenderer.invoke('agent:models'),
   getAgentConfigs: () => ipcRenderer.invoke('agent:get-configs'),
   scanAgents: () => ipcRenderer.invoke('agent:scan'),
-  updateAgentRole: (agentId, role, title) => ipcRenderer.invoke('agent:update-role', { agentId, role, title }),
-  
-  // Real-time Event Listeners
-  onAgentOutput: (callback) => ipcRenderer.on('agent:output', (_, data) => callback(data)),
-  onAgentStatus: (callback) => ipcRenderer.on('agent:status', (_, data) => callback(data)),
-  onAgentPrompt: (callback) => ipcRenderer.on('agent:prompt', (_, data) => callback(data)),
-  onTeamMessage: (callback) => ipcRenderer.on('agent:team-message', (_, data) => callback(data)),
-  
-  // Inter-Agent Messaging / Forwarding
-  forwardToAgent: (fromAgentId, toAgentId, text) => ipcRenderer.invoke('agent:forward', { fromAgentId, toAgentId, text }),
 
-  // Agent hooks (Claude Code -> local listener -> mascots)
-  getHookStatus: () => ipcRenderer.invoke('hooks:status'),
-  installHooks: (agentId) => ipcRenderer.invoke('hooks:install', { agentId }),
-  uninstallHooks: (agentId) => ipcRenderer.invoke('hooks:uninstall', { agentId }),
+  // Events from the main process
+  onAgentOutput: (callback) => ipcRenderer.on('agent:output', (_, data) => callback(data)),
+  onAgentDone: (callback) => ipcRenderer.on('agent:done', (_, data) => callback(data)),
+  onNotice: (callback) => ipcRenderer.on('app:notice', (_, data) => callback(data)),
 
   // Settings (executable paths, working folder)
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -29,12 +20,12 @@ contextBridge.exposeInMainWorld('api', {
   pickFolder: (current) => ipcRenderer.invoke('config:pick-folder', { current }),
   pickFile: (current, title) => ipcRenderer.invoke('config:pick-file', { current, title }),
 
+  // Saved chats, one file each (TM-53 Batch 2)
+  listChats: () => ipcRenderer.invoke('chats:list'),
+  loadChat: (id) => ipcRenderer.invoke('chats:load', { id }),
+  saveChat: (chat) => ipcRenderer.invoke('chats:save', { chat }),
+
   // Logging (goes to logs/latest.log in the main process)
   log: (level, message, data) => ipcRenderer.send('log:write', { level, message, data }),
-  openLogsFolder: () => ipcRenderer.invoke('logs:open-folder'),
-
-  // Window Controls
-  minimizeWindow: () => ipcRenderer.send('window:minimize'),
-  maximizeWindow: () => ipcRenderer.send('window:maximize'),
-  closeWindow: () => ipcRenderer.send('window:close')
+  openLogsFolder: () => ipcRenderer.invoke('logs:open-folder')
 });
