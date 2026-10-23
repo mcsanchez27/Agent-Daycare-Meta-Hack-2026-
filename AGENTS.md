@@ -1,7 +1,7 @@
 # Agent Daycare: notes for AI agents
 
 ## Read this first
-- **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass is **TM-56** in Notion Task Master.
+- **Active ticket:** TM-57 (V3.1 test-pass fixes) on `tm-57/v3.1-fixes`, Batches 1–3 built; Matt's test cases for it are on **TM-58**. **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass, TM-56, is Done.
 - **Where work happens:** `master` holds everything built so far. Each new ticket gets its own branch off `master` named `tm-<id>/<short-name>`, merged by PR when done. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
@@ -21,6 +21,15 @@
 - **Equal access (Matt's decision):** every agent may write inside the working folder without asking. Antigravity uses `--mode accept-edits`; Claude uses `acceptEdits`; Codex uses the `workspace-write` sandbox. Nothing grants system-wide access.
 - **Timeout:** `agents.<id>.timeoutSec` in `config.json` (default 300, kept between 10 and 3600). Past it, the runner stops the agent like Stop (`stopAgent(id, 'timeout')`), and `agent:done` carries `timedOut: true`. The log line is `"msg":"timed out, stopping"`.
 - **Names:** `agents.<vendor>.name` in `config.json` is the vendor's display name, the default name for new chat members (TM-54). Each chat member has its own `name`, used everywhere for that member: header chips, bubbles, @, handoff markers and prompts.
+- **Gemini (TM-57 Batch 1):** the `antigravity` vendor is shown as "Gemini" (the models the `agy` CLI runs). The vendor id stays `antigravity` in code, config keys and chat files. A `config.json` name still "Antigravity" becomes "Gemini" on load (`RETIRED_NAMES` in `config.js`), and saved members named "Antigravity" or "Antigravity N" are renamed when a chat opens (`renameRetired` in `members.js`). Old message text is not rewritten.
+
+## Removing an agent (TM-57 Batch 2)
+- Every header chip except the chat's own agent has a ×. `removeMember` in `app.js` stops it if it's answering, sets `left: true` on the member (kept so its old messages keep their name), and posts "<name> left." The log says `"msg":"agent removed"`.
+- A left member is hidden from the header and left out of prompts' member list (`buildPrompt`), but `findTarget` still matches its name: an @ from Matt or an agent (or replying in a thread it started) calls `rejoin`, which clears `left`, `sessions` and `usage` (fresh session) and posts "<name> joined again." The log says `"msg":"agent rejoined"`. `mergeThreads` keeps `left`.
+
+## Debug menu (TM-57 Batch 1)
+- The menu bar has File, Edit, View, Window and **Debug** (`setMenu` in `main.js`). Add debug items there.
+- **Delete all chats…** asks first, stops every running agent, deletes every chat file (`chats.removeAll`, after queued saves finish), then reloads the window. Saves are refused while it runs (`chatsLocked`). The log says `"msg":"all chats deleted"` with a `count`.
 - `config.load` writes newly added settings into an existing `config.json`, so they can be edited by hand.
 
 ## Chats (TM-53 Batch 2)
@@ -48,6 +57,8 @@
 - `#<chat title>` (one space after `#` is allowed, since agents write markdown) asks another chat without anyone joining (`findChatMention` in `thread.js`; the longest matching title wins). Typing `#` opens a dropdown of the other chats. Agents' prompts list Matt's 15 newest other chat titles and explain `#`.
 - `askChat` in `app.js`: posts an app note with `side: { chatId, chatTitle, asker, question, state, hop, runKey, answer | note }` in the asking chat, drawn as a "Claude ⇄ Codex solo · asking…" row (Stop, Open). It then posts a `from: 'guest'` message (`guest: { chatId, chatTitle, name }`) to the target chat's owner and runs it there. The answer streams into the row.
 - `settleSide`: states `answered`, `stopped`, `busy`, `failed`. If an agent asked, it is run again with `buildPrompt(..., { answer })`, which ends "The chat '<title>' answered your question: … Finish your reply to Matt." When Matt asked, the answer only lands in the row.
+- **Several asks at once (TM-57 Batch 3):** every `#chat` in a message is asked, once per chat, in order (`findChatMentions`); with more than one, each chat gets its own part of the text, from its `#` to the next (`splitChatAsks`). An agent's asks share `side.group` (the reply's id) and `side.groupSize`; `settleSide` relaunches the asker only when the whole group has settled, with all the answers (`buildPrompt(…, { answer: [...] })`).
+- **No pull-ins while answering (TM-57 Batch 3):** a reply that answers another chat's background ask never hands off, so a guest question can't bring agents into the answering chat. Its own `#` asks still go out (chains).
 - Answered asks go into later prompts as "(in the background) X asked the chat 'Y': … It answered: …". Chains are capped by `hop` (`HOP_LIMIT`). The log has `"msg":"background ask"` and `"msg":"background ask settled"`.
 
 ## Merging chats (TM-54 Batch 6)
@@ -56,7 +67,7 @@
 ## Vendor sessions (TM-55 Batch 1)
 - Each CLI now runs in JSON output mode and keeps its own session: Claude `--output-format stream-json --verbose` (+ `--resume <id>`), Codex `exec --json` (+ `exec resume … -c sandbox_mode=workspace-write <id> -`), Antigravity `--output-format json` (+ `--conversation <id>`). `parseEvent(vendor, line)` in `agent-runner.js` pulls out reply text, session id, usage (`inputTokens`, `outputTokens`, Claude's `contextWindow`) and Claude's plan use (`rate_limit_event`: 5-hour and 7-day). These ride on `agent:done`.
 - A member keeps `sessions: { main | <threadRootId>: { id, lastId } }` and `usage` in the chat file. On resume, `buildPrompt(…, { since: lastId })` sends no header and only what others said since then. A failed resume (no reply, not stopped) drops the session, posts a note and asks once more, fresh. Session ids must match `SESSION_ID` before they reach a command line.
-- **Meter (Batch 2):** each member chip shows its last reply's context use ("67k / 1M" with a fill bar for Claude; "51k tokens" for Codex and Antigravity, which don't report a window). The sidebar shows "Claude plan · 5h N% · 7d N%" from the latest Claude reply, kept in localStorage.
+- **Meter (Batch 2):** each member chip shows its last reply's context use ("67k / 1M" with a fill bar for Claude; "51k tokens" for Codex and Antigravity, which don't report a window). The top of the sidebar (under the app name, TM-57 Batch 3) shows "Claude plan · 5h N% · 7d N%" from the latest Claude reply, kept in localStorage.
 - The "one-shot launch, history rebuilt each time" text above still describes a member's first message, and any member without a session.
 
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)

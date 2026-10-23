@@ -16,8 +16,8 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, chatTitle, findTarget, findChatMention, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
-const { VENDORS, newMember, ensureMembers, memberById } = window.ChatMembers;
+const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
+const { VENDORS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -167,9 +167,38 @@ function join(chatId, vendor, { model = null, modelLabel = null, memory = null, 
   return member;
 }
 
+// Matt takes an agent out of a chat (TM-57): it stops if it's answering and
+// is marked `left`, so its old messages keep its name. The chat's own agent
+// can't leave.
+function removeMember(chatId, memberId) {
+  const chat = chats.get(chatId);
+  const member = memberById(chat.thread, memberId);
+  if (!member || member === chat.thread.members[0] || member.left) return;
+  const key = runKeyOf(chatId, memberId);
+  if (pending[key]) api.stop(key);
+  member.left = true;
+  post(chatId, { from: 'system', text: `${member.name} left.` });
+  api.log('info', 'agent removed', { chatId, member: memberId });
+  if (chatId === currentId) { renderMembers(); openViews().forEach(updatePlaceholder); updateSendButtons(); }
+}
+
+// An @ (or a thread) that reaches an agent who left brings it back, with a
+// fresh session: it missed what was said while it was out.
+function rejoin(chatId, memberId, threadOf = null) {
+  const member = memberById(chats.get(chatId).thread, memberId);
+  if (!member || !member.left) return memberId;
+  delete member.left;
+  delete member.sessions;
+  delete member.usage;
+  post(chatId, { from: 'system', threadOf, text: `${member.name} joined again.` });
+  api.log('info', 'agent rejoined', { chatId, member: memberId });
+  if (chatId === currentId) renderMembers();
+  return memberId;
+}
+
 async function loadChat(chat) {
   if (!chat.thread) Object.assign(chat, await api.loadChat(chat.id));
-  ensureMembers(chat.thread, vendorNames());
+  renameRetired(ensureMembers(chat.thread, vendorNames()), vendorNames());
   return chat;
 }
 
@@ -308,7 +337,9 @@ function editTitle(chat, item) {
 // The open chat's agents, in the header: name, vendor and model.
 function renderMembers() {
   el.members.replaceChildren();
+  const owner = current().thread.members[0];
   for (const m of current().thread.members) {
+    if (m.left) continue;
     const working = Boolean(pending[runKeyOf(currentId, m.id)]);
     const chip = document.createElement('span');
     chip.className = 'member' + (working ? ' working' : '');
@@ -329,6 +360,16 @@ function renderMembers() {
         (u.contextWindow ? ` of ${u.contextWindow.toLocaleString()} (${((100 * u.inputTokens) / u.contextWindow).toFixed(1)}%)` : ' (this CLI doesn\'t say how big its window is)') +
         `, and wrote ${(u.outputTokens || 0).toLocaleString()}. Updated ${timeLabel(u.at)}.`;
       chip.appendChild(meter);
+    }
+    if (m !== owner) {
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'member-remove';
+      x.textContent = '×';
+      x.title = `Remove ${m.name} from this chat` + (working ? ' (stops its reply)' : '') + '. An @ brings it back.';
+      x.setAttribute('aria-label', `Remove ${m.name}`);
+      x.addEventListener('click', () => removeMember(currentId, m.id));
+      chip.appendChild(x);
     }
     el.members.appendChild(chip);
   }
@@ -461,7 +502,7 @@ function showChooser(mode = 'new', vendor = null) {
     if (vendor === 'antigravity' && models && !list.length) {
       const note = document.createElement('p');
       note.className = 'chooser-note';
-      note.textContent = "Couldn't get Antigravity's model list (agy models), so only its default is offered.";
+      note.textContent = "Couldn't get Gemini's model list (agy models), so only its default is offered.";
       el.chooser.appendChild(note);
     }
     if (vendor === 'codex') {
@@ -618,7 +659,7 @@ function redrawSide(chatId, m) {
 // Asks another chat in the background: the question goes to that chat's own
 // agent as a guest message, answered there; this chat gets a live row. An
 // agent that asked is launched again with the answer (see settleSide).
-async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null }) {
+async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null, group = null }) {
   const src = chats.get(fromChatId);
   const dst = chats.get(targetId);
   const askerName = asker === 'matt' ? 'Matt' : nameOf(asker, src);
@@ -630,7 +671,7 @@ async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null
   await loadChat(dst);
   const owner = dst.thread.members[0];
   const runKey = runKeyOf(targetId, owner.id);
-  const side = post(fromChatId, { from: 'system', threadOf, text: `${askerName} asked "${dst.title}" in the background.`, side: { chatId: targetId, chatTitle: dst.title, asker, question: text, state: 'asking', hop, runKey } });
+  const side = post(fromChatId, { from: 'system', threadOf, text: `${askerName} asked "${dst.title}" in the background.`, side: { chatId: targetId, chatTitle: dst.title, asker, question: text, state: 'asking', hop, runKey, ...(group || {}) } });
   api.log('info', 'background ask', { from: fromChatId, to: targetId, asker, hop });
   if (pending[runKey]) {
     settleSide(fromChatId, side, 'busy', `${owner.name} in "${dst.title}" is busy answering something else. Try again once it's done.`);
@@ -654,7 +695,15 @@ function settleSide(chatId, m, state, text) {
   const asker = m.side.asker;
   if (asker === 'matt' || !memberById(chat.thread, asker)) return;
   if (pending[runKeyOf(chatId, asker)]) return;
-  ask(chatId, asker, m.threadOf || null, { answer: { chatTitle: m.side.chatTitle, text }, hop: m.side.hop });
+  // One reply can ask several chats (TM-57): the asker carries on once every
+  // one of them has settled, with all the answers.
+  let asks = [m];
+  if (m.side.group != null) {
+    asks = chat.thread.messages.filter(x => x.side && x.side.group === m.side.group);
+    if (asks.length < m.side.groupSize || asks.some(x => x.side.state === 'asking')) return;
+  }
+  const answers = asks.map(x => ({ chatTitle: x.side.chatTitle, text: x.side.state === 'answered' ? x.side.answer : x.side.note }));
+  ask(chatId, asker, m.threadOf || null, { answer: answers, hop: m.side.hop });
 }
 
 function scrollToBottom(view) {
@@ -823,7 +872,7 @@ function handOff(chatId, m) {
     api.log('info', 'hop limit reached', { chatId, where, from: m.from, to: target });
     return;
   }
-  const to = target.memberId || join(chatId, target.vendor, { threadOf: where }).id;
+  const to = target.memberId ? rejoin(chatId, target.memberId, where) : join(chatId, target.vendor, { threadOf: where }).id;
   if (pending[runKeyOf(chatId, to)]) {
     post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} asked for ${name(to)}. ${busyText(chatId, to)}` });
     return;
@@ -860,10 +909,10 @@ function updatePlaceholder(view) {
 // Send is off while the box is empty or the agent it would go to is still
 // answering (a new launch would cut its reply off; use Stop instead).
 function updateSendButton(view) {
-  const chatAsk = current() && findChatMention(view.input.value, otherChats(currentId));
-  if (chatAsk) {
+  const chatAsks = current() ? splitChatAsks(view.input.value, otherChats(currentId)) : [];
+  if (chatAsks.length) {
     view.send.disabled = false;
-    view.send.title = `Asks "${chats.get(chatAsk.chatId).title}" in the background`;
+    view.send.title = `Asks ${chatAsks.map(a => `"${chats.get(a.chatId).title}"`).join(' and ')} in the background`;
     return;
   }
   const t = current() && view.input.value.trim() ? target(view) : null;
@@ -871,6 +920,7 @@ function updateSendButton(view) {
   view.send.disabled = !t || busy;
   view.send.title = busy ? busyText(currentId, t.memberId)
     : t && t.vendor ? `${vendorName(t.vendor)} isn't in this chat yet: it joins on its default model`
+    : t && memberById(current().thread, t.memberId).left ? `${nameOf(t.memberId)} left this chat: it joins again`
     : t ? `Goes to ${nameOf(t.memberId)}` : '';
 }
 
@@ -882,17 +932,17 @@ function send(view) {
   const text = view.input.value.trim();
   if (!text || !current()) return;
   // #chat: ask that chat in the background; the answer lands in a row here.
-  const chatAsk = findChatMention(text, otherChats(currentId));
-  if (chatAsk) {
+  const chatAsks = splitChatAsks(text, otherChats(currentId));
+  if (chatAsks.length) {
     view.input.value = '';
     autoGrow(view);
     closeMentions(view);
-    askChat({ fromChatId: currentId, asker: 'matt', text, targetId: chatAsk.chatId, hop: 1, threadOf: view.threadOf });
+    for (const a of chatAsks) askChat({ fromChatId: currentId, asker: 'matt', text: a.question, targetId: a.chatId, hop: 1, threadOf: view.threadOf });
     return;
   }
   const t = target(view);
   if (t.memberId && pending[runKeyOf(currentId, t.memberId)]) return;
-  const to = t.memberId || join(currentId, t.vendor, { threadOf: view.threadOf }).id;
+  const to = t.memberId ? rejoin(currentId, t.memberId, view.threadOf) : join(currentId, t.vendor, { threadOf: view.threadOf }).id;
   post(currentId, { from: 'matt', to, text, threadOf: view.threadOf });
   view.input.value = '';
   autoGrow(view);
@@ -918,10 +968,14 @@ function mentionItems(q) {
     return otherChats(currentId).filter(c => c.title.toLowerCase().startsWith(q.query)).slice(0, 8)
       .map(c => ({ key: c.id, label: c.title, sub: 'ask in the background', color: null, insert: `#${c.title} ` }));
   }
-  const inChat = new Set(current().thread.members.map(m => m.name.toLowerCase()));
+  const members = current().thread.members;
+  const status = (n) => {
+    const m = members.find(x => x.name.toLowerCase() === n.toLowerCase());
+    return !m ? 'joins on its default model' : m.left ? 'left: joins again' : 'in this chat';
+  };
   return VENDORS.filter(v => vendorName(v).toLowerCase().startsWith(q.query)).map(v => ({
     key: v, label: vendorName(v), color: vendors[v] ? vendors[v].color : '#888', insert: `@${vendorName(v)} `,
-    sub: inChat.has(vendorName(v).toLowerCase()) ? 'in this chat' : 'joins on its default model'
+    sub: status(vendorName(v))
   }));
 }
 
@@ -1018,7 +1072,7 @@ function wireComposer(view) {
 // Launches a member with the chat so far and opens a bubble for its reply.
 // threadOf: the thread it answers in, or null for the main chat. extra
 // (background asks): side ({ chatId, messageId, hop }) when this reply answers
-// another chat; answer ({ chatTitle, text }) for an asker's follow-up; hop,
+// another chat; answer ({ chatTitle, text }, or a list of them) for an asker's follow-up; hop,
 // how many chats have asked each other so far in this chain.
 function ask(chatId, memberId, threadOf = null, { side = null, answer = null, hop = 0 } = {}) {
   const thread = chats.get(chatId).thread;
@@ -1124,10 +1178,13 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
     post(p.chatId, { from: 'system', threadOf, text: `${name} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
     api.log('warn', 'agent gave no reply', { runKey, code, why: why || null });
   } else {
-    // #chat asks another chat in the background; otherwise @ may hand off here.
-    const chatAsk = findChatMention(m.text, otherChats(p.chatId));
-    if (chatAsk) askChat({ fromChatId: p.chatId, asker: p.memberId, text: m.text, targetId: chatAsk.chatId, hop: (p.hop || 0) + 1, threadOf });
-    else handOff(p.chatId, m);
+    // #chat asks other chats in the background; otherwise @ may hand off
+    // here, unless this reply answers another chat's question (TM-57): an
+    // agent answering a background ask can't pull agents into its chat.
+    const chatAsks = splitChatAsks(m.text, otherChats(p.chatId));
+    const group = chatAsks.length > 1 ? { group: m.id, groupSize: chatAsks.length } : null;
+    for (const a of chatAsks) askChat({ fromChatId: p.chatId, asker: p.memberId, text: a.question, targetId: a.chatId, hop: (p.hop || 0) + 1, threadOf, group });
+    if (!chatAsks.length && !p.side) handOff(p.chatId, m);
   }
   // This reply answered another chat: settle that chat's ask.
   if (p.side) {

@@ -76,3 +76,14 @@ test('saves of one chat made at the same time all succeed, and the last one wins
   assert.equal((await chats.load(dir, 'race-1')).title, 'v5');
   assert.deepEqual(fs.readdirSync(dir).filter(f => f.endsWith('.tmp')), [], 'no temp files left');
 });
+
+test('removeAll deletes every chat file and stray .tmp, nothing else (TM-57)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chats-'));
+  await chats.save(dir, { id: 'a1', thread: { messages: [] } });
+  await chats.save(dir, { id: 'b2', thread: { messages: [] } });
+  fs.writeFileSync(path.join(dir, 'c3.json.tmp'), '{');
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'keep');
+  assert.equal(await chats.removeAll(dir), 2);
+  assert.deepEqual(fs.readdirSync(dir), ['notes.txt']);
+  assert.equal(await chats.removeAll(path.join(dir, 'missing')), 0);
+});

@@ -131,3 +131,11 @@ test('agents can be renamed in config.json; blank or overlong names are handled'
   assert.equal(r.config.agents.codex.name, 'Codex');
   assert.equal(r.config.agents.antigravity.name.length, 24);
 });
+
+test('Antigravity is called Gemini (TM-57); the old default name moves over, a chosen one stays', async () => {
+  assert.equal((await config.defaults()).agents.antigravity.name, 'Gemini');
+  const r = await config.load(tmpFile(JSON.stringify({ agents: { antigravity: { name: 'Antigravity' } } })));
+  assert.equal(r.config.agents.antigravity.name, 'Gemini');
+  const kept = await config.load(tmpFile(JSON.stringify({ agents: { antigravity: { name: 'Scout' } } })));
+  assert.equal(kept.config.agents.antigravity.name, 'Scout');
+});

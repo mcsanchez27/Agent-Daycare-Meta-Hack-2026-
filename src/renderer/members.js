@@ -7,7 +7,10 @@
   else root.ChatMembers = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   const VENDORS = ['antigravity', 'claude', 'codex'];
-  const VENDOR_NAMES = { antigravity: 'Antigravity', claude: 'Claude', codex: 'Codex' };
+  const VENDOR_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex' };
+  // Default names that were retired (TM-57: Antigravity is shown as Gemini,
+  // the models its CLI runs).
+  const RETIRED_NAMES = { antigravity: 'Antigravity' };
 
   // A new member for a chat that already has `members`. Its name is unique in
   // the chat (case-insensitive): the vendor's name, else the model's label,
@@ -41,9 +44,24 @@
     return thread;
   }
 
+  // Members still called by a retired default name ("Antigravity",
+  // "Antigravity 2") take the vendor's current name, unless it is taken in
+  // the chat. Nothing is written until the chat is next saved.
+  function renameRetired(thread, vendorNames = VENDOR_NAMES) {
+    const members = thread.members || [];
+    for (const m of members) {
+      const old = RETIRED_NAMES[m.vendor];
+      const r = old && new RegExp(`^${old}( \\d+)?$`).exec(m.name);
+      if (!r) continue;
+      const name = (vendorNames[m.vendor] || VENDOR_NAMES[m.vendor]) + (r[1] || '');
+      if (!members.some(o => o.name.toLowerCase() === name.toLowerCase())) m.name = name;
+    }
+    return thread;
+  }
+
   function memberById(thread, id) {
     return (thread.members || []).find(m => m.id === id) || null;
   }
 
-  return { VENDORS, VENDOR_NAMES, newMember, ensureMembers, memberById };
+  return { VENDORS, VENDOR_NAMES, newMember, ensureMembers, renameRetired, memberById };
 });

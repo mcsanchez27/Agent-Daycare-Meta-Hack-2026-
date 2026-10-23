@@ -41,6 +41,11 @@ const electronMock = {
   },
   dialog: {
     showOpenDialog: async () => ({ canceled: false, filePaths: ['/mock/selected/path'] })
+  },
+  Menu: {
+    template: null,
+    buildFromTemplate(t) { this.template = t; return t; },
+    setApplicationMenu() {}
   }
 };
 

@@ -197,9 +197,11 @@
     }
 
     const who = `You are ${me.name} (${me.vendor}, model ${me.model || 'default'})`;
-    const intro = members.length === 1
+    // Agents Matt removed (TM-57, `left`) aren't in the room any more.
+    const here = members.filter(m => !m.left);
+    const intro = here.length === 1
       ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
-      : `${who}, one of ${members.length} AI agents (${list(members.map(m => m.name))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `;
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => m.name))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
       (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
@@ -210,8 +212,15 @@
     const memory = me.memory && me.memory.text ? `Background from your earlier chat '${me.memory.title}'${was}:\n${me.memory.text}` : '';
     const history = [];
     let used = memory.length;
-    // A follow-up keeps everything but the answered ask itself, which ends the prompt.
-    let earlier = answer ? said.filter(m => m !== last || !last.side) : said.slice(0, -1);
+    // A follow-up keeps everything but the answered asks themselves (the
+    // newest side rows), which end the prompt. One answer or several (TM-57).
+    const answers = answer ? [].concat(answer) : null;
+    let earlier = said.slice(0, -1);
+    if (answers) {
+      let k = said.length;
+      while (k && said[k - 1].side) k--;
+      earlier = said.slice(0, k);
+    }
     // Resuming its vendor session (TM-55): the session already holds the
     // header, the memory and everything up to `since`, and the agent's own
     // words; only what others said since then goes in.
@@ -231,8 +240,10 @@
     const parts = since === null ? [header] : [];
     if (memory && since === null) parts.push(memory);
     if (history.length) parts.push((since === null ? 'Recent conversation:\n' : 'New in this chat since your last reply:\n') + history.join('\n\n'));
-    if (answer) {
-      parts.push(`The chat '${answer.chatTitle}' answered your question:\n${answer.text}\n\nFinish your reply to Matt.`);
+    if (answers && answers.length === 1) {
+      parts.push(`The chat '${answers[0].chatTitle}' answered your question:\n${answers[0].text}\n\nFinish your reply to Matt.`);
+    } else if (answers) {
+      parts.push('The chats you asked answered:\n\n' + answers.map(a => `'${a.chatTitle}': ${a.text}`).join('\n\n') + '\n\nFinish your reply to Matt.');
     } else if (last.from === 'guest') {
       parts.push(`${speaker(last, names)} asks you:\n` + last.text);
     } else if (handoff && !fromMatt) {
@@ -249,13 +260,36 @@
   // case-insensitively as a whole phrase; the longest title wins, so
   // "#Codex solo" beats a chat called "Codex". chats: [{ id, title }].
   function findChatMention(text, chats) {
-    let best = null;
+    const [first] = findChatMentions(text, chats);
+    return first ? { chatId: first.chatId } : null;
+  }
+
+  // Every other chat text asks (TM-57), in the order they appear, each once:
+  // [{ chatId, start }]. Where two titles start at the same # ("#Codex solo 1"
+  // and "#Codex solo"), the longest wins.
+  function findChatMentions(text, chats) {
+    const hits = [];
     for (const c of chats) {
       // One space after # is allowed: agents write markdown ("# Codex solo").
-      const hit = new RegExp(`(^|[^\\w#])# ?${escapeRegExp(c.title)}(?![\\w-])`, 'i').exec(text);
-      if (hit && (!best || c.title.length > best.length)) best = { chatId: c.id, length: c.title.length };
+      const re = new RegExp(`(^|[^\\w#])(# ?${escapeRegExp(c.title)})(?![\\w-])`, 'gi');
+      for (let h; (h = re.exec(text));) hits.push({ chatId: c.id, start: h.index + h[1].length, end: h.index + h[0].length });
     }
-    return best ? { chatId: best.chatId } : null;
+    hits.sort((a, b) => a.start - b.start || b.end - a.end);
+    const out = [];
+    for (const h of hits) {
+      const prev = out[out.length - 1];
+      if (prev && h.start < prev.end) continue;
+      if (!out.some(o => o.chatId === h.chatId)) out.push(h);
+    }
+    return out.map(({ chatId, start }) => ({ chatId, start }));
+  }
+
+  // What to ask each chat: one # gets the whole text; with several, each chat
+  // gets its own part, from its # to the next one. [{ chatId, question }]
+  function splitChatAsks(text, chats) {
+    const found = findChatMentions(text, chats);
+    if (found.length < 2) return found.map(f => ({ chatId: f.chatId, question: text }));
+    return found.map((f, i) => ({ chatId: f.chatId, question: text.slice(f.start, i + 1 < found.length ? found[i + 1].start : undefined).trim() }));
   }
 
   // Two chats as one new thread (TM-54 Batch 6): both chats' agents (each
@@ -268,6 +302,7 @@
       const map = {};
       for (const m of t.members) {
         const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null }, { vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        if (m.left) fresh.left = true;
         members.push(fresh);
         map[m.id] = fresh.id;
       }
@@ -301,5 +336,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
+  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
 });

@@ -163,7 +163,45 @@ handle('chats:list', async () => {
   return r;
 });
 handle('chats:load', ({ id }) => chats.load(chatsDir, id));
-handle('chats:save', ({ chat }) => chats.save(chatsDir, chat));
+// While "Delete all chats" runs, saves from the old window are dropped, so a
+// reply finishing mid-delete can't bring a chat back.
+let chatsLocked = false;
+handle('chats:save', ({ chat }) => (chatsLocked ? null : chats.save(chatsDir, chat)));
+
+// Debug menu (TM-57). Add items here as they earn a place.
+async function deleteAllChats() {
+  const { chats: list } = await chats.list(chatsDir);
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['Delete all', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    message: `Delete all ${list.length} chats?`,
+    detail: `This deletes every chat file in ${chatsDir}, and stops any agent that is answering. It can't be undone.`
+  });
+  if (response !== 0) return;
+  chatsLocked = true;
+  try {
+    if (agentRunner) agentRunner.shutdown();
+    const count = await chats.removeAll(chatsDir);
+    logger.info('app', 'all chats deleted', { dir: chatsDir, count });
+  } catch (err) {
+    logger.exception('app', err, { action: 'delete all chats' });
+    dialog.showErrorBox('Delete all chats', `Not every chat could be deleted: ${err.message}`);
+  }
+  mainWindow.webContents.once('did-finish-load', () => { chatsLocked = false; });
+  mainWindow.webContents.reload();
+}
+
+function setMenu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    { label: 'Debug', submenu: [{ label: 'Delete all chats…', click: () => deleteAllChats() }] }
+  ]));
+}
 
 handle('logs:open-folder', async () => {
   const result = await shell.openPath(logsDir);
@@ -190,6 +228,7 @@ app.whenReady().then(async () => {
     packaged: app.isPackaged
   });
 
+  setMenu();
   createWindow();
 
   app.on('activate', () => {
