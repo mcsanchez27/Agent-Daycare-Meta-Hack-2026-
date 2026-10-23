@@ -26,6 +26,7 @@ const vendors = {}; // vendor -> { id, name, color } from config.json
 let models = null; // vendor -> [{ id, label }], from api.listModels()
 const chats = new Map(); // id -> { id, title, createdAt, updatedAt, thread? } (thread once loaded)
 let currentId = null;
+let workingDir = null; // from config.json; each chat works in <workingDir>\<chat id> (TM-59)
 // runKey -> the reply being streamed: { chatId, memberId, threadOf, text, stderr, started }.
 // One per member: each member runs one process at a time.
 const pending = {};
@@ -218,6 +219,8 @@ async function openChat(id) {
 function showChat(id) {
   currentId = id;
   closePanel();
+  // Each chat's agents work in a folder of their own (TM-59).
+  if (workingDir) el.folder.textContent = `Working folder: ${workingDir}\\${id}`;
   renderChatList();
   renderMembers();
   renderView(main);
@@ -1228,7 +1231,8 @@ async function init() {
   }).catch((err) => api.log('warn', 'could not list models', { error: err.message }));
 
   const { config } = await api.getConfig();
-  el.folder.textContent = `Working folder: ${config.workingDir}`;
+  workingDir = config.workingDir;
+  el.folder.textContent = `Working folder: ${workingDir}`;
 
   const { chats: saved } = await api.listChats();
   for (const s of saved) chats.set(s.id, { ...s });

@@ -45,7 +45,7 @@ test('only the three V1 agents exist', () => {
 test('agent arguments: everyone may write in the working folder; codex reads the prompt from stdin', () => {
   const { runner } = makeRunner();
   assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '--output-format', 'json', '-p', 'hi'], stdin: null });
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', 'hi'], stdin: null });
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
   // Codex's arguments must stay safe for a codex.cmd shim.
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
@@ -53,7 +53,7 @@ test('agent arguments: everyone may write in the working folder; codex reads the
 
 test('model flags per vendor', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', 'opus').args, ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', '--model', 'opus', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', 'opus').args, ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', '--model', 'opus', 'hi']);
   assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'gemini-4-argon-high').args, ['--mode', 'accept-edits', '--output-format', 'json', '--model', 'gemini-4-argon-high', '-p', 'hi']);
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi', 'gpt-5'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-m', 'gpt-5', '-'], stdin: 'hi' });
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x', 'gpt-5.1-codex').args, 'win32'), 'still safe for codex.cmd');
@@ -332,7 +332,7 @@ test('antigravity json: the whole envelope', () => {
 
 test('resuming: each vendor gets its session flag, still safe for a codex.cmd shim', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', null, 's1').args, ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', '--resume', 's1', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', null, 's1').args, ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', '--resume', 's1', 'hi']);
   assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'm', 'c1').args, ['--mode', 'accept-edits', '--output-format', 'json', '--model', 'm', '--conversation', 'c1', '-p', 'hi']);
   const codex = runner._buildAgentArgs('codex', 'hi', 'gpt-6-astra', '01a16915-c682-73f1-bf39-7e19fbecb8a1');
   assert.deepEqual(codex, { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', '-m', 'gpt-6-astra', '01a16915-c682-73f1-bf39-7e19fbecb8a1', '-'], stdin: 'hi' });
@@ -355,4 +355,17 @@ test('session ids: no leading hyphen, and ids the CLIs report are checked too', 
   assert.equal(parseEvent('codex', '{"type":"thread.started","thread_id":"--yolo"}'), null);
   assert.equal(parseEvent('claude', JSON.stringify({ type: 'system', subtype: 'init', session_id: { x: 1 } })), null);
   assert.deepEqual(parseEvent('antigravity', '{"conversation_id":"-x","response":"hi"}'), { text: 'hi' }, 'a bad id is dropped, the reply kept');
+});
+
+test('each chat runs in its own folder inside the working folder (TM-59)', () => {
+  const os = require('os');
+  const path = require('path');
+  const fs = require('fs');
+  const runner = new AgentRunner(null, { info() {}, warn() {}, error() {}, exception() {} });
+  runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-work-'));
+  const dir = runner.chatFolder('f5bff68d-d665-4cba-9f20-f02026e7f4b9/m1');
+  assert.equal(dir, path.join(runner.workingDir, 'f5bff68d-d665-4cba-9f20-f02026e7f4b9'));
+  assert.ok(fs.statSync(dir).isDirectory(), 'created on first use');
+  assert.equal(runner.chatFolder('../evil/m1'), runner.workingDir, 'a bad chat id never becomes a path');
+  assert.equal(runner.chatFolder('justakey'), path.join(runner.workingDir, 'justakey'));
 });

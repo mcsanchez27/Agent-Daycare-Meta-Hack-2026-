@@ -1,6 +1,8 @@
 const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
+const path = require('path');
+const { CHAT_ID } = require('./chats');
 const { StringDecoder } = require('string_decoder');
 
 const execFileAsync = promisify(execFile);
@@ -284,7 +286,7 @@ class AgentRunner {
     if (this.processes.has(runKey)) this.stop(runKey);
 
     const exe = this._getExecutable(agent);
-    const workingDir = this.workingDir || process.cwd();
+    const workingDir = this.chatFolder(runKey);
     const { args, stdin } = this._buildAgentArgs(vendor, p, model, sessionId);
     this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, cwd: workingDir });
 
@@ -312,6 +314,17 @@ class AgentRunner {
     return true;
   }
 
+  // Each chat works in a folder of its own inside the working folder (TM-59),
+  // named by its id, so a crew owns its project files. Created on first use.
+  chatFolder(runKey) {
+    const base = this.workingDir || process.cwd();
+    const chatId = String(runKey || '').split('/')[0];
+    if (!CHAT_ID.test(chatId)) return base;
+    const dir = path.join(base, chatId);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
   _getExecutable(agent) {
     return resolveExecutable(agent);
   }
@@ -331,7 +344,9 @@ class AgentRunner {
     if (vendor === 'codex' && sessionId) return { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...m, sessionId, '-'], stdin: p };
     if (vendor === 'codex') return { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...m, '-'], stdin: p };
     const flag = model ? ['--model', model] : [];
-    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    // Lean Claude (TM-59): Matt's own plugins, hooks and MCP servers stay out
+    // (about 66k tokens a launch down to 37k). Its login is unaffected.
+    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
     // antigravity (agy): -p takes the next word as the prompt, so it goes last
     return { args: ['--mode', 'accept-edits', '--output-format', 'json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }

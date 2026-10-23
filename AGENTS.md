@@ -1,7 +1,7 @@
 # Agent Daycare: notes for AI agents
 
 ## Read this first
-- **Active ticket:** TM-57 (V3.1 test-pass fixes) on `tm-57/v3.1-fixes`, Batches 1–3 built; Matt's test cases for it are on **TM-58**. **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass, TM-56, is Done.
+- **Active ticket:** TM-59 (V4 crew flow) on `tm-59/v4-crew`. TM-57 (V3.1) is merged; Matt's test cases for V3.1 and V4 collect on **TM-58**. **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass, TM-56, is Done.
 - **Where work happens:** `master` holds everything built so far. Each new ticket gets its own branch off `master` named `tm-<id>/<short-name>`, merged by PR when done. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
@@ -9,7 +9,7 @@
 ## How it works
 - Each message to an agent is a **one-shot launch** of its CLI (stdin closed, or closed right after Codex's prompt):
   - Antigravity: `agy --mode accept-edits -p "<prompt>"` (`-p` takes the next word as the prompt, so flags go before it)
-  - Claude: `claude -p --permission-mode acceptEdits "<prompt>"`
+  - Claude: `claude -p --permission-mode acceptEdits --setting-sources project,local --strict-mcp-config "<prompt>"` (TM-59: Matt's user plugins, hooks and MCP servers stay out; a fresh launch reads ~37k tokens instead of ~66k)
   - Codex: `codex exec --skip-git-repo-check --sandbox workspace-write -` with the prompt written to stdin (so it never passes through `cmd.exe` when Codex is an npm `codex.cmd` shim)
 - There is no memory between launches. The window adds the recent thread to each prompt (`buildPrompt` in `src/renderer/thread.js`: last 20 messages, at most 12,000 characters, app notes left out). `"msg":"launching"` in the log shows the full prompt.
 - Replies are stdout only, shown as plain text. stderr is kept and its last lines are shown if the agent fails or says nothing. Send is off for a chat member while it is answering.
@@ -85,6 +85,8 @@
 `config.json` (project root while developing, git-ignored) holds `workingDir` and `agents.<id>.{path,command}`. It is created with defaults on first run.
 
 The default `workingDir` is the dedicated chat folder `~/AgentDaycare/chat` (created at start-up). A config still pointing at an old dashboard default (the home folder or `~/.gemini/antigravity/scratch/cli-companions`) is moved there and saved; the log says `"msg":"working folder moved to the chat folder"`. Any other folder is left alone.
+
+**A folder per chat (TM-59 Batch 1):** each chat's agents run in `<workingDir><chat id>` (`chatFolder` in `agent-runner.js`, from the runKey; a bad id falls back to `workingDir`), created on first use. The header shows it. Vendor sessions made in the old shared folder still resumed in testing.
 
 ## Layout
 - `src/main.js`: Electron main process, window, IPC, logger setup
