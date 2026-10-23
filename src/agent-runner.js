@@ -15,6 +15,18 @@ const execFileAsync = promisify(execFile);
 const SAFE_BATCH_PATH = /^[A-Za-z]:\\[A-Za-z0-9 _.\-\\()~@+,=]+\.(cmd|bat)$/i;
 const SAFE_BATCH_ARG = /^[A-Za-z0-9_.=-]+$/;
 
+// A model name typed or picked for a chat member (TM-54). It goes on the
+// command line, so it is held to plain characters (still safe for a .cmd shim).
+const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
+
+// `agy models` prints a header, then one "id<TAB>label" line per model.
+function parseAgyModels(text) {
+  return String(text).split(/\r?\n/).map(l => l.split('\t')).filter(p => p.length === 2 && MODEL_TEXT.test(p[0].trim()))
+    .map(([id, label]) => ({ id: id.trim(), label: label.trim() }));
+}
+
 // How to run exe with args: { file, args, options }, or null when it is a
 // Windows batch shim that cannot be run safely with these arguments.
 function launchCommand(exe, args, platform = process.platform, env = process.env) {
@@ -85,11 +97,11 @@ class AgentRunner {
     this.processes = new Map();
     this.runCounts = new Map();
 
-    // The three V1 agents. status is 'idle' or 'working'.
+    // The three vendors' CLIs. Chats pick their agents (members) from these.
     this.agents = {
-      antigravity: { id: 'antigravity', name: 'Antigravity', command: 'agy.exe', path: 'agy.exe', color: '#9d4edd', status: 'idle', installed: true, version: 'Unknown' },
-      claude: { id: 'claude', name: 'Claude', command: 'claude.exe', path: 'claude.exe', color: '#e76f51', status: 'idle', installed: true, version: 'Unknown' },
-      codex: { id: 'codex', name: 'Codex', command: 'codex.exe', path: 'codex.exe', color: '#2a9d8f', status: 'idle', installed: true, version: 'Unknown' }
+      antigravity: { id: 'antigravity', name: 'Antigravity', command: 'agy.exe', path: 'agy.exe', color: '#9d4edd', installed: true, version: 'Unknown' },
+      claude: { id: 'claude', name: 'Claude', command: 'claude.exe', path: 'claude.exe', color: '#e76f51', installed: true, version: 'Unknown' },
+      codex: { id: 'codex', name: 'Codex', command: 'codex.exe', path: 'codex.exe', color: '#2a9d8f', installed: true, version: 'Unknown' }
     };
 
     if (config) this.applyConfig(config);
@@ -110,12 +122,12 @@ class AgentRunner {
   }
 
   // Each agent launch gets a run number so log lines from a restart are distinguishable.
-  currentRun(agentId) {
-    return this.runCounts.get(agentId) || 0;
+  currentRun(vendor) {
+    return this.runCounts.get(vendor) || 0;
   }
 
   shutdown() {
-    for (const agentId of [...this.processes.keys()]) this.stopAgent(agentId);
+    for (const runKey of [...this.processes.keys()]) this.stop(runKey);
     this.log.info('app', 'agent runner shut down');
   }
 
@@ -162,7 +174,7 @@ class AgentRunner {
       agent.version = version;
       agent.path = verifiedPath;
 
-      return { id: agent.id, name: agent.name, installed: isInstalled, version, path: verifiedPath, status: agent.status };
+      return { id: agent.id, name: agent.name, installed: isInstalled, version, path: verifiedPath };
     }));
   }
 
@@ -170,47 +182,78 @@ class AgentRunner {
     return Object.values(this.agents);
   }
 
-  // Launches one agent with one prompt. Each message is a fresh one-shot process
+  // The models a new chat member can pick, per vendor (TM-54). Antigravity
+  // lists its own (`agy models`); Claude takes these aliases; Codex has no
+  // list, so its model is typed. Asked once, then cached.
+  listModels() {
+    if (!this._models) {
+      this._models = this._agyModelsText()
+        .then(parseAgyModels)
+        .catch((err) => {
+          this.log.warn('antigravity', 'could not list models', { error: err.message });
+          return [];
+        })
+        .then(antigravity => ({ antigravity, claude: CLAUDE_MODELS, codex: [] }));
+    }
+    return this._models;
+  }
+
+  async _agyModelsText() {
+    const cmd = launchCommand(this._getExecutable(this.agents.antigravity), ['models']);
+    if (!cmd) throw new Error('agy path is not safe to run');
+    const { stdout } = await execFileAsync(cmd.file, cmd.args, { ...cmd.options, encoding: 'utf8', timeout: 10000, windowsHide: true });
+    return stdout;
+  }
+
+  // Launches one chat member's reply. Each message is a fresh one-shot process
   // (stdin closed), so there is no memory between launches; the chat window
   // puts recent history into the prompt (see renderer/thread.js buildPrompt).
-  startAgent(agentId, prompt = '') {
-    const agent = this.agents[agentId];
-    if (!agent) throw new Error(`Agent ${agentId} not found`);
+  // runKey (`<chatId>/<memberId>`, TM-54) names the run: events carry it, and
+  // Stop and the timeout act on it alone, so two members of one vendor can
+  // answer at once. model is the vendor's model id, or null for its default.
+  run({ runKey, vendor, model = null, prompt = '' }) {
+    const agent = this.agents[vendor];
+    if (!agent) throw new Error(`Agent ${vendor} not found`);
     const p = String(prompt || '').trim();
     if (!p) throw new Error('A prompt is required');
 
-    if (this.processes.has(agentId)) this.stopAgent(agentId);
-
-    const exe = this._getExecutable(agent);
-    const workingDir = this.workingDir || process.cwd();
-    const { args, stdin } = this._buildAgentArgs(agentId, p);
-
-    const run = this.currentRun(agentId) + 1;
-    this.runCounts.set(agentId, run);
-    this.log.info(agentId, 'launching', { run, exe, args, stdin, cwd: workingDir });
-
-    const cmd = launchCommand(exe, args);
-    if (!cmd) {
-      this.log.warn(agentId, 'refused to launch batch file with unsafe path or arguments', { run, exe });
-      this.emitOutput(agentId, `[Can't launch ${agent.name}]: ${exe} is a .cmd/.bat file in a folder name Windows' command shell could misread. Point ${agent.name}'s path in config.json at a plain folder.\r\n`, 'stderr');
+    const run = this.currentRun(vendor) + 1;
+    this.runCounts.set(vendor, run);
+    const ctx = { runKey, vendor, run };
+    if (model !== null && !MODEL_TEXT.test(model)) {
+      this.log.warn(vendor, 'refused model name', { run, runKey, model });
+      this.emitOutput(ctx, `[Can't launch ${agent.name}]: "${model}" isn't a model name it can take (letters, digits, . _ : - only).\r\n`, 'stderr');
       return false;
     }
 
-    const child = this._spawnAgentProcess(agentId, agent, cmd, workingDir, run, stdin);
-    if (!child) return false;
+    if (this.processes.has(runKey)) this.stop(runKey);
 
-    this.processes.set(agentId, child);
+    const exe = this._getExecutable(agent);
+    const workingDir = this.workingDir || process.cwd();
+    const { args, stdin } = this._buildAgentArgs(vendor, p, model);
+    this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, cwd: workingDir });
+
+    const cmd = launchCommand(exe, args);
+    if (!cmd) {
+      this.log.warn(vendor, 'refused to launch batch file with unsafe path or arguments', { run, exe });
+      this.emitOutput(ctx, `[Can't launch ${agent.name}]: ${exe} is a .cmd/.bat file in a folder name Windows' command shell could misread. Point ${agent.name}'s path in config.json at a plain folder.\r\n`, 'stderr');
+      return false;
+    }
+
+    const child = this._spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin);
+    if (!child) return false;
+    Object.assign(child, ctx);
+
+    this.processes.set(runKey, child);
     // Timeout (TM-53): a reply that takes too long is stopped like Stop.
     const timeoutSec = agent.timeoutSec || DEFAULT_TIMEOUT_SEC;
     child.timeoutSec = timeoutSec;
     child.timer = setTimeout(() => {
-      if (this.processes.get(agentId) !== child) return;
-      this.log.warn(agentId, 'timed out, stopping', { run, timeoutSec });
-      this.stopAgent(agentId, 'timeout');
+      if (this.processes.get(runKey) !== child) return;
+      this.log.warn(vendor, 'timed out, stopping', { run, runKey, timeoutSec });
+      this.stop(runKey, 'timeout');
     }, timeoutSec * 1000);
-    agent.status = 'working';
-    this.broadcastStatus(agentId);
-    this._attachProcessStreams(agentId, agent, child, run);
+    this._attachProcessStreams(child);
     return true;
   }
 
@@ -223,14 +266,16 @@ class AgentRunner {
   // when Codex is an npm codex.cmd shim.
   // Access (TM-53): every agent may write inside the working folder without
   // asking. Claude: acceptEdits. Codex: the workspace-write sandbox.
-  // Antigravity: --mode accept-edits.
-  _buildAgentArgs(agentId, p) {
-    if (agentId === 'codex') return { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: p };
-    if (agentId === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', p], stdin: null };
-    return { args: ['--mode', 'accept-edits', '-p', p], stdin: null }; // antigravity (agy): -p takes the next word as the prompt, so it goes last
+  // Antigravity: --mode accept-edits. A model (TM-54) adds the vendor's model
+  // flag; null leaves the CLI on its default.
+  _buildAgentArgs(vendor, p, model = null) {
+    if (vendor === 'codex') return { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...(model ? ['-m', model] : []), '-'], stdin: p };
+    const flag = model ? ['--model', model] : [];
+    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', ...flag, p], stdin: null };
+    return { args: ['--mode', 'accept-edits', ...flag, '-p', p], stdin: null }; // antigravity (agy): -p takes the next word as the prompt, so it goes last
   }
 
-  _spawnAgentProcess(agentId, agent, cmd, workingDir, run, stdin = null) {
+  _spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin = null) {
     try {
       const child = spawn(cmd.file, cmd.args, {
         ...cmd.options,
@@ -243,28 +288,30 @@ class AgentRunner {
         stdio: [stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe']
       });
       if (stdin != null && child.stdin) {
-        child.stdin.on('error', (err) => this.log.warn(agentId, 'could not write prompt to stdin', { run, error: err.message }));
+        child.stdin.on('error', (err) => this.log.warn(vendor, 'could not write prompt to stdin', { run: ctx.run, error: err.message }));
         child.stdin.end(stdin);
       }
       return child;
     } catch (err) {
-      this.log.exception(agentId, err, { run, phase: 'spawn' });
-      this.emitOutput(agentId, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
+      this.log.exception(vendor, err, { run: ctx.run, phase: 'spawn' });
+      this.emitOutput(ctx, `\x1b[31m[Error launching ${agent.name}]: ${err.message}\x1b[0m\r\n`);
       return null;
     }
   }
 
-  _attachProcessStreams(agentId, agent, child, run) {
+  // child carries its run: { runKey, vendor, run }.
+  _attachProcessStreams(child) {
+    const { runKey, vendor, run } = child;
     // StringDecoder keeps multi-byte characters intact when they straddle two chunks.
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
-    const stdoutSink = this.log.createLineSink(agentId, { run, stream: 'stdout' });
-    const stderrSink = this.log.createLineSink(agentId, { run, stream: 'stderr', level: 'warn' });
+    const stdoutSink = this.log.createLineSink(vendor, { run, runKey, stream: 'stdout' });
+    const stderrSink = this.log.createLineSink(vendor, { run, runKey, stream: 'stderr', level: 'warn' });
 
     if (child.stdout) {
       child.stdout.on('data', (data) => {
         stdoutSink.push(data);
-        this.emitOutput(agentId, stdoutDecoder.write(data));
+        this.emitOutput(child, stdoutDecoder.write(data));
       });
     }
 
@@ -272,26 +319,24 @@ class AgentRunner {
       child.stderr.on('data', (data) => {
         stderrSink.push(data);
         const rawText = stderrDecoder.write(data);
-        if (agentId === 'codex') {
+        if (vendor === 'codex') {
           // Codex echoes its whole session to stderr; keep only real content.
           const cleaned = rawText.split('\n').filter(line => !CODEX_STDERR_NOISE.test(line.trim())).join('\n');
-          if (cleaned.trim()) this.emitOutput(agentId, cleaned, 'stderr');
+          if (cleaned.trim()) this.emitOutput(child, cleaned, 'stderr');
         } else {
-          this.emitOutput(agentId, rawText, 'stderr');
+          this.emitOutput(child, rawText, 'stderr');
         }
       });
     }
 
     child.on('close', (code) => {
       clearTimeout(child.timer);
-      if (this.processes.get(agentId) === child) this.processes.delete(agentId);
+      if (this.processes.get(runKey) === child) this.processes.delete(runKey);
       stdoutSink.flush();
       stderrSink.flush();
-      this.log[code === 0 ? 'info' : 'warn'](agentId, 'process exited', { run, code });
-      agent.status = 'idle';
-      this.broadcastStatus(agentId);
+      this.log[code === 0 ? 'info' : 'warn'](vendor, 'process exited', { run, runKey, code });
       this._send('agent:done', {
-        agentId, run, code,
+        runKey, vendor, run, code,
         stopped: child.stopReason === 'user',
         timedOut: child.stopReason === 'timeout',
         timeoutSec: child.timeoutSec
@@ -299,48 +344,30 @@ class AgentRunner {
     });
 
     child.on('error', (err) => {
-      this.log.exception(agentId, err, { run, phase: 'process' });
-      this.emitOutput(agentId, `\x1b[31m[Process error]: ${err.message}\x1b[0m\r\n`, 'stderr');
-      agent.status = 'idle';
-      this.broadcastStatus(agentId);
+      this.log.exception(vendor, err, { run, runKey, phase: 'process' });
+      this.emitOutput(child, `\x1b[31m[Process error]: ${err.message}\x1b[0m\r\n`, 'stderr');
     });
   }
 
   // reason: 'user' (Stop button, a new launch, quitting) or 'timeout'.
-  stopAgent(agentId, reason = 'user') {
-    const child = this.processes.get(agentId);
-    if (child) {
-      this.log.info(agentId, 'stopping process', { run: this.currentRun(agentId), pid: child.pid, reason });
-      child.stopReason = reason;
-      clearTimeout(child.timer);
-      try {
-        killTree(child);
-      } catch (err) {
-        this.log.warn(agentId, 'kill failed', { run: this.currentRun(agentId), error: err.message });
-      }
-      this.processes.delete(agentId);
+  stop(runKey, reason = 'user') {
+    const child = this.processes.get(runKey);
+    if (!child) return;
+    this.log.info(child.vendor, 'stopping process', { run: child.run, runKey, pid: child.pid, reason });
+    child.stopReason = reason;
+    clearTimeout(child.timer);
+    try {
+      killTree(child);
+    } catch (err) {
+      this.log.warn(child.vendor, 'kill failed', { run: child.run, runKey, error: err.message });
     }
-    const agent = this.agents[agentId];
-    if (agent) {
-      agent.status = 'idle';
-      this.broadcastStatus(agentId);
-    }
+    this.processes.delete(runKey);
   }
 
-  // Sends a message to an agent. In V1 every message is a new one-shot launch.
-  sendInput(agentId, input) {
-    if (!this.agents[agentId]) return false;
-    return this.startAgent(agentId, input);
-  }
-
-  emitOutput(agentId, rawText, stream = 'stdout') {
+  // ctx: { runKey, vendor, run } (a running child carries these).
+  emitOutput({ runKey, vendor, run }, rawText, stream = 'stdout') {
     // text: colour and cursor codes removed, for the chat bubbles.
-    this._send('agent:output', { agentId, stream, run: this.currentRun(agentId), raw: rawText, text: stripAnsi(rawText), html: parseAnsi(rawText) });
-  }
-
-  broadcastStatus(agentId) {
-    const agent = this.agents[agentId];
-    this._send('agent:status', { agentId, status: agent ? agent.status : 'idle' });
+    this._send('agent:output', { runKey, vendor, stream, run, raw: rawText, text: stripAnsi(rawText), html: parseAnsi(rawText) });
   }
 
   _send(channel, payload) {
@@ -354,5 +381,7 @@ AgentRunner.versionCommand = versionCommand;
 AgentRunner.launchCommand = launchCommand;
 AgentRunner.resolveExecutable = resolveExecutable;
 AgentRunner.killTree = killTree;
+AgentRunner.MODEL_TEXT = MODEL_TEXT;
+AgentRunner.parseAgyModels = parseAgyModels;
 
 module.exports = AgentRunner;

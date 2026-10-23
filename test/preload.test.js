@@ -46,25 +46,25 @@ test('preload exposes api object in the main world', () => {
   assert.ok(global.api);
 });
 
-test('startAgent invokes agent:start', () => {
+test('run invokes agent:run with the whole request', () => {
   invocations.length = 0;
-  const res = global.api.startAgent('claude', 'hello');
-  assert.equal(res, 'result-agent:start');
-  assert.deepEqual(invocations[0], { channel: 'agent:start', data: { agentId: 'claude', initialPrompt: 'hello' } });
+  const req = { runKey: 'c1/m1', vendor: 'claude', model: 'opus', prompt: 'hello' };
+  const res = global.api.run(req);
+  assert.equal(res, 'result-agent:run');
+  assert.deepEqual(invocations[0], { channel: 'agent:run', data: req });
 });
 
-test('stopAgent invokes agent:stop', () => {
+test('stop invokes agent:stop with the run key', () => {
   invocations.length = 0;
-  const res = global.api.stopAgent('claude');
+  const res = global.api.stop('c1/m1');
   assert.equal(res, 'result-agent:stop');
-  assert.deepEqual(invocations[0], { channel: 'agent:stop', data: { agentId: 'claude' } });
+  assert.deepEqual(invocations[0], { channel: 'agent:stop', data: { runKey: 'c1/m1' } });
 });
 
-test('sendInput invokes agent:send-input', () => {
+test('listModels invokes agent:models', () => {
   invocations.length = 0;
-  const res = global.api.sendInput('claude', 'input text');
-  assert.equal(res, 'result-agent:send-input');
-  assert.deepEqual(invocations[0], { channel: 'agent:send-input', data: { agentId: 'claude', input: 'input text' } });
+  assert.equal(global.api.listModels(), 'result-agent:models');
+  assert.equal(invocations[0].channel, 'agent:models');
 });
 
 test('getAgentConfigs invokes agent:get-configs', () => {
@@ -131,16 +131,6 @@ test('onAgentOutput registers listener and passes data', () => {
   // Simulate the event from main process
   eventListeners['agent:output']({}, 'output-data');
   assert.equal(cbData, 'output-data');
-});
-
-test('onAgentStatus registers listener and passes data', () => {
-  let cbData = null;
-  global.api.onAgentStatus((data) => { cbData = data; });
-  assert.ok(eventListeners['agent:status']);
-
-  // Simulate the event from main process
-  eventListeners['agent:status']({}, 'status-data');
-  assert.equal(cbData, 'status-data');
 });
 
 test('cleanup', () => {

@@ -9,23 +9,32 @@
 // Threads (TM-53 Batch 3): an agent that writes @Name brings that agent in, in
 // a thread under its reply. The main chat shows a live summary row under the
 // thread's first message; opening it swaps the view to the thread.
+// Members (TM-54): each chat has its own agents (thread.members), picked by
+// vendor and model when the chat starts. Each member's reply is one run, named
+// `<chatId>/<memberId>`, so two Claudes can answer at once.
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, chatTitle, findMention, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
+const { VENDORS, newMember, ensureMembers, memberById } = window.ChatMembers;
 
-const agents = {}; // id -> { id, name, color, status }
-let selected = 'claude';
+// Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
+const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+const vendors = {}; // vendor -> { id, name, color } from config.json
+let models = null; // vendor -> [{ id, label }], from api.listModels()
+let selected = null; // member id in the open chat
 const chats = new Map(); // id -> { id, title, createdAt, updatedAt, thread? } (thread once loaded)
 let currentId = null;
 let openThread = null; // id of the open thread's first message, or null for the main chat
-// agentId -> the reply being streamed: { chatId, threadOf, text, stderr, started }.
-// One per agent: each agent runs one process at a time, whichever chat asked.
+// runKey -> the reply being streamed: { chatId, memberId, threadOf, text, stderr, started }.
+// One per member: each member runs one process at a time.
 const pending = {};
-const pendingRows = {}; // agentId -> { row, meta, bubble } while its chat is on screen
+const pendingRows = {}; // runKey -> { row, meta, bubble } while its chat is on screen
 const summaryRows = {}; // thread's first message id -> its summary row in the main chat
 
 const el = {
+  chat: document.querySelector('.chat'),
   chatList: document.getElementById('chat-list'),
   newChat: document.getElementById('new-chat'),
   thread: document.getElementById('thread'),
@@ -35,6 +44,8 @@ const el = {
   input: document.getElementById('message'),
   send: document.getElementById('send'),
   folder: document.getElementById('folder'),
+  members: document.getElementById('members'),
+  chooser: document.getElementById('chooser'),
   threadBar: document.getElementById('thread-bar'),
   threadLabel: document.getElementById('thread-label'),
   back: document.getElementById('back')
@@ -43,12 +54,27 @@ const el = {
 window.addEventListener('error', (e) => api.log('error', e.message, { file: e.filename, line: e.lineno }));
 window.addEventListener('unhandledrejection', (e) => api.log('error', String(e.reason && e.reason.message || e.reason)));
 
-function agentName(id) {
-  return agents[id] ? agents[id].name : id;
+function runKeyOf(chatId, memberId) {
+  return `${chatId}/${memberId}`;
 }
 
-function names() {
-  return Object.fromEntries(Object.values(agents).map(a => [a.id, a.name]));
+// A member's name in a chat (the open one if none is given).
+function nameOf(id, chat = current()) {
+  const m = chat && chat.thread ? memberById(chat.thread, id) : null;
+  return m ? m.name : id;
+}
+
+function colorOf(id) {
+  const m = current() ? memberById(current().thread, id) : null;
+  return m && vendors[m.vendor] ? vendors[m.vendor].color : '#888';
+}
+
+function vendorNames() {
+  return Object.fromEntries(Object.values(vendors).map(v => [v.id, v.name]));
+}
+
+function modelText(m) {
+  return m.model || 'default model';
 }
 
 function durationLabel(sec) {
@@ -74,17 +100,20 @@ function newChatId() {
   return crypto.randomUUID();
 }
 
-// A new chat is only saved once something is said in it, so empty chats
-// don't pile up in the list.
+// A new chat starts by picking its agent: vendor, then model (TM-54). It is
+// only saved once something is said in it, so empty chats don't pile up.
 function startNewChat() {
   const c = current();
-  if (c && c.thread && c.thread.messages.length === 0) {
-    el.input.focus();
-    return;
-  }
+  if (c && c.thread && c.thread.messages.length === 0) chats.delete(c.id);
+  showChooser();
+}
+
+function createChat(vendor, model, modelLabel) {
   const now = new Date().toISOString();
-  const chat = { id: newChatId(), title: 'New chat', createdAt: now, updatedAt: now, thread: createThread() };
+  const member = newMember([], { vendor, model }, { vendorNames: vendorNames(), modelLabel });
+  const chat = { id: newChatId(), title: 'New chat', createdAt: now, updatedAt: now, thread: createThread([member]) };
   chats.set(chat.id, chat);
+  hideChooser();
   showChat(chat.id);
 }
 
@@ -99,12 +128,17 @@ async function openChat(id) {
       return;
     }
   }
+  ensureMembers(chat.thread, vendorNames());
+  hideChooser();
   showChat(id);
 }
 
 function showChat(id) {
   currentId = id;
+  const members = current().thread.members;
+  if (!members.some(m => m.id === selected)) selected = members[0].id;
   renderChatList();
+  renderMembers();
   showThread(null);
 }
 
@@ -113,7 +147,7 @@ function showThread(rootId) {
   openThread = rootId;
   const root = rootId === null ? null : current().thread.messages.find(m => m.id === rootId);
   el.threadBar.hidden = !root;
-  if (root) el.threadLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : agentName(root.from) + "'s"} message`;
+  if (root) el.threadLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : nameOf(root.from) + "'s"} message`;
   renderThread();
   select(selected);
 }
@@ -141,7 +175,7 @@ function renderChatList() {
   for (const chat of sorted) {
     const item = document.createElement('button');
     item.type = 'button';
-    item.className = 'chat-item' + (chat.id === currentId ? ' active' : '');
+    item.className = 'chat-item' + (chat.id === currentId && el.chooser.hidden ? ' active' : '');
     item.title = chat.title;
     const title = document.createElement('span');
     title.className = 'chat-title';
@@ -198,6 +232,19 @@ function editTitle(chat, item) {
   input.addEventListener('blur', () => finish(true));
 }
 
+// The open chat's agents, in the header: name, vendor and model.
+function renderMembers() {
+  el.members.replaceChildren();
+  for (const m of current().thread.members) {
+    const chip = document.createElement('span');
+    chip.className = 'member';
+    chip.style.setProperty('--agent-color', vendors[m.vendor] ? vendors[m.vendor].color : '#888');
+    chip.textContent = `${m.name} · ${modelText(m)}`;
+    chip.title = `${vendors[m.vendor] ? vendors[m.vendor].name : m.vendor}, ${modelText(m)}`;
+    el.members.appendChild(chip);
+  }
+}
+
 // Adds a message to a chat (open or not), saves it, and draws it if on screen.
 function post(chatId, message) {
   const chat = chats.get(chatId);
@@ -216,9 +263,104 @@ function post(chatId, message) {
   return m;
 }
 
+// ---- New chat: vendor, then model ---------------------------------------------
+
+function showChooser(vendor = null) {
+  el.chooser.hidden = false;
+  el.chooser.dataset.vendor = vendor || '';
+  el.chat.classList.add('choosing');
+  renderChatList();
+  el.chooser.replaceChildren();
+  const h = document.createElement('h2');
+  el.chooser.appendChild(h);
+  const options = document.createElement('div');
+  options.className = 'options';
+  el.chooser.appendChild(options);
+  const option = (label, sub, color, onClick) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'option';
+    if (color) b.style.setProperty('--agent-color', color);
+    const main = document.createElement('span');
+    main.className = 'option-label';
+    main.textContent = label;
+    b.appendChild(main);
+    if (sub) {
+      const s = document.createElement('span');
+      s.className = 'option-sub';
+      s.textContent = sub;
+      b.appendChild(s);
+    }
+    b.addEventListener('click', onClick);
+    options.appendChild(b);
+    return b;
+  };
+
+  if (!vendor) {
+    h.textContent = 'Who do you want to talk to?';
+    for (const v of VENDORS) option(vendors[v] ? vendors[v].name : v, null, vendors[v] && vendors[v].color, () => showChooser(v));
+  } else {
+    const color = vendors[vendor] && vendors[vendor].color;
+    h.textContent = `Which ${vendors[vendor] ? vendors[vendor].name : vendor} model?`;
+    option('Default', `whatever ${vendor} uses by default`, color, () => createChat(vendor, null, null));
+    const list = (models && models[vendor]) || [];
+    for (const m of list) option(m.label, m.id, color, () => createChat(vendor, m.id, m.label));
+    if (vendor === 'antigravity' && models && !list.length) {
+      const note = document.createElement('p');
+      note.className = 'chooser-note';
+      note.textContent = "Couldn't get Antigravity's model list (agy models), so only its default is offered.";
+      el.chooser.appendChild(note);
+    }
+    if (vendor === 'codex') {
+      // Codex can't list its models, so its model is typed.
+      const row = document.createElement('form');
+      row.className = 'typed-model';
+      const input = document.createElement('input');
+      input.placeholder = 'or type a model, e.g. gpt-5.1-codex';
+      const use = document.createElement('button');
+      use.type = 'submit';
+      use.textContent = 'Use';
+      const check = () => { use.disabled = !MODEL_TEXT.test(input.value.trim()); };
+      input.addEventListener('input', check);
+      check();
+      row.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (MODEL_TEXT.test(input.value.trim())) createChat('codex', input.value.trim(), input.value.trim());
+      });
+      row.append(input, use);
+      el.chooser.appendChild(row);
+    }
+  }
+  const nav = document.createElement('div');
+  nav.className = 'chooser-nav';
+  if (vendor) {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.textContent = '← Vendors';
+    back.addEventListener('click', () => showChooser(null));
+    nav.appendChild(back);
+  }
+  if (chats.size) {
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => {
+      const newest = [...chats.values()].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
+      openChat(newest.id);
+    });
+    nav.appendChild(cancel);
+  }
+  el.chooser.appendChild(nav);
+}
+
+function hideChooser() {
+  el.chooser.hidden = true;
+  el.chat.classList.remove('choosing');
+}
+
 // ---- Thread -----------------------------------------------------------------
 
-// Builds one message row. from: 'matt', 'system' or an agent id.
+// Builds one message row. from: 'matt', 'system' or a member id.
 function createRow(from, metaText, text) {
   const row = document.createElement('div');
   const meta = document.createElement('div');
@@ -234,7 +376,7 @@ function createRow(from, metaText, text) {
     row.className = 'msg system';
   } else {
     row.className = 'msg agent';
-    row.style.setProperty('--agent-color', agents[from] ? agents[from].color : '#888');
+    row.style.setProperty('--agent-color', colorOf(from));
   }
 
   if (from !== 'system') row.appendChild(meta);
@@ -254,21 +396,21 @@ function scrollToBottom() {
 function renderMessage(m) {
   if (m.handoff) {
     // Drawn from the ids, so a renamed agent shows its current name.
-    const { row } = createRow('system', '', `${agentName(m.handoff.from)} › ${agentName(m.handoff.to)} · Sent to ${agentName(m.handoff.to)} ›`);
+    const { row } = createRow('system', '', `${nameOf(m.handoff.from)} › ${nameOf(m.handoff.to)} · Sent to ${nameOf(m.handoff.to)} ›`);
     row.classList.add('handoff');
     return;
   }
-  let metaText = `${agentName(m.from)} · ${timeLabel(m.ts)}` + (m.endedAs ? ` · ${m.endedAs}` : '');
+  let metaText = `${nameOf(m.from)} · ${timeLabel(m.ts)}` + (m.endedAs ? ` · ${m.endedAs}` : '');
   if (m.from === 'matt') {
     metaText = m.relayOf
-      ? `To ${agentName(m.to)} · passing on ${agentName(m.relayOf)}'s reply · ${timeLabel(m.ts)}`
-      : `To ${agentName(m.to)} · ${timeLabel(m.ts)}`;
+      ? `To ${nameOf(m.to)} · passing on ${nameOf(m.relayOf)}'s reply · ${timeLabel(m.ts)}`
+      : `To ${nameOf(m.to)} · ${timeLabel(m.ts)}`;
   }
   const { row } = createRow(m.from, metaText, m.text);
   row.dataset.id = m.id;
   const buttons = [];
-  if (agents[m.from]) {
-    buttons.push(...Object.values(agents).filter(a => a.id !== m.from).map(a => ({
+  if (memberById(current().thread, m.from)) {
+    buttons.push(...current().thread.members.filter(a => a.id !== m.from).map(a => ({
       label: `Send to ${a.name}`,
       title: `Pass this reply on to ${a.name}`,
       onClick: () => relay(m.from, m.text, a.id)
@@ -287,6 +429,7 @@ function renderThread() {
   const chat = current();
   el.empty.hidden = Boolean(chat && chat.thread.messages.length);
   if (!chat) return;
+  el.empty.textContent = `Say hi to ${chat.thread.members[0].name}.`;
   for (const m of chat.thread.messages) {
     if (!inView(m)) continue;
     renderMessage(m);
@@ -300,17 +443,18 @@ function renderThread() {
 // live while an agent answers in it, otherwise how many replies and from whom.
 function threadSummary(rootId) {
   const msgs = current().thread.messages.filter(m => m.threadOf === rootId);
-  const live = Object.keys(pending).find(id => pending[id].chatId === currentId && pending[id].threadOf === rootId);
-  if (live) {
+  const liveKey = Object.keys(pending).find(k => pending[k].chatId === currentId && pending[k].threadOf === rootId);
+  if (liveKey) {
+    const live = pending[liveKey].memberId;
     const hop = msgs.filter(m => m.handoff).pop();
     const text = hop && hop.handoff.to === live
-      ? `${agentName(hop.handoff.from)} ⇄ ${agentName(live)} talking…`
-      : `${agentName(live)} replying in the thread…`;
-    return { text, live };
+      ? `${nameOf(hop.handoff.from)} ⇄ ${nameOf(live)} talking…`
+      : `${nameOf(live)} replying in the thread…`;
+    return { text, live, liveKey };
   }
   if (!msgs.length) return null;
   const replies = msgs.filter(m => m.from !== 'system');
-  const who = [...new Set(replies.filter(m => agents[m.from]).map(m => agentName(m.from)))];
+  const who = [...new Set(replies.filter(m => m.from !== 'matt').map(m => nameOf(m.from)))];
   return { text: `${replies.length} repl${replies.length === 1 ? 'y' : 'ies'}` + (who.length ? ` · ${who.join(', ')}` : '') };
 }
 
@@ -333,7 +477,7 @@ function renderSummary(rootId) {
   open.addEventListener('click', () => showThread(rootId));
   row.appendChild(open);
   // One Stop ends the thread: a stopped reply never hands off.
-  if (info.live) addActions(row, [{ label: 'Stop', title: `Stop ${agentName(info.live)}`, onClick: () => api.stopAgent(info.live) }]);
+  if (info.live) addActions(row, [{ label: 'Stop', title: `Stop ${nameOf(info.live)}`, onClick: () => api.stop(info.liveKey) }]);
   if (old) old.replaceWith(row);
   else {
     const rootRow = el.thread.querySelector(`[data-id="${rootId}"]`);
@@ -345,31 +489,31 @@ function renderSummary(rootId) {
 
 // The bubbles of replies still coming in always sit at the bottom.
 function renderPendingRows() {
-  for (const [agentId, p] of Object.entries(pending)) {
-    if (!pendingInView(p) || pendingRows[agentId]) continue;
-    const r = createRow(agentId, '', p.text.trim());
+  for (const [key, p] of Object.entries(pending)) {
+    if (!pendingInView(p) || pendingRows[key]) continue;
+    const r = createRow(p.memberId, '', p.text.trim());
     r.row.classList.add('pending');
-    addActions(r.row, [{ label: 'Stop', title: `Stop ${agentName(agentId)}`, onClick: () => api.stopAgent(agentId) }]);
-    pendingRows[agentId] = r;
-    updatePendingMeta(agentId);
+    addActions(r.row, [{ label: 'Stop', title: `Stop ${nameOf(p.memberId)}`, onClick: () => api.stop(key) }]);
+    pendingRows[key] = r;
+    updatePendingMeta(key);
   }
 }
 
 function removePendingRows() {
-  for (const [agentId, r] of Object.entries(pendingRows)) {
+  for (const [key, r] of Object.entries(pendingRows)) {
     r.row.remove();
-    delete pendingRows[agentId];
+    delete pendingRows[key];
   }
 }
 
-function updatePendingMeta(agentId) {
-  const p = pending[agentId];
-  const r = pendingRows[agentId];
+function updatePendingMeta(key) {
+  const p = pending[key];
+  const r = pendingRows[key];
   if (!p || !r) return;
   // Antigravity can take ~30s, so the wait shows a seconds counter.
   r.meta.textContent = p.text
-    ? `${agentName(agentId)} · replying…`
-    : `${agentName(agentId)} · thinking… ${Math.round((Date.now() - p.started) / 1000)}s`;
+    ? `${nameOf(p.memberId)} · replying…`
+    : `${nameOf(p.memberId)} · thinking… ${Math.round((Date.now() - p.started) / 1000)}s`;
 }
 
 setInterval(() => Object.keys(pendingRows).forEach(updatePendingMeta), 1000);
@@ -390,65 +534,71 @@ function addActions(row, buttons) {
   return bar;
 }
 
-// Relay: Matt passes one agent's finished reply to another agent.
-function relay(fromAgent, text, to) {
-  if (pending[to]) {
-    post(currentId, { from: 'system', text: busyText(to), threadOf: openThread });
+// Relay: Matt passes one member's finished reply to another member.
+function relay(fromId, text, to) {
+  if (pending[runKeyOf(currentId, to)]) {
+    post(currentId, { from: 'system', text: busyText(currentId, to), threadOf: openThread });
     scrollToBottom(); // the note lands at the bottom, likely out of view of the button clicked
     return;
   }
-  post(currentId, { from: 'matt', to, text, relayOf: fromAgent, threadOf: openThread });
+  post(currentId, { from: 'matt', to, text, relayOf: fromId, threadOf: openThread });
   ask(currentId, to, openThread);
 }
 
-// An agent's finished reply that names another agent with @Name brings that
-// agent in, in a thread under the reply (or in the thread it was already in).
+// A member's finished reply that names another member with @Name brings that
+// member in, in a thread under the reply (or in the thread it was already in).
 // After HOP_LIMIT handoffs in a row Matt has to say something in the thread.
 function handOff(chatId, m) {
-  const to = findMention(m.text, m.from, names());
+  const chat = chats.get(chatId);
+  const to = findMention(m.text, m.from, chat.thread.members);
   if (!to) return;
+  const name = (id) => nameOf(id, chat);
   const root = m.threadOf || m.id;
-  const hops = hopsSinceMatt(chats.get(chatId).thread, root);
+  const hops = hopsSinceMatt(chat.thread, root);
   if (hops >= HOP_LIMIT) {
-    post(chatId, { from: 'system', threadOf: root, text: `${agentName(m.from)} asked for ${agentName(to)}, but the agents have handed off ${HOP_LIMIT} times in a row. Reply in this thread to keep going.` });
+    post(chatId, { from: 'system', threadOf: root, text: `${name(m.from)} asked for ${name(to)}, but the agents have handed off ${HOP_LIMIT} times in a row. Reply in this thread to keep going.` });
     api.log('info', 'hop limit reached', { chatId, root, from: m.from, to });
     return;
   }
-  if (pending[to]) {
-    post(chatId, { from: 'system', threadOf: root, text: `${agentName(m.from)} asked for ${agentName(to)}. ${busyText(to)}` });
+  if (pending[runKeyOf(chatId, to)]) {
+    post(chatId, { from: 'system', threadOf: root, text: `${name(m.from)} asked for ${name(to)}. ${busyText(chatId, to)}` });
     return;
   }
-  post(chatId, { from: 'system', threadOf: root, handoff: { from: m.from, to }, text: `${agentName(m.from)} › ${agentName(to)}` });
+  post(chatId, { from: 'system', threadOf: root, handoff: { from: m.from, to }, text: `${name(m.from)} › ${name(to)}` });
   api.log('info', 'handoff', { chatId, root, from: m.from, to, hop: hops + 1 });
   ask(chatId, to, root);
 }
 
-function busyText(agentId) {
-  const p = pending[agentId];
-  const where = p && p.chatId !== currentId && chats.get(p.chatId) ? ` in "${chats.get(p.chatId).title}"` : '';
-  return `${agentName(agentId)} is still answering${where}. Send it once ${agentName(agentId)} is done, or stop it first.`;
+function busyText(chatId, memberId) {
+  const name = nameOf(memberId, chats.get(chatId));
+  return `${name} is still answering. Send it once ${name} is done, or stop it first.`;
 }
 
-// ---- Agent picker -------------------------------------------------------------
+// ---- Agent picker: the open chat's members --------------------------------------
 
 function renderPicker() {
   el.picker.replaceChildren();
-  for (const a of Object.values(agents)) {
+  const chat = current();
+  if (!chat) return;
+  // A one-agent chat needs no picker.
+  el.picker.hidden = chat.thread.members.length < 2;
+  for (const m of chat.thread.members) {
+    const working = Boolean(pending[runKeyOf(currentId, m.id)]);
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'pick' + (a.status === 'working' ? ' working' : '');
+    btn.className = 'pick' + (working ? ' working' : '');
     btn.setAttribute('role', 'radio');
-    btn.setAttribute('aria-checked', String(a.id === selected));
-    btn.style.setProperty('--agent-color', a.color);
-    btn.addEventListener('click', () => select(a.id));
+    btn.setAttribute('aria-checked', String(m.id === selected));
+    btn.style.setProperty('--agent-color', colorOf(m.id));
+    btn.addEventListener('click', () => select(m.id));
 
     const dot = document.createElement('span');
     dot.className = 'dot';
     const name = document.createElement('span');
-    name.textContent = a.name;
+    name.textContent = m.name;
     const status = document.createElement('span');
     status.className = 'status';
-    status.textContent = a.status === 'working' ? 'working…' : 'idle';
+    status.textContent = working ? 'working…' : 'idle';
 
     btn.append(dot, name, status);
     el.picker.appendChild(btn);
@@ -456,9 +606,9 @@ function renderPicker() {
 }
 
 function select(id) {
-  if (!agents[id]) return;
+  if (!current() || !memberById(current().thread, id)) return;
   selected = id;
-  el.input.placeholder = `${openThread === null ? 'Message' : 'Reply in the thread to'} ${agentName(id)}… (Enter to send, Shift+Enter for a new line)`;
+  el.input.placeholder = `${openThread === null ? 'Message' : 'Reply in the thread to'} ${nameOf(id)}… (Enter to send, Shift+Enter for a new line)`;
   renderPicker();
   updateSendButton();
   el.input.focus();
@@ -472,16 +622,17 @@ function autoGrow() {
   el.input.style.height = (el.input.scrollHeight + el.input.offsetHeight - el.input.clientHeight) + 'px';
 }
 
-// Send is off while the box is empty or the picked agent is still answering
-// (in any chat: a new launch would cut its reply off; use Stop instead).
+// Send is off while the box is empty or the picked member is still answering
+// (a new launch would cut its reply off; use Stop instead).
 function updateSendButton() {
-  el.send.disabled = !el.input.value.trim() || Boolean(pending[selected]) || !current();
-  el.send.title = pending[selected] ? busyText(selected) : '';
+  const busy = Boolean(current() && pending[runKeyOf(currentId, selected)]);
+  el.send.disabled = !el.input.value.trim() || busy || !current();
+  el.send.title = busy ? busyText(currentId, selected) : '';
 }
 
 function send() {
   const text = el.input.value.trim();
-  if (!text || pending[selected] || !current()) return;
+  if (!text || !current() || pending[runKeyOf(currentId, selected)]) return;
   const to = selected;
   post(currentId, { from: 'matt', to, text, threadOf: openThread });
   el.input.value = '';
@@ -489,71 +640,79 @@ function send() {
   ask(currentId, to, openThread);
 }
 
-// Launches the agent with the chat so far and opens a bubble for its reply.
+// Launches a member with the chat so far and opens a bubble for its reply.
 // threadOf: the thread it answers in, or null for the main chat.
-function ask(chatId, agentId, threadOf = null) {
-  const prompt = buildPrompt(chats.get(chatId).thread, agentId, { names: names(), threadOf });
-  pending[agentId] = { chatId, threadOf, text: '', stderr: '', started: Date.now() };
+function ask(chatId, memberId, threadOf = null) {
+  const thread = chats.get(chatId).thread;
+  const member = memberById(thread, memberId);
+  const prompt = buildPrompt(thread, memberId, { threadOf });
+  const runKey = runKeyOf(chatId, memberId);
+  pending[runKey] = { chatId, memberId, threadOf, text: '', stderr: '', started: Date.now() };
   if (chatId === currentId) {
     renderPendingRows();
+    renderPicker();
     if (openThread === null && threadOf !== null) renderSummary(threadOf);
   }
   renderChatList();
   updateSendButton();
 
-  api.sendInput(agentId, prompt).then((started) => {
-    if (started === false) finishReply(agentId, null, 'it could not be started');
-  }).catch((err) => finishReply(agentId, null, err.message));
+  api.run({ runKey, vendor: member.vendor, model: member.model, prompt }).then((started) => {
+    if (started === false) finishReply(runKey, null, 'it could not be started');
+  }).catch((err) => finishReply(runKey, null, err.message));
 }
 
-function onOutput({ agentId, stream, text }) {
-  const p = pending[agentId];
+function onOutput({ runKey, stream, text }) {
+  const p = pending[runKey];
   if (!p || !text) return;
   if (stream === 'stderr') {
     p.stderr = (p.stderr + text).slice(-2000);
     return;
   }
   p.text += text;
-  const r = pendingRows[agentId];
+  const r = pendingRows[runKey];
   if (!r) return;
   const atBottom = el.thread.scrollHeight - el.thread.scrollTop - el.thread.clientHeight < 40;
   r.bubble.textContent = p.text.trim();
-  updatePendingMeta(agentId);
+  updatePendingMeta(runKey);
   if (atBottom) scrollToBottom();
 }
 
 // Turns the streamed reply into a message in its chat, or reports why there is none.
 // outcome: { stopped, timedOut, timeoutSec } from agent:done.
-function finishReply(agentId, code, why, { stopped = false, timedOut = false, timeoutSec = 0 } = {}) {
-  const p = pending[agentId];
+function finishReply(runKey, code, why, { stopped = false, timedOut = false, timeoutSec = 0 } = {}) {
+  const p = pending[runKey];
   if (!p) return;
-  delete pending[agentId];
-  if (pendingRows[agentId]) {
-    pendingRows[agentId].row.remove();
-    delete pendingRows[agentId];
+  delete pending[runKey];
+  if (pendingRows[runKey]) {
+    pendingRows[runKey].row.remove();
+    delete pendingRows[runKey];
   }
+  const name = nameOf(p.memberId, chats.get(p.chatId));
   const reply = p.text.trim();
   const threadOf = p.threadOf || null;
   let m = null;
   if (reply) {
-    m = post(p.chatId, { from: agentId, text: reply, endedAs: stopped ? 'stopped' : timedOut ? 'timed out' : null, threadOf });
+    m = post(p.chatId, { from: p.memberId, text: reply, endedAs: stopped ? 'stopped' : timedOut ? 'timed out' : null, threadOf });
   }
   if (timedOut) {
-    post(p.chatId, { from: 'system', threadOf, text: `${agentName(agentId)} took longer than ${durationLabel(timeoutSec)} and was stopped.` + (reply ? ' Its reply so far is above.' : '') + ' The limit is timeoutSec in config.json.' });
-    api.log('warn', 'agent timed out', { agentId, timeoutSec });
+    post(p.chatId, { from: 'system', threadOf, text: `${name} took longer than ${durationLabel(timeoutSec)} and was stopped.` + (reply ? ' Its reply so far is above.' : '') + ' The limit is timeoutSec in config.json.' });
+    api.log('warn', 'agent timed out', { runKey, timeoutSec });
   } else if (stopped) {
-    if (!reply) post(p.chatId, { from: 'system', threadOf, text: `${agentName(agentId)} was stopped before it replied.` });
+    if (!reply) post(p.chatId, { from: 'system', threadOf, text: `${name} was stopped before it replied.` });
   } else if (code !== 0 || !reply) {
     const notFound = /ENOENT/.test(p.stderr);
-    const reason = why || (notFound ? `the app couldn't find ${agentName(agentId)}. Check its path in config.json`
+    const reason = why || (notFound ? `the app couldn't find ${name}. Check its path in config.json`
       : code === 0 ? 'it finished without saying anything' : `it exited with code ${code}`);
     const detail = p.stderr.trim().split(/\r?\n/).slice(-3).join('\n');
-    post(p.chatId, { from: 'system', threadOf, text: `${agentName(agentId)} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
-    api.log('warn', 'agent gave no reply', { agentId, code, why: why || null });
+    post(p.chatId, { from: 'system', threadOf, text: `${name} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
+    api.log('warn', 'agent gave no reply', { runKey, code, why: why || null });
   } else {
     handOff(p.chatId, m);
   }
-  if (p.chatId === currentId && openThread === null && threadOf !== null) renderSummary(threadOf);
+  if (p.chatId === currentId) {
+    if (openThread === null && threadOf !== null) renderSummary(threadOf);
+    renderPicker();
+  }
   renderChatList();
   updateSendButton();
 }
@@ -580,31 +739,28 @@ el.back.addEventListener('click', () => showThread(null));
 
 // ---- Start-up -----------------------------------------------------------------
 
-api.onAgentStatus(({ agentId, status }) => {
-  if (!agents[agentId]) return;
-  agents[agentId].status = status;
-  renderPicker();
-});
-
 api.onAgentOutput(onOutput);
-api.onAgentDone(({ agentId, code, stopped, timedOut, timeoutSec }) => finishReply(agentId, code, null, { stopped, timedOut, timeoutSec }));
+api.onAgentDone(({ runKey, code, stopped, timedOut, timeoutSec }) => finishReply(runKey, code, null, { stopped, timedOut, timeoutSec }));
 api.onNotice(({ text }) => { if (current()) post(currentId, { from: 'system', text }); });
 
 async function init() {
   const configs = await api.getAgentConfigs();
-  for (const c of configs) agents[c.id] = { id: c.id, name: c.name, color: c.color, status: c.status };
-  if (!agents[selected] && configs.length) selected = configs[0].id;
+  for (const c of configs) vendors[c.id] = { id: c.id, name: c.name, color: c.color };
+  // Asked once in the background; the chooser shows models once they arrive.
+  api.listModels().then((m) => {
+    models = m;
+    if (!el.chooser.hidden) showChooser(el.chooser.dataset.vendor || null);
+  }).catch((err) => api.log('warn', 'could not list models', { error: err.message }));
 
   const { config } = await api.getConfig();
   el.folder.textContent = `Working folder: ${config.workingDir}`;
 
   const { chats: saved } = await api.listChats();
   for (const s of saved) chats.set(s.id, { ...s });
-  select(selected);
-  // Open the most recent chat, or a fresh one the first time.
+  // Open the most recent chat, or pick an agent for the first one.
   if (saved.length) await openChat(saved[0].id);
-  else startNewChat();
-  api.log('info', 'chat window ready', { agents: Object.keys(agents), workingDir: config.workingDir, chats: saved.length });
+  else showChooser();
+  api.log('info', 'chat window ready', { vendors: Object.keys(vendors), workingDir: config.workingDir, chats: saved.length });
 }
 
 init();

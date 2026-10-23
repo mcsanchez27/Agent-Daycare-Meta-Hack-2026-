@@ -15,8 +15,11 @@
 
   <section class="chat">
     <header class="top">
+      <div class="members" id="members" aria-label="Agents in this chat"></div>
       <div class="folder" id="folder" title="Agents work in this folder">Working folder: …</div>
     </header>
+
+    <section class="chooser" id="chooser" hidden aria-label="Pick an agent for the new chat"></section>
 
     <div class="thread-bar" id="thread-bar" hidden>
       <button type="button" id="back">← Back to chat</button>
@@ -24,7 +27,7 @@
     </div>
 
     <main class="thread" id="thread" aria-live="polite">
-      <p class="empty" id="empty">Pick an agent below and say hi.</p>
+      <p class="empty" id="empty">Say hi.</p>
     </main>
 
     <form class="composer" id="composer" autocomplete="off">
@@ -36,6 +39,7 @@
     </form>
   </section>
 
+  <script src="members.js"></script>
   <script src="thread.js"></script>
   <script src="app.js"></script>
 </body>

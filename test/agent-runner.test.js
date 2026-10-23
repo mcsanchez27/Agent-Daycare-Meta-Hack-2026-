@@ -20,18 +20,21 @@ function makeRunner() {
   return { runner, sent, logEvents };
 }
 
-test('sendInput launches a new one-shot process with the message', () => {
+const req = (o = {}) => ({ runKey: 'chat1/m1', vendor: 'claude', model: null, prompt: 'x', ...o });
+
+test('run refuses an unknown vendor and an empty prompt', () => {
   const { runner } = makeRunner();
-  const calls = [];
-  runner.startAgent = (id, prompt) => { calls.push([id, prompt]); return true; };
-  assert.equal(runner.sendInput('claude', 'hello'), true);
-  assert.deepEqual(calls, [['claude', 'hello']]);
-  assert.equal(runner.sendInput('nobody', 'hello'), false);
+  assert.throws(() => runner.run(req({ vendor: 'grok' })), /not found/);
+  assert.throws(() => runner.run(req({ prompt: '   ' })), /prompt is required/);
 });
 
-test('startAgent refuses an empty prompt', () => {
-  const { runner } = makeRunner();
-  assert.throws(() => runner.startAgent('claude', '   '), /prompt is required/);
+test('typed models are checked before anything is launched', () => {
+  const { runner, sent } = makeRunner();
+  runner._spawnAgentProcess = () => { throw new Error('must not launch'); };
+  assert.equal(runner.run(req({ vendor: 'codex', model: 'gpt 5 & del' })), false);
+  assert.match(sent.find(s => s.ch === 'agent:output').d.text, /model name/);
+  assert.ok(AgentRunner.MODEL_TEXT.test('gpt-5.1-codex'));
+  for (const bad of ['gpt 5', 'a&b', '']) assert.ok(!AgentRunner.MODEL_TEXT.test(bad), bad);
 });
 
 test('only the three V1 agents exist', () => {
@@ -46,6 +49,14 @@ test('agent arguments: everyone may write in the working folder; codex reads the
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
   // Codex's arguments must stay safe for a codex.cmd shim.
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
+});
+
+test('model flags per vendor', () => {
+  const { runner } = makeRunner();
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', 'opus').args, ['-p', '--permission-mode', 'acceptEdits', '--model', 'opus', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'gemini-4-argon-high').args, ['--mode', 'accept-edits', '--model', 'gemini-4-argon-high', '-p', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi', 'gpt-5'), { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-m', 'gpt-5', '-'], stdin: 'hi' });
+  assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x', 'gpt-5.1-codex').args, 'win32'), 'still safe for codex.cmd');
 });
 
 test('launchCommand runs a safe Codex .cmd shim through cmd.exe and refuses anything a shell could misread', () => {
@@ -93,7 +104,7 @@ test('codex gets the whole prompt on stdin, shell characters and new lines intac
   runner.workingDir = dir;
 
   const done = new Promise(resolve => { runner._send = (ch, d) => { sent.push({ ch, d }); if (ch === 'agent:done') resolve(d); }; });
-  assert.equal(runner.startAgent('codex', 'ignored'), true);
+  assert.equal(runner.run(req({ vendor: 'codex', prompt: 'ignored' })), true);
   const result = await done;
   assert.equal(result.code, 0);
   const out = JSON.parse(sent.filter(s => s.ch === 'agent:output' && s.d.stream === 'stdout').map(s => s.d.text).join(''));
@@ -159,26 +170,25 @@ test('scanAgents reports an agent missing from PATH as not installed and logs wh
   assert.ok(dbg.data.error.length > 0, 'the underlying error message is captured');
 });
 
-test('stopAgent logs a warning if child.kill throws and still clears the process', () => {
+test('stop logs a warning if child.kill throws and still clears the process', () => {
   const { runner, logEvents } = makeRunner();
   // No pid: on Windows killTree would run a real taskkill on it instead of kill().
-  runner.processes.set('claude', { kill() { throw new Error('kill failed hard'); } });
+  runner.processes.set('chat1/m1', { vendor: 'claude', run: 1, kill() { throw new Error('kill failed hard'); } });
 
-  runner.stopAgent('claude');
+  runner.stop('chat1/m1');
 
   const warn = logEvents.find(l => l.level === 'warn' && l.msg === 'kill failed');
   assert.ok(warn, 'a "kill failed" warning is logged');
   assert.equal(warn.agentId, 'claude');
   assert.equal(warn.data.error, 'kill failed hard');
-  assert.equal(runner.processes.has('claude'), false, 'the dead handle is dropped anyway');
-  assert.equal(runner.agents.claude.status, 'idle');
+  assert.equal(runner.processes.has('chat1/m1'), false, 'the dead handle is dropped anyway');
 });
 
 test('agent output reaches the window as plain text too, tagged with the run', () => {
   const { runner, sent } = makeRunner();
-  runner.runCounts.set('claude', 3);
-  runner.emitOutput('claude', '\x1b[1mHello\x1b[0m there');
+  runner.emitOutput({ runKey: 'chat1/m1', vendor: 'claude', run: 3 }, '\x1b[1mHello\x1b[0m there');
   const out = sent.find(s => s.ch === 'agent:output').d;
+  assert.equal(out.runKey, 'chat1/m1');
   assert.equal(out.text, 'Hello there');
   assert.equal(out.raw, '\x1b[1mHello\x1b[0m there');
   assert.equal(out.run, 3);
@@ -203,13 +213,32 @@ test('Stop ends a running agent and its done event says it was stopped', async (
   runner.workingDir = os.tmpdir();
   const events = [];
   const done = new Promise(resolve => { runner._send = (ch, d) => { events.push({ ch, d }); if (ch === 'agent:done') resolve(d); }; });
-  runner.startAgent('claude', 'x');
+  runner.run(req());
   await new Promise(r => setTimeout(r, 300));
-  runner.stopAgent('claude');
+  runner.stop('chat1/m1');
   const d = await done;
   assert.equal(d.stopped, true);
-  assert.equal(runner.agents.claude.status, 'idle');
-  assert.equal(runner.processes.has('claude'), false);
+  assert.equal(d.runKey, 'chat1/m1');
+  assert.equal(runner.processes.has('chat1/m1'), false);
+});
+
+test('two runs of one vendor are separate', async () => {
+  const os = require('node:os');
+  const { runner } = makeRunner();
+  runner.agents.claude.path = process.execPath;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'setInterval(() => {}, 1000)'], stdin: null });
+  runner.workingDir = os.tmpdir();
+  const done = {};
+  const ended = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') { done[d.runKey] = d; if (Object.keys(done).length === 2) resolve(); } }; });
+  assert.equal(runner.run(req({ runKey: 'a/m1' })), true);
+  assert.equal(runner.run(req({ runKey: 'b/m1' })), true);
+  runner.stop('a/m1');
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(runner.processes.has('a/m1'), false);
+  assert.equal(runner.processes.has('b/m1'), true, 'the other Claude keeps going');
+  runner.stop('b/m1');
+  await ended;
+  assert.equal(done['a/m1'].stopped, true);
 });
 
 test('a reply that runs past its timeout is stopped and reported as timed out', async () => {
@@ -220,13 +249,13 @@ test('a reply that runs past its timeout is stopped and reported as timed out', 
   runner._buildAgentArgs = () => ({ args: ['-e', 'setInterval(() => {}, 1000)'], stdin: null });
   runner.workingDir = os.tmpdir();
   const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
-  runner.startAgent('claude', 'x');
+  runner.run(req());
   const d = await done;
   assert.equal(d.timedOut, true);
   assert.equal(d.stopped, false);
   assert.equal(d.timeoutSec, 0.3);
   assert.ok(logEvents.find(l => l.msg === 'timed out, stopping'));
-  assert.equal(runner.processes.has('claude'), false);
+  assert.equal(runner.processes.has('chat1/m1'), false);
 });
 
 test('a reply that finishes in time does not trip the timeout', async () => {
@@ -237,7 +266,7 @@ test('a reply that finishes in time does not trip the timeout', async () => {
   runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("ok")'], stdin: null });
   runner.workingDir = os.tmpdir();
   const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
-  runner.startAgent('claude', 'x');
+  runner.run(req());
   const d = await done;
   assert.equal(d.code, 0);
   assert.equal(d.timedOut, false);
@@ -253,4 +282,24 @@ test('a name from config replaces the default everywhere the window looks', () =
   const { runner } = makeRunner();
   runner.applyConfig({ agents: { claude: { name: 'Cyclops' } } });
   assert.equal(runner.getConfigs().find(a => a.id === 'claude').name, 'Cyclops');
+});
+
+test('agy model list is parsed', () => {
+  const text = 'Fetching available models...\ngemini-4-argon-high\tGemini 4 Argon (High)\r\nclaude-opus-5-5-low\tClaude Opus 5.5 (Low)\n\n';
+  assert.deepEqual(AgentRunner.parseAgyModels(text), [
+    { id: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High)' },
+    { id: 'claude-opus-5-5-low', label: 'Claude Opus 5.5 (Low)' }
+  ]);
+});
+
+test('listModels: Antigravity from agy, Claude fixed, Codex typed; agy failing leaves it empty', async () => {
+  const { runner } = makeRunner();
+  runner._agyModelsText = async () => 'x\tX model\n';
+  const m = await runner.listModels();
+  assert.deepEqual(m.antigravity, [{ id: 'x', label: 'X model' }]);
+  assert.deepEqual(m.claude.map(x => x.id), ['opus', 'sonnet', 'haiku']);
+  assert.deepEqual(m.codex, []);
+  const { runner: r2 } = makeRunner();
+  r2._agyModelsText = async () => { throw new Error('agy missing'); };
+  assert.deepEqual((await r2.listModels()).antigravity, []);
 });

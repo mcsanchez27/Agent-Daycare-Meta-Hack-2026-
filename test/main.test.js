@@ -46,9 +46,9 @@ const electronMock = {
 
 const agentRunnerMock = class {
   constructor() { this.started = false; }
-  startAgent(id) { this.started = true; return true; }
-  stopAgent() {}
-  sendInput() {}
+  run() { this.started = true; return true; }
+  stop() {}
+  listModels() { return {}; }
   getConfigs() { return []; }
   scanAgents() { return []; }
   applyConfig() {}
@@ -106,16 +106,16 @@ test('main.js tests', async (t) => {
   require('../src/main');
 
   await t.test('ipc handlers are registered', () => {
-    assert.ok(electronMock.ipcMain.handlers['agent:start']);
+    assert.ok(electronMock.ipcMain.handlers['agent:run']);
     assert.ok(electronMock.ipcMain.handlers['config:get']);
     // Dashboard-era channels are gone in V1
-    for (const ch of ['hooks:status', 'hooks:install', 'agent:update-role', 'agent:forward']) {
+    for (const ch of ['hooks:status', 'hooks:install', 'agent:update-role', 'agent:forward', 'agent:start', 'agent:send-input']) {
       assert.equal(electronMock.ipcMain.handlers[ch], undefined, ch);
     }
   });
 
-  await t.test('agent:start invokes AgentRunner.startAgent', async () => {
-    const result = await electronMock.ipcMain.invoke('agent:start', { agentId: 'claude', initialPrompt: 'hello' });
+  await t.test('agent:run invokes AgentRunner.run', async () => {
+    const result = await electronMock.ipcMain.invoke('agent:run', { runKey: 'c/m1', vendor: 'claude', model: null, prompt: 'hello' });
     assert.equal(result, true);
   });
 

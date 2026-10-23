@@ -237,3 +237,70 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
   font: inherit;
   font-size: .9rem;
 }
+
+/* Chat members and the new-chat chooser (TM-54) */
+.members { display: flex; gap: .4rem; flex-shrink: 0; }
+.member {
+  padding: .1rem .6rem;
+  border-radius: 999px;
+  border: 1px solid var(--agent-color);
+  color: var(--agent-color);
+  font-size: .8rem;
+  white-space: nowrap;
+}
+.picker[hidden] { display: none; }
+
+.chat.choosing .thread, .chat.choosing .composer, .chat.choosing .thread-bar, .chat.choosing .members { display: none; }
+.chooser[hidden] { display: none; }
+.chooser {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+.chooser h2 { margin: 0 0 .5rem; font-weight: 600; font-size: 1.3rem; }
+.chooser .options { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem; max-width: 720px; }
+.chooser .option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .1rem;
+  min-width: 190px;
+  padding: .7rem 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--agent-color, var(--line));
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chooser .option:hover { border-color: var(--agent-color, var(--matt)); }
+.chooser .option-label { font-weight: 600; }
+.chooser .option-sub { color: var(--muted); font-size: .78rem; }
+.chooser-note { color: var(--muted); font-size: .85rem; margin: 0; }
+.typed-model { display: flex; gap: .5rem; }
+.typed-model input {
+  width: 280px;
+  padding: .5rem .7rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.typed-model button, .chooser-nav button {
+  padding: .45rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.typed-model button:disabled { opacity: .45; cursor: default; }
+.chooser-nav { display: flex; gap: .6rem; margin-top: .5rem; }

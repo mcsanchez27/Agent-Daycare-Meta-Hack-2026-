@@ -123,9 +123,10 @@ function handle(channel, fn) {
   });
 }
 
-handle('agent:start', ({ agentId, initialPrompt }) => agentRunner.startAgent(agentId, initialPrompt));
-handle('agent:stop', ({ agentId }) => agentRunner.stopAgent(agentId));
-handle('agent:send-input', ({ agentId, input }) => agentRunner.sendInput(agentId, input));
+// One run per chat member (TM-54): { runKey, vendor, model, prompt }.
+handle('agent:run', (req) => agentRunner.run(req));
+handle('agent:stop', ({ runKey }) => agentRunner.stop(runKey));
+handle('agent:models', () => agentRunner.listModels());
 handle('agent:get-configs', () => agentRunner.getConfigs());
 handle('agent:scan', () => agentRunner.scanAgents());
 

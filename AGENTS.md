@@ -12,7 +12,7 @@
   - Claude: `claude -p --permission-mode acceptEdits "<prompt>"`
   - Codex: `codex exec --skip-git-repo-check --sandbox workspace-write -` with the prompt written to stdin (so it never passes through `cmd.exe` when Codex is an npm `codex.cmd` shim)
 - There is no memory between launches. The window adds the recent thread to each prompt (`buildPrompt` in `src/renderer/thread.js`: last 20 messages, at most 12,000 characters, app notes left out). `"msg":"launching"` in the log shows the full prompt.
-- Replies are stdout only, shown as plain text. stderr is kept and its last lines are shown if the agent fails or says nothing. Send is off for an agent while it is answering.
+- Replies are stdout only, shown as plain text. stderr is kept and its last lines are shown if the agent fails or says nothing. Send is off for a chat member while it is answering.
 - Agents talk to each other by **relay**: each finished reply has "Send to <agent>" buttons. The relayed message is Matt's, with `relayOf` set; its prompt ends "Matt passed you this reply from <agent>. Respond to it:" and the text goes in once.
 - Agents also bring each other in with **@Name** (TM-53 Batch 3, see Threads below).
 - **Stop** sits under a reply while it streams. It kills the process tree (`killTree`: `taskkill /T /F` on Windows, so a `codex.cmd` shim's Codex dies too) and `agent:done` comes back with `stopped: true`. Any partial reply is kept and marked "stopped".
@@ -20,14 +20,20 @@
 ## Access, timeout, names (TM-53)
 - **Equal access (Matt's decision):** every agent may write inside the working folder without asking. Antigravity uses `--mode accept-edits`; Claude uses `acceptEdits`; Codex uses the `workspace-write` sandbox. Nothing grants system-wide access.
 - **Timeout:** `agents.<id>.timeoutSec` in `config.json` (default 300, kept between 10 and 3600). Past it, the runner stops the agent like Stop (`stopAgent(id, 'timeout')`), and `agent:done` carries `timedOut: true`. The log line is `"msg":"timed out, stopping"`.
-- **Names:** `agents.<id>.name` in `config.json` renames an agent everywhere: picker, bubbles, relay buttons and prompts. Later handoff markers must read the name from the same place, never a hard-coded one.
+- **Names:** `agents.<vendor>.name` in `config.json` is the vendor's display name, the default name for new chat members (TM-54). Each chat member has its own `name`, used everywhere for that member: picker, bubbles, relay buttons, handoff markers and prompts.
 - `config.load` writes newly added settings into an existing `config.json`, so they can be edited by hand.
 
 ## Chats (TM-53 Batch 2)
 - Each chat is one file, `chats/<id>.json` (project root while developing, git-ignored; `userData/chats` when packaged), written through a temp file and a rename (`src/chats.js`). Chat ids are checked against `CHAT_ID` before they touch a path.
 - The sidebar lists chats newest first, titled from Matt's first message (`chatTitle`). A new chat isn't saved until something is said in it. The most recent chat opens at start-up.
-- Each agent runs one process at a time, whichever chat asked. `pending[agentId].chatId` says where its reply lands, even if Matt has switched chats. Send to that agent is off everywhere until it finishes.
+- Each chat member runs one process at a time. `pending[runKey]` (`<chatId>/<memberId>`) says where its reply lands, even if Matt has switched chats. Members of the same vendor, in one chat or several, run at the same time.
 - An unreadable chat file is skipped and logged as `"msg":"chat file could not be read"`; the others still open.
+
+## Chat members and models (TM-54)
+- Each chat has its own agents in `chat.thread.members`: `[{ id, vendor, model, name, memory? }]`, the first being the chat's owner (`src/renderer/members.js`). New members get ids `m1`, `m2`, …; their name is the vendor's name, then the model's label, then "<vendor> 2". `addMessage` checks `from`/`to` against the member ids.
+- **Old chats** (no `members`) are moved over by `ensureMembers` when opened: one member per vendor that appears, with the vendor id as member id, so old messages still resolve. Nothing is written until the next message.
+- "+ New chat" shows a chooser: vendor, then model. Models come from `api.listModels()` (`agent:models`): Antigravity from `agy models` (10s limit, cached), Claude `opus`/`sonnet`/`haiku`, Codex typed (checked against `MODEL_TEXT`). A one-member chat hides the picker; the header shows each member as "name · model".
+- **Runner:** `api.run({ runKey, vendor, model, prompt })` and `api.stop(runKey)`; events `agent:output` and `agent:done` carry `runKey`. The model is passed as `agy --model`, `claude --model` or `codex exec -m`; a `null` model passes nothing. The launch log line has `runKey` and the full `args`.
 
 ## Threads and agent-to-agent (TM-53 Batch 3)
 - A thread hangs off a main-chat message. Thread messages carry `threadOf` (that message's id); there are no threads inside threads. Matt opens one with "Reply in thread" or the summary row, and "← Back to chat" closes it. The one message box posts into whichever view is open.
@@ -56,9 +62,10 @@ The default `workingDir` is the dedicated chat folder `~/AgentDaycare/chat` (cre
 - `src/main.js`: Electron main process, window, IPC, logger setup
 - `src/agent-runner.js`: launches the agent CLIs and streams their output
 - `src/config.js`: user settings
-- `src/chats.js`: saved chats, one JSON file each
+- `src/chats.js`: saved chats, one JSON file each (keeps `titleSet` and `thread.members`)
+- `src/spellcheck.js`: the right-click menu (spelling fixes, Add to dictionary, Cut/Copy/Paste)
 - `src/logger.js`: the log writer
 - `src/preload.js`: the `window.api` bridge between the UI and the main process
-- `src/renderer/`: the chat window. `thread.js` is the shared thread as plain data (tested in `test/`), `app.js` draws it (textContent only, never innerHTML), `styles.css`, `index.html`. It streams each reply into a bubble and reports in plain English when an agent fails.
+- `src/renderer/`: the chat window. `members.js` is a chat's agents and `thread.js` the shared thread, both plain data (tested in `test/`), `app.js` draws it (textContent only, never innerHTML), `styles.css`, `index.html`. It streams each reply into a bubble and reports in plain English when an agent fails.
 
 Run `npm test` after any change in `src/`.
