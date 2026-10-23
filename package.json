@@ -18,6 +18,9 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^34.5.8"
+    "electron": "^45.0.0"
+  },
+  "allowScripts": {
+    "electron@45.0.0": true
   }
 }
