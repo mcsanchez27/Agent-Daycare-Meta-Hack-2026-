@@ -377,8 +377,13 @@ class AgentRunner {
   // its prompt from stdin ("-") so the prompt never passes through cmd.exe
   // when Codex is an npm codex.cmd shim.
   // Access (TM-53): every agent may write inside the working folder without
-  // asking. Claude: acceptEdits. Codex: the workspace-write sandbox.
-  // Antigravity: --mode accept-edits. A model (TM-54) adds the vendor's model
+  // asking, and run commands (TM-59). Claude: acceptEdits plus Bash and
+  // PowerShell; on Windows its commands start in the chat folder but aren't
+  // fenced in (no Claude sandbox there). Codex: the workspace-write sandbox.
+  // Antigravity: --mode accept-edits, with --sandbox (blocks writes outside
+  // the folder, tested) and --dangerously-skip-permissions (headless agy
+  // otherwise denies every command).
+  // A model (TM-54) adds the vendor's model
   // flag; null leaves the CLI on its default.
   // Output (TM-55): each CLI's JSON, read by parseEvent, so the reply's
   // session can be resumed. sessionId resumes that session; codex's resume
@@ -390,9 +395,9 @@ class AgentRunner {
     const flag = model ? ['--model', model] : [];
     // Lean Claude (TM-59): Matt's own plugins, hooks and MCP servers stay out
     // (about 66k tokens a launch down to 37k). Its login is unaffected.
-    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
     // antigravity (agy): -p takes the next word as the prompt, so it goes last
-    return { args: ['--mode', 'accept-edits', '--output-format', 'stream-json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
+    return { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }
 
   _spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin = null) {

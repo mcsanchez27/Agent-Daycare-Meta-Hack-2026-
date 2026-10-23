@@ -159,6 +159,12 @@
   // Agents bringing each other in stops after this many hops until Matt says
   // something in the thread.
   const HOP_LIMIT = 3;
+  // A crew (agents with roles, TM-59) passes work along more: brief, design,
+  // build, a question back. It gets more handoffs in a row before Matt.
+  const CREW_HOP_LIMIT = 6;
+  function hopLimit(thread) {
+    return (thread.members || []).some(m => m.role && !m.left) ? CREW_HOP_LIMIT : HOP_LIMIT;
+  }
 
   function hopsSinceMatt(thread, rootId) {
     let hops = 0;
@@ -343,5 +349,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
+  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
 });

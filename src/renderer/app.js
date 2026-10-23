@@ -16,7 +16,7 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
 const { VENDORS, ROLES, CREW, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
@@ -910,7 +910,7 @@ function addActions(row, buttons) {
 
 // A member's finished reply that names another agent with @ brings it in,
 // in the same place (the main chat or the thread it is in). An agent not in
-// the chat joins on its default model. After HOP_LIMIT handoffs in a row
+// the chat joins on its default model. After hopLimit (3, or 6 in a crew) handoffs in a row
 // there, Matt has to say something first.
 function handOff(chatId, m) {
   const chat = chats.get(chatId);
@@ -920,8 +920,9 @@ function handOff(chatId, m) {
   const name = (id) => nameOf(id, chat);
   const toName = target.memberId ? name(target.memberId) : vendorName(target.vendor);
   const hops = hopsSinceMatt(chat.thread, where);
-  if (hops >= HOP_LIMIT) {
-    post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} asked for ${toName}, but the agents have handed off ${HOP_LIMIT} times in a row. Reply here to keep going.` });
+  const limit = hopLimit(chat.thread);
+  if (hops >= limit) {
+    post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} asked for ${toName}, but the agents have handed off ${limit} times in a row. Reply here to keep going.` });
     api.log('info', 'hop limit reached', { chatId, where, from: m.from, to: target });
     return;
   }

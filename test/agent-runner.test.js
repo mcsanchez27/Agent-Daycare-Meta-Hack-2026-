@@ -44,8 +44,8 @@ test('only the three V1 agents exist', () => {
 
 test('agent arguments: everyone may write in the working folder; codex reads the prompt from stdin', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '--output-format', 'stream-json', '-p', 'hi'], stdin: null });
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', '-p', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', 'hi'], stdin: null });
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
   // Codex's arguments must stay safe for a codex.cmd shim.
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
@@ -53,8 +53,8 @@ test('agent arguments: everyone may write in the working folder; codex reads the
 
 test('model flags per vendor', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', 'opus').args, ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', '--model', 'opus', 'hi']);
-  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'gemini-4-argon-high').args, ['--mode', 'accept-edits', '--output-format', 'stream-json', '--model', 'gemini-4-argon-high', '-p', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', 'opus').args, ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', '--model', 'opus', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'gemini-4-argon-high').args, ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--model', 'gemini-4-argon-high', '-p', 'hi']);
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi', 'gpt-5'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-m', 'gpt-5', '-'], stdin: 'hi' });
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x', 'gpt-5.1-codex').args, 'win32'), 'still safe for codex.cmd');
 });
@@ -332,8 +332,8 @@ test('antigravity json: the whole envelope', () => {
 
 test('resuming: each vendor gets its session flag, still safe for a codex.cmd shim', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', null, 's1').args, ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--output-format', 'stream-json', '--verbose', '--resume', 's1', 'hi']);
-  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'm', 'c1').args, ['--mode', 'accept-edits', '--output-format', 'stream-json', '--model', 'm', '--conversation', 'c1', '-p', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', null, 's1').args, ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', '--resume', 's1', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'm', 'c1').args, ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--model', 'm', '--conversation', 'c1', '-p', 'hi']);
   const codex = runner._buildAgentArgs('codex', 'hi', 'gpt-6-astra', '01a16915-c682-73f1-bf39-7e19fbecb8a1');
   assert.deepEqual(codex, { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', '-m', 'gpt-6-astra', '01a16915-c682-73f1-bf39-7e19fbecb8a1', '-'], stdin: 'hi' });
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', codex.args, 'win32'), 'safe for codex.cmd');
