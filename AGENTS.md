@@ -56,6 +56,7 @@
 ## Vendor sessions (TM-55 Batch 1)
 - Each CLI now runs in JSON output mode and keeps its own session: Claude `--output-format stream-json --verbose` (+ `--resume <id>`), Codex `exec --json` (+ `exec resume … -c sandbox_mode=workspace-write <id> -`), Antigravity `--output-format json` (+ `--conversation <id>`). `parseEvent(vendor, line)` in `agent-runner.js` pulls out reply text, session id, usage (`inputTokens`, `outputTokens`, Claude's `contextWindow`) and Claude's plan use (`rate_limit_event`: 5-hour and 7-day). These ride on `agent:done`.
 - A member keeps `sessions: { main | <threadRootId>: { id, lastId } }` and `usage` in the chat file. On resume, `buildPrompt(…, { since: lastId })` sends no header and only what others said since then. A failed resume (no reply, not stopped) drops the session, posts a note and asks once more, fresh. Session ids must match `SESSION_ID` before they reach a command line.
+- **Meter (Batch 2):** each member chip shows its last reply's context use ("67k / 1M" with a fill bar for Claude; "51k tokens" for Codex and Antigravity, which don't report a window). The sidebar shows "Claude plan · 5h N% · 7d N%" from the latest Claude reply, kept in localStorage.
 - The "one-shot launch, history rebuilt each time" text above still describes a member's first message, and any member without a session.
 
 ## Known facts from the headless check (TM-47 Batch 0, Matt's PC)

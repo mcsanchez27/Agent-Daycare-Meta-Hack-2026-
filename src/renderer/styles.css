@@ -382,3 +382,16 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 .chat-merge { position: absolute; top: .4rem; right: 1.6rem; color: var(--muted); font-size: .8rem; visibility: hidden; cursor: pointer; }
 .chat-item:hover .chat-merge { visibility: visible; }
 .chat-merge:hover { color: var(--text); }
+
+/* Context meter and Claude plan use (TM-55 Batch 2) */
+.member { display: inline-flex; align-items: center; gap: .4rem; }
+.meter {
+  padding: 0 .4rem;
+  border-radius: 999px;
+  font-size: .72rem;
+  color: var(--muted);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--agent-color) 35%, transparent) var(--fill, 0%), var(--line) var(--fill, 0%));
+}
+.plan[hidden] { display: none; }
+.plan { padding: .45rem .6rem; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); font-size: .78rem; }
+.plan.warn { color: #f4a261; border-color: #f4a261; }

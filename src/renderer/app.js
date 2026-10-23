@@ -44,7 +44,8 @@ const el = {
   chooser: $('chooser'),
   panel: $('thread-panel'),
   panelLabel: $('panel-label'),
-  panelClose: $('panel-close')
+  panelClose: $('panel-close'),
+  plan: $('plan')
 };
 
 // The two places messages show: the main chat, and the thread panel beside
@@ -314,8 +315,42 @@ function renderMembers() {
     chip.style.setProperty('--agent-color', vendors[m.vendor] ? vendors[m.vendor].color : '#888');
     chip.textContent = `${m.name} · ${modelText(m)}` + (working ? ' · working…' : '');
     chip.title = `${vendorName(m.vendor)}, ${modelText(m)}` + (m.memory ? `, with background from "${m.memory.title}"` : '');
+    // Context meter (TM-55): what its last reply used. Only Claude says how
+    // big its window is; the others show tokens.
+    const u = m.usage;
+    if (u && u.inputTokens) {
+      const meter = document.createElement('span');
+      meter.className = 'meter';
+      meter.textContent = u.contextWindow
+        ? `${tokens(u.inputTokens)} / ${tokens(u.contextWindow)}`
+        : `${tokens(u.inputTokens)} tokens`;
+      if (u.contextWindow) meter.style.setProperty('--fill', `${Math.min(100, (100 * u.inputTokens) / u.contextWindow).toFixed(1)}%`);
+      chip.title += `\nContext: its last reply read ${u.inputTokens.toLocaleString()} tokens` +
+        (u.contextWindow ? ` of ${u.contextWindow.toLocaleString()} (${((100 * u.inputTokens) / u.contextWindow).toFixed(1)}%)` : ' (this CLI doesn\'t say how big its window is)') +
+        `, and wrote ${(u.outputTokens || 0).toLocaleString()}. Updated ${timeLabel(u.at)}.`;
+      chip.appendChild(meter);
+    }
     el.members.appendChild(chip);
   }
+}
+
+// 66501 -> "67k", 1000000 -> "1M".
+function tokens(n) {
+  return n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
+}
+
+// Claude's plan use (TM-55): its 5-hour and 7-day windows, from the latest
+// Claude reply. Kept in this window's storage so it shows after a restart.
+function renderPlan() {
+  const p = plans.claude;
+  el.plan.hidden = !p;
+  if (!p) return;
+  const pct = (w) => (w ? `${Math.round(w.used * 100)}%` : '?');
+  const when = (w) => (w && w.resetsAt ? new Date(w.resetsAt * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'unknown');
+  el.plan.textContent = `Claude plan · 5h ${pct(p.fiveHour)} · 7d ${pct(p.sevenDay)}`;
+  el.plan.title = `5-hour window resets ${when(p.fiveHour)}; 7-day window resets ${when(p.sevenDay)}.` +
+    (p.status && p.status !== 'allowed' ? `\nStatus: ${p.status}.` : '') + `\nAs of ${new Date(p.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+  el.plan.classList.toggle('warn', p.status !== 'allowed' || (p.fiveHour && p.fiveHour.used >= 0.8));
 }
 
 // Adds a message to a chat (open or not), saves it, and draws it wherever it shows.
@@ -1051,7 +1086,11 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
   }
   const name = nameOf(p.memberId, chats.get(p.chatId));
   const member = memberById(chats.get(p.chatId).thread, p.memberId);
-  if (plan && member) plans[member.vendor] = { ...plan, at: Date.now() };
+  if (plan && member) {
+    plans[member.vendor] = { ...plan, at: Date.now() };
+    try { localStorage.setItem('plans', JSON.stringify(plans)); } catch (_) { /* storage off: shown until restart */ }
+    renderPlan();
+  }
   // A saved session that couldn't be resumed (expired, deleted): forget it and
   // ask again once with a fresh session and the usual recent history.
   if (p.sessionId && member && !p.text.trim() && !stopped && !timedOut && !why) {
@@ -1121,6 +1160,8 @@ api.onAgentDone(({ runKey, code, ...outcome }) => finishReply(runKey, code, null
 api.onNotice(({ text }) => { if (current()) post(currentId, { from: 'system', text }); });
 
 async function init() {
+  try { Object.assign(plans, JSON.parse(localStorage.getItem('plans') || '{}')); } catch (_) { /* nothing saved */ }
+  renderPlan();
   const configs = await api.getAgentConfigs();
   for (const c of configs) vendors[c.id] = { id: c.id, name: c.name, color: c.color };
   // Asked once in the background; the chooser shows models once they arrive.
