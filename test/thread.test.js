@@ -433,3 +433,13 @@ test('a follow-up with several answers lists them all, and leaves the asks out o
   assert.ok(p.endsWith("The chats you asked answered:\n\n'One': 4\n\n'Two': 6\n\nFinish your reply to Matt."), p);
   assert.ok(!p.includes('It answered: 4'), 'the answered asks are not repeated in history');
 });
+
+test('a reply keeps its steps (TM-59); notes and Matt never do', () => {
+  const t = createThread(V1());
+  addMessage(t, { from: 'matt', to: 'claude', text: 'go', steps: ['x'] });
+  const r = addMessage(t, { from: 'claude', text: 'done', steps: Array.from({ length: 60 }, (_, i) => `step ${i}`) });
+  assert.equal(r.steps.length, 50);
+  assert.equal(r.steps[49], 'step 59', 'the newest are kept');
+  assert.equal(t.messages[0].steps, undefined);
+  assert.equal(addMessage(t, { from: 'claude', text: 'no tools', steps: [] }).steps, undefined);
+});

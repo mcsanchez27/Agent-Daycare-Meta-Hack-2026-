@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('api', {
   // Events from the main process
   onAgentOutput: (callback) => ipcRenderer.on('agent:output', (_, data) => callback(data)),
   onAgentDone: (callback) => ipcRenderer.on('agent:done', (_, data) => callback(data)),
+  onAgentStep: (callback) => ipcRenderer.on('agent:step', (_, data) => callback(data)),
   onNotice: (callback) => ipcRenderer.on('app:notice', (_, data) => callback(data)),
 
   // Settings (executable paths, working folder)

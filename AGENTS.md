@@ -23,6 +23,13 @@
 - **Names:** `agents.<vendor>.name` in `config.json` is the vendor's display name, the default name for new chat members (TM-54). Each chat member has its own `name`, used everywhere for that member: header chips, bubbles, @, handoff markers and prompts.
 - **Gemini (TM-57 Batch 1):** the `antigravity` vendor is shown as "Gemini" (the models the `agy` CLI runs). The vendor id stays `antigravity` in code, config keys and chat files. A `config.json` name still "Antigravity" becomes "Gemini" on load (`RETIRED_NAMES` in `config.js`), and saved members named "Antigravity" or "Antigravity N" are renamed when a chat opens (`renameRetired` in `members.js`). Old message text is not rewritten.
 
+## Live tool steps (TM-59 Batch 3)
+- `parseEvent` turns tool calls into `steps` ("Reading note.txt", "Running npm test", "… (failed: not allowed)") via `describeTool`: Claude `tool_use` blocks, Codex `item.started` (command_execution, file_change, mcp_tool_call, web_search), agy `step_update` (ACTIVE, ERROR). The runner sends each as `agent:step` (`onAgentStep` in preload).
+- **agy now runs with `--output-format stream-json`** (one event per line: `init` has the conversation id, `result` the reply and usage). The old one-envelope `json` parsing is still accepted.
+- While an agent works, its bubble's meta shows the latest step and a list shows the last four. The finished reply keeps up to 50 as `steps` (folded "N steps" under the bubble). A reply that ends with no text says its last step in the "didn't reply" note.
+- Codex's separate messages ("I'll check…", then the answer) get a blank line between them.
+- **Known (found here):** headless agy auto-denies shell commands under `--mode accept-edits` unless `settings.json` has `permissions.allow` rules; Gemini can read and write files and use MCP (Stitch), not run commands.
+
 ## Roles and crews (TM-59 Batch 2)
 - A member may have `role`: `design`, `uiux` or `engineering` (`ROLES` in `members.js`, each a label and a brief). `buildPrompt` lists group members as "Codex (Design)" and adds "Your role: <label>. <brief>". The chip shows the role; hovering shows the brief. `mergeThreads` and `rejoin` keep it.
 - "+ New chat" → **Crew** (`createCrew` in `app.js`, `CREW` in `members.js`): Codex (Design, the owner, so it answers Matt by default), Gemini (UI/UX, told to use its StitchMCP tools) and Claude (Engineering), all on default models. The log says `"msg":"crew created"`.

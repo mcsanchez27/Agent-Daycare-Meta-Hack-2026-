@@ -28,7 +28,10 @@
   // an app note, records a background ask this chat made
   // ({ chatId, chatTitle, asker, question, state, hop, answer? }).
   // Returns the new message, or throws on bad input.
-  function addMessage(thread, { from, to = null, text, relayOf = null, endedAs = null, threadOf = null, handoff = null, guest = null, side = null }) {
+  // What an agent did while it answered (TM-59), kept with its reply.
+  const MAX_STEPS = 50;
+
+  function addMessage(thread, { from, to = null, text, relayOf = null, endedAs = null, threadOf = null, handoff = null, guest = null, side = null, steps = null }) {
     const body = String(text == null ? '' : text).trim();
     if (!body) throw new Error('A message needs text');
     if (from !== 'matt' && from !== 'system' && from !== 'guest' && !isMember(thread, from)) {
@@ -58,6 +61,7 @@
     if (relayOf) message.relayOf = relayOf;
     if (threadOf !== null) message.threadOf = threadOf;
     if (handoff) message.handoff = { from: handoff.from, to: handoff.to };
+    if (Array.isArray(steps) && steps.length && isMember(thread, from)) message.steps = steps.slice(-MAX_STEPS).map(String);
     if (endedAs !== null) {
       if (!isMember(thread, from) || !ENDINGS.includes(endedAs)) throw new Error(`Bad ending: ${endedAs}`);
       message.endedAs = endedAs;
