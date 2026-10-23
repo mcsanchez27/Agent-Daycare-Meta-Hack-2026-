@@ -17,7 +17,7 @@
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, chatTitle, findTarget, findChatMention, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
-const { VENDORS, newMember, ensureMembers, memberById } = window.ChatMembers;
+const { VENDORS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -169,7 +169,7 @@ function join(chatId, vendor, { model = null, modelLabel = null, memory = null, 
 
 async function loadChat(chat) {
   if (!chat.thread) Object.assign(chat, await api.loadChat(chat.id));
-  ensureMembers(chat.thread, vendorNames());
+  renameRetired(ensureMembers(chat.thread, vendorNames()), vendorNames());
   return chat;
 }
 
@@ -461,7 +461,7 @@ function showChooser(mode = 'new', vendor = null) {
     if (vendor === 'antigravity' && models && !list.length) {
       const note = document.createElement('p');
       note.className = 'chooser-note';
-      note.textContent = "Couldn't get Antigravity's model list (agy models), so only its default is offered.";
+      note.textContent = "Couldn't get Gemini's model list (agy models), so only its default is offered.";
       el.chooser.appendChild(note);
     }
     if (vendor === 'codex') {

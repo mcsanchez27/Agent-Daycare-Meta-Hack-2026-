@@ -1,7 +1,7 @@
 # Agent Daycare: notes for AI agents
 
 ## Read this first
-- **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass is **TM-56** in Notion Task Master.
+- **Active ticket:** TM-57 (V3.1 test-pass fixes) on `tm-57/v3.1-fixes`. **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass, TM-56, is Done.
 - **Where work happens:** `master` holds everything built so far. Each new ticket gets its own branch off `master` named `tm-<id>/<short-name>`, merged by PR when done. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
@@ -21,6 +21,11 @@
 - **Equal access (Matt's decision):** every agent may write inside the working folder without asking. Antigravity uses `--mode accept-edits`; Claude uses `acceptEdits`; Codex uses the `workspace-write` sandbox. Nothing grants system-wide access.
 - **Timeout:** `agents.<id>.timeoutSec` in `config.json` (default 300, kept between 10 and 3600). Past it, the runner stops the agent like Stop (`stopAgent(id, 'timeout')`), and `agent:done` carries `timedOut: true`. The log line is `"msg":"timed out, stopping"`.
 - **Names:** `agents.<vendor>.name` in `config.json` is the vendor's display name, the default name for new chat members (TM-54). Each chat member has its own `name`, used everywhere for that member: header chips, bubbles, @, handoff markers and prompts.
+- **Gemini (TM-57 Batch 1):** the `antigravity` vendor is shown as "Gemini" (the models the `agy` CLI runs). The vendor id stays `antigravity` in code, config keys and chat files. A `config.json` name still "Antigravity" becomes "Gemini" on load (`RETIRED_NAMES` in `config.js`), and saved members named "Antigravity" or "Antigravity N" are renamed when a chat opens (`renameRetired` in `members.js`). Old message text is not rewritten.
+
+## Debug menu (TM-57 Batch 1)
+- The menu bar has File, Edit, View, Window and **Debug** (`setMenu` in `main.js`). Add debug items there.
+- **Delete all chats…** asks first, stops every running agent, deletes every chat file (`chats.removeAll`, after queued saves finish), then reloads the window. Saves are refused while it runs (`chatsLocked`). The log says `"msg":"all chats deleted"` with a `count`.
 - `config.load` writes newly added settings into an existing `config.json`, so they can be edited by hand.
 
 ## Chats (TM-53 Batch 2)

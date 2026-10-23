@@ -87,4 +87,26 @@ async function save(dir, chat) {
   return next;
 }
 
-module.exports = { list, load, save, CHAT_ID };
+// Debug menu (TM-57): deletes every chat file (and any half-written .tmp)
+// once queued saves have finished. Other files in the folder are left alone.
+// Returns how many chats were deleted.
+async function removeAll(dir) {
+  await Promise.allSettled([...queues.values()]);
+  let names;
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch (err) {
+    if (err.code === 'ENOENT') return 0;
+    throw err;
+  }
+  let count = 0;
+  for (const name of names) {
+    const m = /^[a-z0-9-]{1,64}\.json(\.tmp)?$/.exec(name);
+    if (!m) continue;
+    await fs.promises.unlink(path.join(dir, name));
+    if (!m[1]) count++;
+  }
+  return count;
+}
+
+module.exports = { list, load, save, removeAll, CHAT_ID };

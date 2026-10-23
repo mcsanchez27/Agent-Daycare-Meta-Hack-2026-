@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { newMember, ensureMembers, memberById, VENDORS } = require('../src/renderer/members');
+const { newMember, ensureMembers, renameRetired, memberById, VENDORS } = require('../src/renderer/members');
 const { createThread, addMessage, buildPrompt } = require('../src/renderer/thread');
 
 test('newMember names: vendor, then model, then number', () => {
@@ -49,7 +49,7 @@ test('one-on-one header names the vendor and model', () => {
   addMessage(t, { from: 'matt', to: 'm1', text: 'hi' });
   const p = buildPrompt(t, 'm1');
   assert.ok(p.startsWith('You are Claude (claude, model opus), chatting one-on-one with Matt.'), p);
-  assert.match(p, /@Antigravity, @Claude or @Codex/);
+  assert.match(p, /@Gemini, @Claude or @Codex/);
 });
 
 test('group header lists the members', () => {
@@ -62,4 +62,16 @@ test('group header lists the members', () => {
   assert.match(p, /Claude and Haiku/);
   assert.ok(!p.includes('one-on-one'));
   assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex']);
+});
+
+test('saved members named Antigravity become Gemini (TM-57), unless the name is taken', () => {
+  const t = { members: [
+    { id: 'm1', vendor: 'antigravity', name: 'Antigravity' },
+    { id: 'm2', vendor: 'antigravity', name: 'Antigravity 2' },
+    { id: 'm3', vendor: 'antigravity', name: 'Scout' },
+    { id: 'm4', vendor: 'claude', name: 'Antigravity' }
+  ] };
+  assert.deepEqual(renameRetired(t).members.map(m => m.name), ['Gemini', 'Gemini 2', 'Scout', 'Antigravity']);
+  const clash = { members: [{ id: 'm1', vendor: 'claude', name: 'Gemini' }, { id: 'm2', vendor: 'antigravity', name: 'Antigravity' }] };
+  assert.deepEqual(renameRetired(clash).members.map(m => m.name), ['Gemini', 'Antigravity']);
 });

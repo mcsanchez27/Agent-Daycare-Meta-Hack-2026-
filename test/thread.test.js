@@ -166,8 +166,8 @@ test('a thread hangs off a main-chat message, and handoffs are app notes between
 
 test('findMention finds the first other agent named with @, by its current name', () => {
   const names = V1().map(m => (m.id === 'claude' ? { ...m, name: 'Cyclops' } : m));
-  assert.equal(findMention('Over to @codex, then @Antigravity.', 'claude', names), 'codex');
-  assert.equal(findMention('@Antigravity first, then @Codex', 'claude', names), 'antigravity');
+  assert.equal(findMention('Over to @codex, then @Gemini.', 'claude', names), 'codex');
+  assert.equal(findMention('@Gemini first, then @Codex', 'claude', names), 'antigravity');
   assert.equal(findMention('I am @Cyclops', 'claude', names), null, 'not yourself');
   assert.equal(findMention('ask @Claude', 'codex', names), null, 'old names do not count');
   assert.equal(findMention('ask @Cyclops.', 'codex', names), 'claude');

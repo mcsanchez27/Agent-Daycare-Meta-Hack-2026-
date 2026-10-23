@@ -14,7 +14,10 @@ const DEFAULT_TIMEOUT_SEC = 300;
 
 // What each agent is called in the chat (TM-53). Matt can rename them here;
 // the picker, bubbles, relay buttons and prompts all use this name.
-const DEFAULT_NAMES = { antigravity: 'Antigravity', claude: 'Claude', codex: 'Codex' };
+const DEFAULT_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex' };
+// Names that were only ever a default (TM-57: Antigravity is shown as Gemini,
+// the models its CLI runs). A config still holding one gets the new default.
+const RETIRED_NAMES = { antigravity: 'Antigravity' };
 const MAX_NAME_LENGTH = 24;
 const MIN_TIMEOUT_SEC = 10;
 const MAX_TIMEOUT_SEC = 3600;
@@ -95,7 +98,8 @@ function sanitize(input, base) {
   for (const id of AGENT_IDS) {
     const b = base.agents[id];
     const u = input && input.agents && input.agents[id];
-    const name = u && typeof u.name === 'string' ? u.name.trim().replace(/\s+/g, ' ').slice(0, MAX_NAME_LENGTH) : '';
+    let name = u && typeof u.name === 'string' ? u.name.trim().replace(/\s+/g, ' ').slice(0, MAX_NAME_LENGTH) : '';
+    if (name === RETIRED_NAMES[id]) name = '';
     out.agents[id] = {
       name: name || b.name,
       command: u && typeof u.command === 'string' && u.command.trim() ? u.command.trim() : b.command,
