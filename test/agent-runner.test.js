@@ -346,3 +346,13 @@ test('a session id that is not a plain id is refused before launch', () => {
   assert.equal(runner.run({ runKey: 'c/m1', vendor: 'codex', model: null, sessionId: 'x & del *', prompt: 'hi' }), false);
   assert.match(sent.find(s => s.ch === 'agent:output').d.text, /session/);
 });
+
+test('session ids: no leading hyphen, and ids the CLIs report are checked too', () => {
+  const { runner, sent } = makeRunner();
+  runner._spawnAgentProcess = () => { throw new Error('must not launch'); };
+  assert.equal(runner.run({ runKey: 'c/m1', vendor: 'claude', model: null, sessionId: '-rf', prompt: 'hi' }), false);
+  assert.match(sent.find(s => s.ch === 'agent:output').d.text, /session/);
+  assert.equal(parseEvent('codex', '{"type":"thread.started","thread_id":"--yolo"}'), null);
+  assert.equal(parseEvent('claude', JSON.stringify({ type: 'system', subtype: 'init', session_id: { x: 1 } })), null);
+  assert.deepEqual(parseEvent('antigravity', '{"conversation_id":"-x","response":"hi"}'), { text: 'hi' }, 'a bad id is dropped, the reply kept');
+});

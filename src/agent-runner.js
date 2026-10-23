@@ -20,7 +20,11 @@ const SAFE_BATCH_ARG = /^[A-Za-z0-9_.=-]+$/;
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 // A vendor session id goes on the command line (TM-55): plain ids only.
-const SESSION_ID = /^[A-Za-z0-9_-]{1,80}$/;
+// No leading hyphen, so an id can never be read as a flag.
+const SESSION_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,79}$/;
+const sessionOk = (id) => typeof id === 'string' && SESSION_ID.test(id);
+// agy prints its whole answer at the end; past this much, it's passed on as plain text.
+const MAX_PENDING = 4 * 1024 * 1024;
 
 // One line of a CLI's JSON output (TM-55) as what the app needs from it:
 // { text?, sessionId?, usage?: { inputTokens, outputTokens, contextWindow? },
@@ -30,7 +34,7 @@ function parseEvent(vendor, line) {
   try { j = JSON.parse(line); } catch (_) { return null; }
   if (!j || typeof j !== 'object') return null;
   if (vendor === 'claude') {
-    if (j.type === 'system' && j.subtype === 'init' && j.session_id) return { sessionId: j.session_id };
+    if (j.type === 'system' && j.subtype === 'init') return sessionOk(j.session_id) ? { sessionId: j.session_id } : null;
     if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
       const text = j.message.content.filter(c => c.type === 'text').map(c => c.text).join('');
       return text ? { text } : null;
@@ -40,7 +44,7 @@ function parseEvent(vendor, line) {
       const windows = Object.values(j.modelUsage || {}).map(m => m.contextWindow).filter(Boolean);
       const usage = { inputTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0), outputTokens: u.output_tokens || 0 };
       if (windows.length) usage.contextWindow = Math.max(...windows);
-      return { sessionId: j.session_id, usage };
+      return sessionOk(j.session_id) ? { sessionId: j.session_id, usage } : { usage };
     }
     if (j.type === 'rate_limit_event' && j.rate_limit_info) {
       const w = j.rate_limit_info.unifiedWindows || {};
@@ -50,15 +54,15 @@ function parseEvent(vendor, line) {
     return null;
   }
   if (vendor === 'codex') {
-    if (j.type === 'thread.started' && j.thread_id) return { sessionId: j.thread_id };
+    if (j.type === 'thread.started') return sessionOk(j.thread_id) ? { sessionId: j.thread_id } : null;
     if (j.type === 'item.completed' && j.item && j.item.type === 'agent_message' && j.item.text) return { text: j.item.text };
     if (j.type === 'turn.completed' && j.usage) return { usage: { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 } };
     return null;
   }
   if (j.conversation_id || j.response) {
     const out = {};
-    if (j.conversation_id) out.sessionId = j.conversation_id;
-    if (j.response) out.text = j.response;
+    if (sessionOk(j.conversation_id)) out.sessionId = j.conversation_id;
+    if (typeof j.response === 'string' && j.response) out.text = j.response;
     if (j.usage) out.usage = { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 };
     return out;
   }
@@ -384,8 +388,13 @@ class AgentRunner {
         stdoutSink.push(data);
         const lines = (pendingLine + stdoutDecoder.write(data)).split('\n');
         pendingLine = lines.pop();
-        if (vendor === 'antigravity') pendingLine = lines.concat(pendingLine).join('\n');
-        else lines.forEach(take);
+        if (vendor !== 'antigravity') lines.forEach(take);
+        else if (lines.length) pendingLine = lines.concat(pendingLine).join('\n');
+        if (pendingLine.length > MAX_PENDING) {
+          this.log.warn(vendor, 'output too large to read as JSON, shown as text', { run, runKey, bytes: pendingLine.length });
+          this.emitOutput(child, pendingLine);
+          pendingLine = '';
+        }
       });
       child.stdout.on('end', () => {
         if (pendingLine.trim() && !take(pendingLine.trim())) this.emitOutput(child, pendingLine);
