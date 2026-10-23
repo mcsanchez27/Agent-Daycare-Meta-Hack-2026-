@@ -1,7 +1,7 @@
 # Agent Daycare: notes for AI agents
 
 ## Read this first
-- **Active ticket:** TM-57 (V3.1 test-pass fixes) on `tm-57/v3.1-fixes`. **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass, TM-56, is Done.
+- **Active ticket:** TM-57 (V3.1 test-pass fixes) on `tm-57/v3.1-fixes`, Batches 1–3 built; Matt's test cases for it are on **TM-58**. **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass, TM-56, is Done.
 - **Where work happens:** `master` holds everything built so far. Each new ticket gets its own branch off `master` named `tm-<id>/<short-name>`, merged by PR when done. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
