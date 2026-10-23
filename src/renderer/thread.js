@@ -6,7 +6,7 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./members'));
   else root.ChatThread = factory(root.ChatMembers);
-})(typeof self !== 'undefined' ? self : this, function ({ VENDORS, VENDOR_NAMES, newMember }) {
+})(typeof self !== 'undefined' ? self : this, function ({ VENDORS, VENDOR_NAMES, ROLES, newMember }) {
   const ENDINGS = ['stopped', 'timed out'];
   const TITLE_LENGTH = 40;
 
@@ -199,9 +199,12 @@
     const who = `You are ${me.name} (${me.vendor}, model ${me.model || 'default'})`;
     // Agents Matt removed (TM-57, `left`) aren't in the room any more.
     const here = members.filter(m => !m.left);
-    const intro = here.length === 1
+    // Roles (TM-59): each agent knows its own brief and who does what.
+    const roleOf = (m) => (m.role && ROLES[m.role] ? ROLES[m.role] : null);
+    const intro = (here.length === 1
       ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
-      : `${who}, one of ${here.length} AI agents (${list(here.map(m => m.name))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `;
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `) +
+      (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '');
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
       (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
@@ -301,7 +304,7 @@
     const memberMaps = [a, b].map(t => {
       const map = {};
       for (const m of t.members) {
-        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null }, { vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null },{ vendorNames: { ...vendorNames, [m.vendor]: m.name } });
         if (m.left) fresh.left = true;
         members.push(fresh);
         map[m.id] = fresh.id;

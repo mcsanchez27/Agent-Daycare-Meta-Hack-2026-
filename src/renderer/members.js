@@ -8,6 +8,18 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   const VENDORS = ['antigravity', 'claude', 'codex'];
   const VENDOR_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex' };
+  // A member's part in a chat (TM-59), carried in its prompts. Matt's own
+  // flow: design and brainstorm with Codex, UI/UX with Gemini, engineering
+  // with Claude.
+  const ROLES = {
+    design: { label: 'Design', brief: 'You lead design and brainstorming: shape the idea with Matt, write the brief and the plan, and push back on weak ideas. Hand the screens to the UI/UX agent and the code to the engineer with @Name.' },
+    uiux: { label: 'UI/UX', brief: 'You own the user interface and experience: design the screens from the brief in Stitch (your StitchMCP tools), then describe them clearly enough for the engineer to build.' },
+    engineering: { label: 'Engineering', brief: "You build it: write and test the code in this chat's folder from the brief and the designs, and say plainly what works and what doesn't." }
+  };
+  // "New crew": one chat with all three, the designer first (it answers Matt
+  // by default).
+  const CREW = [{ vendor: 'codex', role: 'design' }, { vendor: 'antigravity', role: 'uiux' }, { vendor: 'claude', role: 'engineering' }];
+
   // Default names that were retired (TM-57: Antigravity is shown as Gemini,
   // the models its CLI runs).
   const RETIRED_NAMES = { antigravity: 'Antigravity' };
@@ -15,7 +27,7 @@
   // A new member for a chat that already has `members`. Its name is unique in
   // the chat (case-insensitive): the vendor's name, else the model's label,
   // else the vendor's name with a number ("Claude 2").
-  function newMember(members, { vendor, model = null, memory = null }, { vendorNames = VENDOR_NAMES, modelLabel = null } = {}) {
+  function newMember(members, { vendor, model = null, memory = null, role = null }, { vendorNames = VENDOR_NAMES, modelLabel = null } = {}) {
     if (!VENDORS.includes(vendor)) throw new Error(`Unknown vendor: ${vendor}`);
     const next = 1 + Math.max(0, ...members.map(m => /^m(\d+)$/.exec(m.id)).filter(Boolean).map(r => Number(r[1])));
     const taken = new Set(members.map(m => m.name.toLowerCase()));
@@ -24,6 +36,7 @@
     for (let k = 2; !name; k++) if (!taken.has(`${base} ${k}`.toLowerCase())) name = `${base} ${k}`;
     const member = { id: `m${next}`, vendor, model: model || null, name };
     if (memory) member.memory = memory;
+    if (role && ROLES[role]) member.role = role;
     return member;
   }
 
@@ -63,5 +76,5 @@
     return (thread.members || []).find(m => m.id === id) || null;
   }
 
-  return { VENDORS, VENDOR_NAMES, newMember, ensureMembers, renameRetired, memberById };
+  return { VENDORS, VENDOR_NAMES, ROLES, CREW, newMember, ensureMembers, renameRetired, memberById };
 });

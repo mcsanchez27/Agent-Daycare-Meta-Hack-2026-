@@ -17,7 +17,7 @@
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
-const { VENDORS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
+const { VENDORS, ROLES, CREW, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -151,6 +151,19 @@ function createChat(vendor, model, modelLabel) {
   chats.set(chat.id, chat);
   hideChooser();
   showChat(chat.id);
+}
+
+// "New crew" (TM-59): Codex designs, Gemini does UI/UX, Claude engineers,
+// each on its default model, in one chat with its own folder.
+function createCrew() {
+  const now = new Date().toISOString();
+  const members = [];
+  for (const c of CREW) members.push(newMember(members, c, { vendorNames: vendorNames() }));
+  const chat = { id: newChatId(), title: 'New chat', createdAt: now, updatedAt: now, thread: createThread(members) };
+  chats.set(chat.id, chat);
+  hideChooser();
+  showChat(chat.id);
+  api.log('info', 'crew created', { chatId: chat.id, members: members.map(m => `${m.vendor}:${m.role}`) });
 }
 
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
@@ -347,8 +360,9 @@ function renderMembers() {
     const chip = document.createElement('span');
     chip.className = 'member' + (working ? ' working' : '');
     chip.style.setProperty('--agent-color', vendors[m.vendor] ? vendors[m.vendor].color : '#888');
-    chip.textContent = `${m.name} · ${modelText(m)}` + (working ? ' · working…' : '');
-    chip.title = `${vendorName(m.vendor)}, ${modelText(m)}` + (m.memory ? `, with background from "${m.memory.title}"` : '');
+    const role = m.role && ROLES[m.role];
+    chip.textContent = `${m.name} · ${role ? `${role.label} · ` : ''}${modelText(m)}` + (working ? ' · working…' : '');
+    chip.title = `${vendorName(m.vendor)}, ${modelText(m)}` + (m.memory ? `, with background from "${m.memory.title}"` : '') + (role ? `\nRole: ${role.brief}` : '');
     // Context meter (TM-55): what its last reply used. Only Claude says how
     // big its window is; the others show tokens.
     const u = m.usage;
@@ -495,11 +509,14 @@ function showChooser(mode = 'new', vendor = null) {
   } else if (!vendor) {
     h.textContent = mode === 'new' ? 'Who do you want to talk to?' : 'Add which agent to this chat?';
     for (const v of VENDORS) option(vendorName(v), null, vendors[v] && vendors[v].color, () => showChooser(mode, v));
+    if (mode === 'new') {
+      option('Crew', CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), null, createCrew);
+    }
     if (mode === 'add' && chats.size > 1) option('From another chat…', 'brings that chat as background', null, () => showChooser('from'));
   } else {
     const color = vendors[vendor] && vendors[vendor].color;
     h.textContent = `Which ${vendorName(vendor)} model?`;
-    option('Default', `whatever ${vendor} uses by default`, color, () => pick(vendor, null, null));
+    option('Default', `whatever ${vendorName(vendor)} uses by default`, color, () => pick(vendor, null, null));
     const list = (models && models[vendor]) || [];
     for (const m of list) option(m.label, m.id, color, () => pick(vendor, m.id, m.label));
     if (vendor === 'antigravity' && models && !list.length) {
