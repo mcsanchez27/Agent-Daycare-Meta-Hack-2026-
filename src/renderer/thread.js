@@ -182,7 +182,8 @@
   // answer ({ chatTitle, text }) is the follow-up after this member asked
   // another chat: the prompt ends with that chat's answer.
   // chatTitles: the titles of Matt's other chats, so an agent can ask one with #.
-  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [] } = {}) {
+  // since: resume the member's vendor session, sending only messages after this id.
+  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null } = {}) {
     const members = thread.members || [];
     const me = members.find(m => m.id === memberId);
     const names = nameMap(thread);
@@ -211,6 +212,10 @@
     let used = memory.length;
     // A follow-up keeps everything but the answered ask itself, which ends the prompt.
     let earlier = answer ? said.filter(m => m !== last || !last.side) : said.slice(0, -1);
+    // Resuming its vendor session (TM-55): the session already holds the
+    // header, the memory and everything up to `since`, and the agent's own
+    // words; only what others said since then goes in.
+    if (since !== null) earlier = earlier.filter(m => m.id > since && m.from !== memberId);
     if (!answer && last.relayOf) {
       // The relayed reply goes in at the end; don't spend room on it twice.
       const i = earlier.map(m => m.from === last.relayOf && m.text === last.text).lastIndexOf(true);
@@ -223,9 +228,9 @@
       used += line.length;
     }
 
-    const parts = [header];
-    if (memory) parts.push(memory);
-    if (history.length) parts.push('Recent conversation:\n' + history.join('\n\n'));
+    const parts = since === null ? [header] : [];
+    if (memory && since === null) parts.push(memory);
+    if (history.length) parts.push((since === null ? 'Recent conversation:\n' : 'New in this chat since your last reply:\n') + history.join('\n\n'));
     if (answer) {
       parts.push(`The chat '${answer.chatTitle}' answered your question:\n${answer.text}\n\nFinish your reply to Matt.`);
     } else if (last.from === 'guest') {

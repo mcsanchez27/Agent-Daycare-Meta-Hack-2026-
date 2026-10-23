@@ -44,18 +44,18 @@ test('only the three V1 agents exist', () => {
 
 test('agent arguments: everyone may write in the working folder; codex reads the prompt from stdin', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '-p', 'hi'], stdin: null });
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', 'hi'], stdin: null });
-  assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '--output-format', 'json', '-p', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', 'hi'], stdin: null });
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
   // Codex's arguments must stay safe for a codex.cmd shim.
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
 });
 
 test('model flags per vendor', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', 'opus').args, ['-p', '--permission-mode', 'acceptEdits', '--model', 'opus', 'hi']);
-  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'gemini-4-argon-high').args, ['--mode', 'accept-edits', '--model', 'gemini-4-argon-high', '-p', 'hi']);
-  assert.deepEqual(runner._buildAgentArgs('codex', 'hi', 'gpt-5'), { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-m', 'gpt-5', '-'], stdin: 'hi' });
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', 'opus').args, ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', '--model', 'opus', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'gemini-4-argon-high').args, ['--mode', 'accept-edits', '--output-format', 'json', '--model', 'gemini-4-argon-high', '-p', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi', 'gpt-5'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-m', 'gpt-5', '-'], stdin: 'hi' });
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x', 'gpt-5.1-codex').args, 'win32'), 'still safe for codex.cmd');
 });
 
@@ -302,4 +302,47 @@ test('listModels: Antigravity from agy, Claude fixed, Codex typed; agy failing l
   const { runner: r2 } = makeRunner();
   r2._agyModelsText = async () => { throw new Error('agy missing'); };
   assert.deepEqual((await r2.listModels()).antigravity, []);
+});
+
+// ---- Vendor sessions (TM-55 Batch 1) ----
+const { parseEvent } = AgentRunner;
+
+test('claude stream-json: text, session, usage with context window, plan usage', () => {
+  assert.deepEqual(parseEvent('claude', JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' })), { sessionId: 's1' });
+  assert.deepEqual(parseEvent('claude', JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hel' }, { type: 'tool_use' }, { type: 'text', text: 'lo' }] } })), { text: 'Hello' });
+  const r = parseEvent('claude', JSON.stringify({ type: 'result', session_id: 's1', usage: { input_tokens: 4, cache_read_input_tokens: 60459, cache_creation_input_tokens: 71789, output_tokens: 11 },
+    modelUsage: { 'claude-opus-5-5[1m]': { contextWindow: 1000000 } } }));
+  assert.deepEqual(r, { sessionId: 's1', usage: { inputTokens: 132252, outputTokens: 11, contextWindow: 1000000 } });
+  const rl = parseEvent('claude', JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.03, resetsAt: 1 }, seven_day: { utilization: 0.04, resetsAt: 2 } } } }));
+  assert.deepEqual(rl, { plan: { status: 'allowed', fiveHour: { used: 0.03, resetsAt: 1 }, sevenDay: { used: 0.04, resetsAt: 2 } } });
+  assert.equal(parseEvent('claude', 'not json'), null);
+});
+
+test('codex --json: thread id, agent message, turn usage', () => {
+  assert.deepEqual(parseEvent('codex', '{"type":"thread.started","thread_id":"t1"}'), { sessionId: 't1' });
+  assert.deepEqual(parseEvent('codex', '{"type":"item.completed","item":{"type":"agent_message","text":"pineapple"}}'), { text: 'pineapple' });
+  assert.equal(parseEvent('codex', '{"type":"item.completed","item":{"type":"reasoning","text":"hmm"}}'), null);
+  assert.deepEqual(parseEvent('codex', '{"type":"turn.completed","usage":{"input_tokens":51646,"cached_input_tokens":21504,"output_tokens":11}}'), { usage: { inputTokens: 51646, outputTokens: 11 } });
+});
+
+test('antigravity json: the whole envelope', () => {
+  assert.deepEqual(parseEvent('antigravity', '{"conversation_id":"c1","status":"SUCCESS","response":"pineapple\\n","usage":{"input_tokens":26117,"output_tokens":521}}'),
+    { sessionId: 'c1', text: 'pineapple\n', usage: { inputTokens: 26117, outputTokens: 521 } });
+});
+
+test('resuming: each vendor gets its session flag, still safe for a codex.cmd shim', () => {
+  const { runner } = makeRunner();
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', null, 's1').args, ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', '--resume', 's1', 'hi']);
+  assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi', 'm', 'c1').args, ['--mode', 'accept-edits', '--output-format', 'json', '--model', 'm', '--conversation', 'c1', '-p', 'hi']);
+  const codex = runner._buildAgentArgs('codex', 'hi', 'gpt-6-astra', '01a16915-c682-73f1-bf39-7e19fbecb8a1');
+  assert.deepEqual(codex, { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', '-m', 'gpt-6-astra', '01a16915-c682-73f1-bf39-7e19fbecb8a1', '-'], stdin: 'hi' });
+  assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', codex.args, 'win32'), 'safe for codex.cmd');
+  assert.deepEqual(runner._buildAgentArgs('codex', 'hi').args, ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-']);
+});
+
+test('a session id that is not a plain id is refused before launch', () => {
+  const { runner, sent } = makeRunner();
+  runner._spawnAgentProcess = () => { throw new Error('must not launch'); };
+  assert.equal(runner.run({ runKey: 'c/m1', vendor: 'codex', model: null, sessionId: 'x & del *', prompt: 'hi' }), false);
+  assert.match(sent.find(s => s.ch === 'agent:output').d.text, /session/);
 });

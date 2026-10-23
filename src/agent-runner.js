@@ -19,6 +19,52 @@ const SAFE_BATCH_ARG = /^[A-Za-z0-9_.=-]+$/;
 // command line, so it is held to plain characters (still safe for a .cmd shim).
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
 
+// A vendor session id goes on the command line (TM-55): plain ids only.
+const SESSION_ID = /^[A-Za-z0-9_-]{1,80}$/;
+
+// One line of a CLI's JSON output (TM-55) as what the app needs from it:
+// { text?, sessionId?, usage?: { inputTokens, outputTokens, contextWindow? },
+// plan? (Claude only: 5-hour and 7-day use) }, or null for anything else.
+function parseEvent(vendor, line) {
+  let j;
+  try { j = JSON.parse(line); } catch (_) { return null; }
+  if (!j || typeof j !== 'object') return null;
+  if (vendor === 'claude') {
+    if (j.type === 'system' && j.subtype === 'init' && j.session_id) return { sessionId: j.session_id };
+    if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
+      const text = j.message.content.filter(c => c.type === 'text').map(c => c.text).join('');
+      return text ? { text } : null;
+    }
+    if (j.type === 'result') {
+      const u = j.usage || {};
+      const windows = Object.values(j.modelUsage || {}).map(m => m.contextWindow).filter(Boolean);
+      const usage = { inputTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0), outputTokens: u.output_tokens || 0 };
+      if (windows.length) usage.contextWindow = Math.max(...windows);
+      return { sessionId: j.session_id, usage };
+    }
+    if (j.type === 'rate_limit_event' && j.rate_limit_info) {
+      const w = j.rate_limit_info.unifiedWindows || {};
+      const win = (x) => (x ? { used: x.utilization, resetsAt: x.resetsAt } : null);
+      return { plan: { status: j.rate_limit_info.status, fiveHour: win(w.five_hour), sevenDay: win(w.seven_day) } };
+    }
+    return null;
+  }
+  if (vendor === 'codex') {
+    if (j.type === 'thread.started' && j.thread_id) return { sessionId: j.thread_id };
+    if (j.type === 'item.completed' && j.item && j.item.type === 'agent_message' && j.item.text) return { text: j.item.text };
+    if (j.type === 'turn.completed' && j.usage) return { usage: { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 } };
+    return null;
+  }
+  if (j.conversation_id || j.response) {
+    const out = {};
+    if (j.conversation_id) out.sessionId = j.conversation_id;
+    if (j.response) out.text = j.response;
+    if (j.usage) out.usage = { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 };
+    return out;
+  }
+  return null;
+}
+
 const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
 
 // `agy models` prints a header, then one "id<TAB>label" line per model.
@@ -211,7 +257,7 @@ class AgentRunner {
   // runKey (`<chatId>/<memberId>`, TM-54) names the run: events carry it, and
   // Stop and the timeout act on it alone, so two members of one vendor can
   // answer at once. model is the vendor's model id, or null for its default.
-  run({ runKey, vendor, model = null, prompt = '' }) {
+  run({ runKey, vendor, model = null, sessionId = null, prompt = '' }) {
     const agent = this.agents[vendor];
     if (!agent) throw new Error(`Agent ${vendor} not found`);
     const p = String(prompt || '').trim();
@@ -225,12 +271,17 @@ class AgentRunner {
       this.emitOutput(ctx, `[Can't launch ${agent.name}]: "${model}" isn't a model name it can take (letters, digits, . _ : - only).\r\n`, 'stderr');
       return false;
     }
+    if (sessionId !== null && !SESSION_ID.test(sessionId)) {
+      this.log.warn(vendor, 'refused session id', { run, runKey, sessionId });
+      this.emitOutput(ctx, `[Can't launch ${agent.name}]: its saved session id "${sessionId}" isn't one it can resume.\r\n`, 'stderr');
+      return false;
+    }
 
     if (this.processes.has(runKey)) this.stop(runKey);
 
     const exe = this._getExecutable(agent);
     const workingDir = this.workingDir || process.cwd();
-    const { args, stdin } = this._buildAgentArgs(vendor, p, model);
+    const { args, stdin } = this._buildAgentArgs(vendor, p, model, sessionId);
     this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, cwd: workingDir });
 
     const cmd = launchCommand(exe, args);
@@ -268,11 +319,17 @@ class AgentRunner {
   // asking. Claude: acceptEdits. Codex: the workspace-write sandbox.
   // Antigravity: --mode accept-edits. A model (TM-54) adds the vendor's model
   // flag; null leaves the CLI on its default.
-  _buildAgentArgs(vendor, p, model = null) {
-    if (vendor === 'codex') return { args: ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...(model ? ['-m', model] : []), '-'], stdin: p };
+  // Output (TM-55): each CLI's JSON, read by parseEvent, so the reply's
+  // session can be resumed. sessionId resumes that session; codex's resume
+  // takes no --sandbox, so the same setting goes in as -c.
+  _buildAgentArgs(vendor, p, model = null, sessionId = null) {
+    const m = model ? ['-m', model] : [];
+    if (vendor === 'codex' && sessionId) return { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...m, sessionId, '-'], stdin: p };
+    if (vendor === 'codex') return { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...m, '-'], stdin: p };
     const flag = model ? ['--model', model] : [];
-    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', ...flag, p], stdin: null };
-    return { args: ['--mode', 'accept-edits', ...flag, '-p', p], stdin: null }; // antigravity (agy): -p takes the next word as the prompt, so it goes last
+    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    // antigravity (agy): -p takes the next word as the prompt, so it goes last
+    return { args: ['--mode', 'accept-edits', '--output-format', 'json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }
 
   _spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin = null) {
@@ -308,10 +365,31 @@ class AgentRunner {
     const stdoutSink = this.log.createLineSink(vendor, { run, runKey, stream: 'stdout' });
     const stderrSink = this.log.createLineSink(vendor, { run, runKey, stream: 'stderr', level: 'warn' });
 
+    // stdout is JSON, one event per line (TM-55): the reply text goes to the
+    // window as it comes; the session id and usage ride along on agent:done.
+    // agy prints one envelope at the end, possibly over several lines.
+    child.meta = {};
+    let pendingLine = '';
+    const take = (line) => {
+      const ev = parseEvent(vendor, line);
+      if (!ev) return false;
+      if (ev.text) this.emitOutput(child, ev.text);
+      if (ev.sessionId) child.meta.sessionId = ev.sessionId;
+      if (ev.usage) child.meta.usage = { ...child.meta.usage, ...ev.usage };
+      if (ev.plan) child.meta.plan = ev.plan;
+      return true;
+    };
     if (child.stdout) {
       child.stdout.on('data', (data) => {
         stdoutSink.push(data);
-        this.emitOutput(child, stdoutDecoder.write(data));
+        const lines = (pendingLine + stdoutDecoder.write(data)).split('\n');
+        pendingLine = lines.pop();
+        if (vendor === 'antigravity') pendingLine = lines.concat(pendingLine).join('\n');
+        else lines.forEach(take);
+      });
+      child.stdout.on('end', () => {
+        if (pendingLine.trim() && !take(pendingLine.trim())) this.emitOutput(child, pendingLine);
+        pendingLine = '';
       });
     }
 
@@ -339,7 +417,8 @@ class AgentRunner {
         runKey, vendor, run, code,
         stopped: child.stopReason === 'user',
         timedOut: child.stopReason === 'timeout',
-        timeoutSec: child.timeoutSec
+        timeoutSec: child.timeoutSec,
+        ...child.meta
       });
     });
 
@@ -383,5 +462,6 @@ AgentRunner.resolveExecutable = resolveExecutable;
 AgentRunner.killTree = killTree;
 AgentRunner.MODEL_TEXT = MODEL_TEXT;
 AgentRunner.parseAgyModels = parseAgyModels;
+AgentRunner.parseEvent = parseEvent;
 
 module.exports = AgentRunner;

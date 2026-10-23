@@ -371,3 +371,21 @@ test('merge: both agents and histories in time order, every reference remapped, 
   assert.equal(addMessage(t, { from: 'matt', to: 'm3', text: 'next' }).id, 7);
   assert.match(buildPrompt(t, 'm3'), /one of 3 AI agents \(Claude, Claude 2 and Codex\)/);
 });
+
+// ---- Vendor sessions (TM-55 Batch 1) ----
+test('resuming a session: only what is new since the last turn, not the agent\'s own words, no header', () => {
+  const members = [newMember([], { vendor: 'claude' })];
+  members.push(newMember(members, { vendor: 'codex' }));
+  const t = createThread(members);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'old question' });
+  const seen = addMessage(t, { from: 'm1', text: 'old answer' });
+  addMessage(t, { from: 'm2', text: 'Codex chimed in' });
+  addMessage(t, { from: 'system', text: 'a note' });
+  addMessage(t, { from: 'matt', to: 'm1', text: 'new question' });
+  const p = buildPrompt(t, 'm1', { since: seen.id });
+  assert.ok(!p.includes('You are'), 'the session already has the header');
+  assert.ok(!p.includes('old question') && !p.includes('old answer'));
+  assert.match(p, /^New in this chat since your last reply:\nCodex: Codex chimed in\n\nMatt's message to you:\nnew question$/);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'and again' });
+  assert.equal(buildPrompt(t, 'm1', { since: 999 }), "Matt's message to you:\nand again", 'nothing new: just the message');
+});

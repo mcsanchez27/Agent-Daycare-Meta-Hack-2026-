@@ -31,6 +31,7 @@ let currentId = null;
 const pending = {};
 const pendingRows = {}; // runKey -> { row, meta, bubble, view } while on screen
 const summaryRows = {}; // thread's first message id -> its summary row in the main chat
+const plans = {}; // vendor -> its latest plan usage (Claude reports it: 5-hour and 7-day)
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -990,9 +991,16 @@ function ask(chatId, memberId, threadOf = null, { side = null, answer = null, ho
   // The newest 15 other chats with real titles, so the agent can ask one with #.
   const chatTitles = otherChats(chatId).filter(c => c.title !== 'New chat')
     .sort((a, b) => (chats.get(a.id).updatedAt < chats.get(b.id).updatedAt ? 1 : -1)).slice(0, 15).map(c => c.title);
-  const prompt = buildPrompt(thread, memberId, { threadOf, answer, chatTitles });
+  // Its vendor session for this place (TM-55): the main chat, or one thread.
+  // Resuming sends only what's new since it last saw the chat.
+  const where = threadOf === null ? 'main' : String(threadOf);
+  const session = (member.sessions || {})[where] || null;
+  const prompt = buildPrompt(thread, memberId, { threadOf, answer, chatTitles, since: session ? session.lastId : null });
   const runKey = runKeyOf(chatId, memberId);
-  pending[runKey] = { chatId, memberId, threadOf, side, hop: side ? side.hop : hop, text: '', stderr: '', started: Date.now() };
+  pending[runKey] = {
+    chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', started: Date.now(),
+    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1
+  };
   if (chatId === currentId) {
     openViews().forEach(renderPendingRows);
     renderMembers();
@@ -1001,7 +1009,7 @@ function ask(chatId, memberId, threadOf = null, { side = null, answer = null, ho
   renderChatList();
   updateSendButtons();
 
-  api.run({ runKey, vendor: member.vendor, model: member.model, prompt }).then((started) => {
+  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: pending[runKey].sessionId, prompt }).then((started) => {
     if (started === false) finishReply(runKey, null, 'it could not be started');
   }).catch((err) => finishReply(runKey, null, err.message));
 }
@@ -1032,7 +1040,8 @@ function onOutput({ runKey, stream, text }) {
 
 // Turns the streamed reply into a message in its chat, or reports why there is none.
 // outcome: { stopped, timedOut, timeoutSec } from agent:done.
-function finishReply(runKey, code, why, { stopped = false, timedOut = false, timeoutSec = 0 } = {}) {
+// outcome also carries what the vendor reported (TM-55): sessionId, usage, plan.
+function finishReply(runKey, code, why, { stopped = false, timedOut = false, timeoutSec = 0, sessionId = null, usage = null, plan = null } = {}) {
   const p = pending[runKey];
   if (!p) return;
   delete pending[runKey];
@@ -1041,6 +1050,22 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
     delete pendingRows[runKey];
   }
   const name = nameOf(p.memberId, chats.get(p.chatId));
+  const member = memberById(chats.get(p.chatId).thread, p.memberId);
+  if (plan && member) plans[member.vendor] = { ...plan, at: Date.now() };
+  // A saved session that couldn't be resumed (expired, deleted): forget it and
+  // ask again once with a fresh session and the usual recent history.
+  if (p.sessionId && member && !p.text.trim() && !stopped && !timedOut && !why) {
+    delete member.sessions[p.where];
+    post(p.chatId, { from: 'system', threadOf: p.threadOf || null, text: `${name}'s saved session couldn't be resumed, so it's starting a fresh one.` });
+    api.log('warn', 'session resume failed, starting fresh', { runKey, code, sessionId: p.sessionId });
+    ask(p.chatId, p.memberId, p.threadOf || null, { side: p.side, answer: p.answer, hop: p.hop });
+    return;
+  }
+  // Remember the session to resume next time, and what it has seen; usage for the meter.
+  if (member && sessionId && !stopped && !timedOut) {
+    member.sessions = { ...(member.sessions || {}), [p.where]: { id: sessionId, lastId: p.seenUpTo } };
+  }
+  if (member && usage) member.usage = { ...usage, at: new Date().toISOString() };
   const reply = p.text.trim();
   const threadOf = p.threadOf || null;
   let m = null;
@@ -1092,7 +1117,7 @@ el.addAgent.addEventListener('click', () => showChooser('add'));
 el.panelClose.addEventListener('click', () => { closePanel(); main.input.focus(); });
 
 api.onAgentOutput(onOutput);
-api.onAgentDone(({ runKey, code, stopped, timedOut, timeoutSec }) => finishReply(runKey, code, null, { stopped, timedOut, timeoutSec }));
+api.onAgentDone(({ runKey, code, ...outcome }) => finishReply(runKey, code, null, outcome));
 api.onNotice(({ text }) => { if (current()) post(currentId, { from: 'system', text }); });
 
 async function init() {
