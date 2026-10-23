@@ -129,7 +129,7 @@ function pendingInView(p) {
 
 async function persist(chat) {
   try {
-    await api.saveChat({ id: chat.id, title: chat.title, createdAt: chat.createdAt, updatedAt: chat.updatedAt, thread: chat.thread });
+    await api.saveChat({ id: chat.id, title: chat.title, titleSet: chat.titleSet, createdAt: chat.createdAt, updatedAt: chat.updatedAt, thread: chat.thread });
   } catch (err) {
     api.log('error', 'could not save chat', { id: chat.id, error: err.message });
   }
@@ -151,10 +151,51 @@ function renderChatList() {
     const busy = Object.values(pending).filter(p => p.chatId === chat.id).length;
     when.textContent = busy ? 'working…' : dayLabel(chat.updatedAt);
     if (busy) item.classList.add('busy');
-    item.append(title, when);
-    item.addEventListener('click', () => openChat(chat.id));
+    const rename = document.createElement('span');
+    rename.className = 'chat-rename';
+    rename.textContent = '✎';
+    rename.title = 'Rename';
+    rename.addEventListener('click', (e) => { e.stopPropagation(); editTitle(chat, item); });
+    item.append(title, when, rename);
+    // The first click opens the chat and redraws this list, so a double-click
+    // never lands on one element: the second click's count says it instead.
+    item.addEventListener('click', (e) => (e.detail >= 2 ? editTitle(chat, item) : openChat(chat.id)));
     el.chatList.appendChild(item);
   }
+}
+
+// Rename in place (TM-54): Enter saves, Esc cancels, an empty title goes back
+// to following Matt's first message.
+// The box replaces the whole list item: inside the item's <button>, a typed
+// space would press the button.
+function editTitle(chat, item) {
+  const input = document.createElement('input');
+  input.className = 'chat-title-edit';
+  input.value = chat.title;
+  input.maxLength = 60;
+  item.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const text = input.value.trim();
+    if (save && text !== chat.title) {
+      if (!chat.thread) Object.assign(chat, await api.loadChat(chat.id));
+      chat.titleSet = Boolean(text);
+      chat.title = text || chatTitle(chat.thread);
+      // A chat with nothing said in it isn't saved yet; the name sticks once it is.
+      if (chat.thread.messages.length) persist(chat);
+    }
+    renderChatList();
+  };
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
 }
 
 // Adds a message to a chat (open or not), saves it, and draws it if on screen.
@@ -162,7 +203,7 @@ function post(chatId, message) {
   const chat = chats.get(chatId);
   const m = addMessage(chat.thread, message);
   chat.updatedAt = m.ts;
-  chat.title = chatTitle(chat.thread);
+  if (!chat.titleSet) chat.title = chatTitle(chat.thread);
   persist(chat);
   if (chatId === currentId && inView(m)) {
     removePendingRows();

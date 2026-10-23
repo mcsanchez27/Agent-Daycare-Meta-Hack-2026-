@@ -55,3 +55,15 @@ test('missing fields are filled in so an odd file still opens', async () => {
   assert.equal(c.title, 'New chat');
   assert.equal(c.thread.nextId, 2);
 });
+
+test('a renamed chat keeps its title and the flag; members are kept', async () => {
+  const dir = tmpDir();
+  const members = [{ id: 'm1', vendor: 'claude', model: 'opus', name: 'Claude' }];
+  await chats.save(dir, { ...sample('ren-1', '2026-10-22T10:00:00.000Z', 'Mine'), titleSet: true, thread: { messages: [], nextId: 1, members } });
+  const c = await chats.load(dir, 'ren-1');
+  assert.equal(c.title, 'Mine');
+  assert.equal(c.titleSet, true);
+  assert.deepEqual(c.thread.members, members);
+  await chats.save(dir, sample('ren-2', '2026-10-22T10:00:00.000Z'));
+  assert.ok(!(await chats.load(dir, 'ren-2')).titleSet, 'not renamed unless saved as renamed');
+});

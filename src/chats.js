@@ -20,13 +20,18 @@ function clean(chat) {
   const thread = chat.thread || {};
   const messages = Array.isArray(thread.messages) ? thread.messages : [];
   const now = new Date().toISOString();
-  return {
+  const c = {
     id: chat.id,
     title: typeof chat.title === 'string' && chat.title.trim() ? chat.title.trim() : 'New chat',
     createdAt: typeof chat.createdAt === 'string' ? chat.createdAt : now,
     updatedAt: typeof chat.updatedAt === 'string' ? chat.updatedAt : now,
     thread: { messages, nextId: Number.isInteger(thread.nextId) ? thread.nextId : messages.length + 1 }
   };
+  // Matt renamed it (TM-54): the title no longer follows his first message.
+  if (chat.titleSet === true) c.titleSet = true;
+  // The chat's agents (TM-54 Batch 2).
+  if (Array.isArray(thread.members)) c.thread.members = thread.members;
+  return c;
 }
 
 // Newest first: [{ id, title, updatedAt }]. Unreadable files are skipped and

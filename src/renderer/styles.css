@@ -219,3 +219,21 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 }
 .summary-open:hover { color: var(--text); border-color: var(--matt); }
 .msg.summary.live .summary-open { color: var(--matt); border-color: var(--matt); animation: blink 1.6s infinite; }
+
+/* Renaming chats (TM-54) */
+.chat-item { position: relative; }
+.chat-rename { position: absolute; top: .4rem; right: .5rem; color: var(--muted); font-size: .8rem; visibility: hidden; cursor: pointer; }
+.chat-item:hover .chat-rename { visibility: visible; }
+.chat-rename:hover { color: var(--text); }
+.chat-title { padding-right: 1.1rem; }
+.chat-title-edit {
+  margin: .2rem 0;
+  width: 100%;
+  padding: .1rem .3rem;
+  border-radius: 6px;
+  border: 1px solid var(--matt);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: .9rem;
+}

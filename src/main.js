@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, dialog, Menu } = require('electron');
 const path = require('path');
 const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
 const userConfig = require('./config');
 const chats = require('./chats');
+const { spellMenu } = require('./spellcheck');
 
 let mainWindow = null;
 let agentRunner = null;
@@ -83,6 +84,18 @@ function createWindow() {
     const isError = isNumeric ? lvl === 3 : lvl === 'error';
     if (isError) logger.error('renderer', msg, { file: src, line: ln });
     else if (isWarn) logger.warn('renderer', msg, { file: src, line: ln });
+  });
+
+  // Right-click: spelling fixes, Add to dictionary, Cut/Copy/Paste.
+  mainWindow.webContents.on('context-menu', (_, params) => {
+    const template = spellMenu(params);
+    if (!template) return;
+    const wc = mainWindow.webContents;
+    Menu.buildFromTemplate(template.map(({ action, ...item }) => {
+      if (action && action.replace) item.click = () => wc.replaceMisspelling(action.replace);
+      if (action && action.addWord) item.click = () => wc.session.addWordToSpellCheckerDictionary(action.addWord);
+      return item;
+    })).popup({ window: mainWindow });
   });
 
   mainWindow.webContents.on('render-process-gone', (_, details) => {
