@@ -389,3 +389,22 @@ test('resuming a session: only what is new since the last turn, not the agent\'s
   addMessage(t, { from: 'matt', to: 'm1', text: 'and again' });
   assert.equal(buildPrompt(t, 'm1', { since: 999 }), "Matt's message to you:\nand again", 'nothing new: just the message');
 });
+
+test('an agent who left (TM-57) is out of the prompt, still a name in history, and can be @ named back', () => {
+  const t = createThread(V1());
+  t.members[2].left = true; // codex
+  addMessage(t, { from: 'matt', to: 'claude', text: 'hi' });
+  addMessage(t, { from: 'codex', text: 'I was here before' });
+  addMessage(t, { from: 'matt', to: 'claude', text: 'and now?' });
+  const p = buildPrompt(t, 'claude');
+  assert.match(p, /one of 2 AI agents \(Claude and Gemini\)/);
+  assert.match(p, /Codex: I was here before/);
+  assert.equal(findMention('over to @Codex', 'claude', t.members), 'codex', 'a left agent is still reachable by name');
+});
+
+test('mergeThreads keeps who left', () => {
+  const a = createThread(V1());
+  a.members[1].left = true;
+  const m = mergeThreads(a, createThread([]));
+  assert.deepEqual(m.members.map(x => Boolean(x.left)), [false, true, false]);
+});

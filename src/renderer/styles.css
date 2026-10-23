@@ -395,3 +395,17 @@ button[type="submit"]:disabled { opacity: .45; cursor: default; }
 .plan[hidden] { display: none; }
 .plan { padding: .45rem .6rem; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); font-size: .78rem; }
 .plan.warn { color: #f4a261; border-color: #f4a261; }
+
+/* Removing an agent from a chat (TM-57 Batch 2) */
+.member-remove {
+  margin: 0 -.3rem 0 0;
+  padding: 0 .25rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  opacity: .55;
+  cursor: pointer;
+}
+.member-remove:hover, .member-remove:focus-visible { opacity: 1; }

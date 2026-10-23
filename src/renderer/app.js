@@ -167,6 +167,35 @@ function join(chatId, vendor, { model = null, modelLabel = null, memory = null, 
   return member;
 }
 
+// Matt takes an agent out of a chat (TM-57): it stops if it's answering and
+// is marked `left`, so its old messages keep its name. The chat's own agent
+// can't leave.
+function removeMember(chatId, memberId) {
+  const chat = chats.get(chatId);
+  const member = memberById(chat.thread, memberId);
+  if (!member || member === chat.thread.members[0] || member.left) return;
+  const key = runKeyOf(chatId, memberId);
+  if (pending[key]) api.stop(key);
+  member.left = true;
+  post(chatId, { from: 'system', text: `${member.name} left.` });
+  api.log('info', 'agent removed', { chatId, member: memberId });
+  if (chatId === currentId) { renderMembers(); openViews().forEach(updatePlaceholder); updateSendButtons(); }
+}
+
+// An @ (or a thread) that reaches an agent who left brings it back, with a
+// fresh session: it missed what was said while it was out.
+function rejoin(chatId, memberId, threadOf = null) {
+  const member = memberById(chats.get(chatId).thread, memberId);
+  if (!member || !member.left) return memberId;
+  delete member.left;
+  delete member.sessions;
+  delete member.usage;
+  post(chatId, { from: 'system', threadOf, text: `${member.name} joined again.` });
+  api.log('info', 'agent rejoined', { chatId, member: memberId });
+  if (chatId === currentId) renderMembers();
+  return memberId;
+}
+
 async function loadChat(chat) {
   if (!chat.thread) Object.assign(chat, await api.loadChat(chat.id));
   renameRetired(ensureMembers(chat.thread, vendorNames()), vendorNames());
@@ -308,7 +337,9 @@ function editTitle(chat, item) {
 // The open chat's agents, in the header: name, vendor and model.
 function renderMembers() {
   el.members.replaceChildren();
+  const owner = current().thread.members[0];
   for (const m of current().thread.members) {
+    if (m.left) continue;
     const working = Boolean(pending[runKeyOf(currentId, m.id)]);
     const chip = document.createElement('span');
     chip.className = 'member' + (working ? ' working' : '');
@@ -329,6 +360,16 @@ function renderMembers() {
         (u.contextWindow ? ` of ${u.contextWindow.toLocaleString()} (${((100 * u.inputTokens) / u.contextWindow).toFixed(1)}%)` : ' (this CLI doesn\'t say how big its window is)') +
         `, and wrote ${(u.outputTokens || 0).toLocaleString()}. Updated ${timeLabel(u.at)}.`;
       chip.appendChild(meter);
+    }
+    if (m !== owner) {
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'member-remove';
+      x.textContent = '×';
+      x.title = `Remove ${m.name} from this chat` + (working ? ' (stops its reply)' : '') + '. An @ brings it back.';
+      x.setAttribute('aria-label', `Remove ${m.name}`);
+      x.addEventListener('click', () => removeMember(currentId, m.id));
+      chip.appendChild(x);
     }
     el.members.appendChild(chip);
   }
@@ -823,7 +864,7 @@ function handOff(chatId, m) {
     api.log('info', 'hop limit reached', { chatId, where, from: m.from, to: target });
     return;
   }
-  const to = target.memberId || join(chatId, target.vendor, { threadOf: where }).id;
+  const to = target.memberId ? rejoin(chatId, target.memberId, where) : join(chatId, target.vendor, { threadOf: where }).id;
   if (pending[runKeyOf(chatId, to)]) {
     post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} asked for ${name(to)}. ${busyText(chatId, to)}` });
     return;
@@ -871,6 +912,7 @@ function updateSendButton(view) {
   view.send.disabled = !t || busy;
   view.send.title = busy ? busyText(currentId, t.memberId)
     : t && t.vendor ? `${vendorName(t.vendor)} isn't in this chat yet: it joins on its default model`
+    : t && memberById(current().thread, t.memberId).left ? `${nameOf(t.memberId)} left this chat: it joins again`
     : t ? `Goes to ${nameOf(t.memberId)}` : '';
 }
 
@@ -892,7 +934,7 @@ function send(view) {
   }
   const t = target(view);
   if (t.memberId && pending[runKeyOf(currentId, t.memberId)]) return;
-  const to = t.memberId || join(currentId, t.vendor, { threadOf: view.threadOf }).id;
+  const to = t.memberId ? rejoin(currentId, t.memberId, view.threadOf) : join(currentId, t.vendor, { threadOf: view.threadOf }).id;
   post(currentId, { from: 'matt', to, text, threadOf: view.threadOf });
   view.input.value = '';
   autoGrow(view);
@@ -918,10 +960,14 @@ function mentionItems(q) {
     return otherChats(currentId).filter(c => c.title.toLowerCase().startsWith(q.query)).slice(0, 8)
       .map(c => ({ key: c.id, label: c.title, sub: 'ask in the background', color: null, insert: `#${c.title} ` }));
   }
-  const inChat = new Set(current().thread.members.map(m => m.name.toLowerCase()));
+  const members = current().thread.members;
+  const status = (n) => {
+    const m = members.find(x => x.name.toLowerCase() === n.toLowerCase());
+    return !m ? 'joins on its default model' : m.left ? 'left: joins again' : 'in this chat';
+  };
   return VENDORS.filter(v => vendorName(v).toLowerCase().startsWith(q.query)).map(v => ({
     key: v, label: vendorName(v), color: vendors[v] ? vendors[v].color : '#888', insert: `@${vendorName(v)} `,
-    sub: inChat.has(vendorName(v).toLowerCase()) ? 'in this chat' : 'joins on its default model'
+    sub: status(vendorName(v))
   }));
 }
 

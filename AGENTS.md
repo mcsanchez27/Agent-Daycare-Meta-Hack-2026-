@@ -23,6 +23,10 @@
 - **Names:** `agents.<vendor>.name` in `config.json` is the vendor's display name, the default name for new chat members (TM-54). Each chat member has its own `name`, used everywhere for that member: header chips, bubbles, @, handoff markers and prompts.
 - **Gemini (TM-57 Batch 1):** the `antigravity` vendor is shown as "Gemini" (the models the `agy` CLI runs). The vendor id stays `antigravity` in code, config keys and chat files. A `config.json` name still "Antigravity" becomes "Gemini" on load (`RETIRED_NAMES` in `config.js`), and saved members named "Antigravity" or "Antigravity N" are renamed when a chat opens (`renameRetired` in `members.js`). Old message text is not rewritten.
 
+## Removing an agent (TM-57 Batch 2)
+- Every header chip except the chat's own agent has a ×. `removeMember` in `app.js` stops it if it's answering, sets `left: true` on the member (kept so its old messages keep their name), and posts "<name> left." The log says `"msg":"agent removed"`.
+- A left member is hidden from the header and left out of prompts' member list (`buildPrompt`), but `findTarget` still matches its name: an @ from Matt or an agent (or replying in a thread it started) calls `rejoin`, which clears `left`, `sessions` and `usage` (fresh session) and posts "<name> joined again." The log says `"msg":"agent rejoined"`. `mergeThreads` keeps `left`.
+
 ## Debug menu (TM-57 Batch 1)
 - The menu bar has File, Edit, View, Window and **Debug** (`setMenu` in `main.js`). Add debug items there.
 - **Delete all chats…** asks first, stops every running agent, deletes every chat file (`chats.removeAll`, after queued saves finish), then reloads the window. Saves are refused while it runs (`chatsLocked`). The log says `"msg":"all chats deleted"` with a `count`.

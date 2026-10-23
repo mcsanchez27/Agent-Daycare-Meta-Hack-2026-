@@ -197,9 +197,11 @@
     }
 
     const who = `You are ${me.name} (${me.vendor}, model ${me.model || 'default'})`;
-    const intro = members.length === 1
+    // Agents Matt removed (TM-57, `left`) aren't in the room any more.
+    const here = members.filter(m => !m.left);
+    const intro = here.length === 1
       ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
-      : `${who}, one of ${members.length} AI agents (${list(members.map(m => m.name))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `;
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => m.name))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
       (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
@@ -268,6 +270,7 @@
       const map = {};
       for (const m of t.members) {
         const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null }, { vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        if (m.left) fresh.left = true;
         members.push(fresh);
         map[m.id] = fresh.id;
       }
