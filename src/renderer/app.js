@@ -16,7 +16,7 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, chatTitle, findTarget, findChatMention, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
 const { VENDORS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
@@ -659,7 +659,7 @@ function redrawSide(chatId, m) {
 // Asks another chat in the background: the question goes to that chat's own
 // agent as a guest message, answered there; this chat gets a live row. An
 // agent that asked is launched again with the answer (see settleSide).
-async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null }) {
+async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null, group = null }) {
   const src = chats.get(fromChatId);
   const dst = chats.get(targetId);
   const askerName = asker === 'matt' ? 'Matt' : nameOf(asker, src);
@@ -671,7 +671,7 @@ async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null
   await loadChat(dst);
   const owner = dst.thread.members[0];
   const runKey = runKeyOf(targetId, owner.id);
-  const side = post(fromChatId, { from: 'system', threadOf, text: `${askerName} asked "${dst.title}" in the background.`, side: { chatId: targetId, chatTitle: dst.title, asker, question: text, state: 'asking', hop, runKey } });
+  const side = post(fromChatId, { from: 'system', threadOf, text: `${askerName} asked "${dst.title}" in the background.`, side: { chatId: targetId, chatTitle: dst.title, asker, question: text, state: 'asking', hop, runKey, ...(group || {}) } });
   api.log('info', 'background ask', { from: fromChatId, to: targetId, asker, hop });
   if (pending[runKey]) {
     settleSide(fromChatId, side, 'busy', `${owner.name} in "${dst.title}" is busy answering something else. Try again once it's done.`);
@@ -695,7 +695,15 @@ function settleSide(chatId, m, state, text) {
   const asker = m.side.asker;
   if (asker === 'matt' || !memberById(chat.thread, asker)) return;
   if (pending[runKeyOf(chatId, asker)]) return;
-  ask(chatId, asker, m.threadOf || null, { answer: { chatTitle: m.side.chatTitle, text }, hop: m.side.hop });
+  // One reply can ask several chats (TM-57): the asker carries on once every
+  // one of them has settled, with all the answers.
+  let asks = [m];
+  if (m.side.group != null) {
+    asks = chat.thread.messages.filter(x => x.side && x.side.group === m.side.group);
+    if (asks.length < m.side.groupSize || asks.some(x => x.side.state === 'asking')) return;
+  }
+  const answers = asks.map(x => ({ chatTitle: x.side.chatTitle, text: x.side.state === 'answered' ? x.side.answer : x.side.note }));
+  ask(chatId, asker, m.threadOf || null, { answer: answers, hop: m.side.hop });
 }
 
 function scrollToBottom(view) {
@@ -901,10 +909,10 @@ function updatePlaceholder(view) {
 // Send is off while the box is empty or the agent it would go to is still
 // answering (a new launch would cut its reply off; use Stop instead).
 function updateSendButton(view) {
-  const chatAsk = current() && findChatMention(view.input.value, otherChats(currentId));
-  if (chatAsk) {
+  const chatAsks = current() ? splitChatAsks(view.input.value, otherChats(currentId)) : [];
+  if (chatAsks.length) {
     view.send.disabled = false;
-    view.send.title = `Asks "${chats.get(chatAsk.chatId).title}" in the background`;
+    view.send.title = `Asks ${chatAsks.map(a => `"${chats.get(a.chatId).title}"`).join(' and ')} in the background`;
     return;
   }
   const t = current() && view.input.value.trim() ? target(view) : null;
@@ -924,12 +932,12 @@ function send(view) {
   const text = view.input.value.trim();
   if (!text || !current()) return;
   // #chat: ask that chat in the background; the answer lands in a row here.
-  const chatAsk = findChatMention(text, otherChats(currentId));
-  if (chatAsk) {
+  const chatAsks = splitChatAsks(text, otherChats(currentId));
+  if (chatAsks.length) {
     view.input.value = '';
     autoGrow(view);
     closeMentions(view);
-    askChat({ fromChatId: currentId, asker: 'matt', text, targetId: chatAsk.chatId, hop: 1, threadOf: view.threadOf });
+    for (const a of chatAsks) askChat({ fromChatId: currentId, asker: 'matt', text: a.question, targetId: a.chatId, hop: 1, threadOf: view.threadOf });
     return;
   }
   const t = target(view);
@@ -1064,7 +1072,7 @@ function wireComposer(view) {
 // Launches a member with the chat so far and opens a bubble for its reply.
 // threadOf: the thread it answers in, or null for the main chat. extra
 // (background asks): side ({ chatId, messageId, hop }) when this reply answers
-// another chat; answer ({ chatTitle, text }) for an asker's follow-up; hop,
+// another chat; answer ({ chatTitle, text }, or a list of them) for an asker's follow-up; hop,
 // how many chats have asked each other so far in this chain.
 function ask(chatId, memberId, threadOf = null, { side = null, answer = null, hop = 0 } = {}) {
   const thread = chats.get(chatId).thread;
@@ -1170,10 +1178,13 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
     post(p.chatId, { from: 'system', threadOf, text: `${name} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
     api.log('warn', 'agent gave no reply', { runKey, code, why: why || null });
   } else {
-    // #chat asks another chat in the background; otherwise @ may hand off here.
-    const chatAsk = findChatMention(m.text, otherChats(p.chatId));
-    if (chatAsk) askChat({ fromChatId: p.chatId, asker: p.memberId, text: m.text, targetId: chatAsk.chatId, hop: (p.hop || 0) + 1, threadOf });
-    else handOff(p.chatId, m);
+    // #chat asks other chats in the background; otherwise @ may hand off
+    // here, unless this reply answers another chat's question (TM-57): an
+    // agent answering a background ask can't pull agents into its chat.
+    const chatAsks = splitChatAsks(m.text, otherChats(p.chatId));
+    const group = chatAsks.length > 1 ? { group: m.id, groupSize: chatAsks.length } : null;
+    for (const a of chatAsks) askChat({ fromChatId: p.chatId, asker: p.memberId, text: a.question, targetId: a.chatId, hop: (p.hop || 0) + 1, threadOf, group });
+    if (!chatAsks.length && !p.side) handOff(p.chatId, m);
   }
   // This reply answered another chat: settle that chat's ask.
   if (p.side) {

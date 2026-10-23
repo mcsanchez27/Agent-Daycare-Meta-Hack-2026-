@@ -408,3 +408,28 @@ test('mergeThreads keeps who left', () => {
   const m = mergeThreads(a, createThread([]));
   assert.deepEqual(m.members.map(x => Boolean(x.left)), [false, true, false]);
 });
+
+const { findChatMentions, splitChatAsks } = require('../src/renderer/thread');
+
+test('every #chat in a message is asked, in order, each once; several get their own part (TM-57)', () => {
+  const chats = [{ id: 'a', title: 'Codex solo' }, { id: 'b', title: 'Codex solo 1' }, { id: 'c', title: 'Codex solo 2' }];
+  assert.deepEqual(findChatMentions('#Codex solo 1 What is 2+2? #Codex solo 2 What is 3+3?', chats).map(f => f.chatId), ['b', 'c']);
+  assert.deepEqual(splitChatAsks('#Codex solo 1 What is 2+2? #Codex solo 2 What is 3+3?', chats), [
+    { chatId: 'b', question: '#Codex solo 1 What is 2+2?' },
+    { chatId: 'c', question: '#Codex solo 2 What is 3+3?' }
+  ]);
+  assert.deepEqual(splitChatAsks('Checking. #Codex solo what is 9*9?', chats), [{ chatId: 'a', question: 'Checking. #Codex solo what is 9*9?' }], 'one ask keeps the whole text');
+  assert.deepEqual(findChatMentions('#Codex solo hi, again #codex solo', chats).map(f => f.chatId), ['a'], 'once per chat');
+  assert.deepEqual(splitChatAsks('nothing here', chats), []);
+});
+
+test('a follow-up with several answers lists them all, and leaves the asks out of history', () => {
+  const t = createThread([{ id: 'm1', vendor: 'claude', model: null, name: 'Claude' }]);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'ask both' });
+  addMessage(t, { from: 'm1', text: '#One q1 #Two q2' });
+  addMessage(t, { from: 'system', text: 'asked One', side: { chatId: 'x', chatTitle: 'One', asker: 'm1', question: '#One q1', state: 'answered', answer: '4', hop: 1, group: 2, groupSize: 2 } });
+  addMessage(t, { from: 'system', text: 'asked Two', side: { chatId: 'y', chatTitle: 'Two', asker: 'm1', question: '#Two q2', state: 'answered', answer: '6', hop: 1, group: 2, groupSize: 2 } });
+  const p = buildPrompt(t, 'm1', { answer: [{ chatTitle: 'One', text: '4' }, { chatTitle: 'Two', text: '6' }] });
+  assert.ok(p.endsWith("The chats you asked answered:\n\n'One': 4\n\n'Two': 6\n\nFinish your reply to Matt."), p);
+  assert.ok(!p.includes('It answered: 4'), 'the answered asks are not repeated in history');
+});
