@@ -6,6 +6,11 @@
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
+## Saved teammates (TM-60 Batch 4)
+- **A saved agent is a persona.** `teammates(org)` in `org.js` = the six built-in `PERSONAS` plus `org.agents` from the Builder (`{ id, name, vendor, role, brainFile, mcp: [ids], skills: [files] }`, cleaned in `cleanOrg`). A member made from one carries `persona: <id>` (`newMember`, kept by `mergeThreads`); `personaIdOf` prefers it over the brain file.
+- **The Builder saves** (both the chooser's and Org Control's, "Save as a teammate" on by default): `saveTeammate(cfg)` adds the agent and turns its ticked skills and servers into assignments to it (`org.skills[file].personas`, `org.mcp[id].personas`), so the normal resolution gives them to every member made from it; the member is created with that persona id so it has them from its first turn. `removeTeammate` drops it and those assignment entries (Org Control → Agent Builder → Saved teammates).
+- **"+ New chat → Teammates…"** (was "Saved Personas") lists built-ins and saved agents; the "Give to" rows list both as targets. Both Builders also have a Skills grid.
+
 ## MCP directory wired (TM-60 Batch 3)
 - **The directory file moved:** `mcp-servers.json` now lives beside `config.json` (project root while developing, `userData` when packaged) and is git-ignored, because entries carry commands and may carry keys. Each entry is `{ id, name, description, command, args, env }` or `{ id, name, description, url, headers }`; `cleanServer` in `main.js` keeps only those fields. Handlers: `mcp:list`, `mcp:save`, `mcp:remove`, `mcp:cli-lists`.
 - **Assignment** uses the same model as skills: `org.mcp[serverId] = { all, engines, personas }`, plus `member.mcp` (ids picked for that member in the Agent Builder). `mcpFor` in `org.js` resolves a member's servers.

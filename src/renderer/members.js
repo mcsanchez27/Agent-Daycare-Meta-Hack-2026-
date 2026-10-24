@@ -42,7 +42,8 @@
   // the chat (case-insensitive): the vendor's name, else the model's label,
   // else the vendor's name with a number ("Claude 2").
   // mcp (TM-60 Batch 3): ids of MCP servers picked for this member in the Builder.
-  function newMember(members, { vendor, model = null, memory = null, role = null, name = null, brain = null, brainText = null, mcp = null }, { vendorNames = VENDOR_NAMES, modelLabel = null } = {}) {
+  // persona (TM-60 Batch 4): the id of the teammate (built-in persona or saved agent) this member was made from.
+  function newMember(members, { vendor, model = null, memory = null, role = null, name = null, brain = null, brainText = null, mcp = null, persona = null }, { vendorNames = VENDOR_NAMES, modelLabel = null } = {}) {
     if (!VENDORS.includes(vendor)) throw new Error(`Unknown vendor: ${vendor}`);
     const next = 1 + Math.max(0, ...members.map(m => /^m(\d+)$/.exec(m.id)).filter(Boolean).map(r => Number(r[1])));
     const taken = new Set(members.map(m => m.name.toLowerCase()));
@@ -55,6 +56,7 @@
     if (brain) member.brain = brain;
     if (brainText) member.brainText = brainText;
     if (Array.isArray(mcp) && mcp.length) member.mcp = mcp.filter(id => typeof id === 'string');
+    if (typeof persona === 'string' && persona) member.persona = persona;
     return member;
   }
 

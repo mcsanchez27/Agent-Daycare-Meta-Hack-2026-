@@ -18,10 +18,21 @@
     return FOLDER_FILES[vendor] || null;
   }
 
-  // The saved persona a member was made from, by its brain file, or null.
+  // The teammate (built-in persona or saved agent) a member was made from:
+  // its `persona` id when it has one (TM-60 Batch 4), else by brain file.
   function personaIdOf(member) {
+    if (member && member.persona) return member.persona;
     const hit = member && member.brain ? Object.values(PERSONAS).find(p => p.brainFile === member.brain) : null;
     return hit ? hit.id : null;
+  }
+
+  // Everyone that can be summoned or given things: the built-in personas,
+  // then the agents Matt saved from the Builder (org.agents). A saved agent
+  // is { id, name, vendor, role, brainFile, mcp: [ids], skills: [files] }.
+  function teammates(org) {
+    const builtIn = Object.values(PERSONAS).map(p => ({ id: p.id, name: p.name, vendor: p.vendor, role: p.role, brainFile: p.brainFile, color: p.color, builtIn: true }));
+    const saved = ((org && org.agents) || []).filter(a => !builtIn.some(b => b.id === a.id)).map(a => ({ ...a, builtIn: false }));
+    return [...builtIn, ...saved];
   }
 
   // How an assignment reaches { vendor, persona }: 'engine', 'persona' or null.
@@ -51,11 +62,12 @@
   }
 
   // "all agents", "Claude, Codex; Agent Smith" or "no one yet".
-  function describeAssignment(a, vendorNames = VENDOR_NAMES) {
+  function describeAssignment(a, vendorNames = VENDOR_NAMES, team = null) {
     if (!a) return 'no one yet';
     if (a.all === true) return 'all agents';
     const engines = (a.engines || []).map(v => vendorNames[v] || v);
-    const personas = (a.personas || []).map(id => (PERSONAS[id] ? PERSONAS[id].name : id));
+    const names = Object.fromEntries((team || Object.values(PERSONAS)).map(t => [t.id, t.name]));
+    const personas = (a.personas || []).map(id => names[id] || id);
     const text = [engines.join(', '), personas.join(', ')].filter(Boolean).join('; ');
     return text || 'no one yet';
   }
@@ -94,5 +106,5 @@
     return `${text.length}:${h.toString(16)}`;
   }
 
-  return { FOLDER_FILES, folderFile, personaIdOf, applies, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine };
+  return { FOLDER_FILES, folderFile, personaIdOf, teammates, applies, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine };
 });

@@ -80,3 +80,15 @@ test('MCP servers reach a member by assignment or its own pick; Claude gets a --
   assert.deepEqual(parseCommandLine('npx -y mcp-remote https://x/mcp --header "X-Goog-Api-Key: SECRET"'), { command: 'npx', args: ['-y', 'mcp-remote', 'https://x/mcp', '--header', 'X-Goog-Api-Key: SECRET'] });
   assert.deepEqual(parseCommandLine(''), { command: '', args: [] });
 });
+
+test('teammates are the built-in personas plus saved agents; a member knows its teammate (TM-60 Batch 4)', () => {
+  const { teammates, personaIdOf, describeAssignment } = require('../src/renderer/org');
+  const org = { agents: [{ id: 'scout-bot', name: 'Scout Bot', vendor: 'claude', role: '', brainFile: '', mcp: ['pdf'], skills: [] }, { id: 'smith', name: 'Dup', vendor: 'codex' }] };
+  const team = teammates(org);
+  assert.equal(team.filter(t => t.builtIn).length, 6);
+  assert.deepEqual(team.filter(t => !t.builtIn).map(t => t.id), ['scout-bot'], 'a saved agent never shadows a built-in id');
+  assert.equal(personaIdOf({ persona: 'scout-bot', brain: 'agent-smith.md' }), 'scout-bot', 'the persona id wins over the brain file');
+  assert.equal(personaIdOf({ brain: 'morpheus.md' }), 'morpheus');
+  assert.equal(describeAssignment({ personas: ['scout-bot', 'smith'] }, undefined, team), 'Scout Bot, Agent Smith');
+  assert.equal(teammates(null).length, 6);
+});

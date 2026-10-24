@@ -403,6 +403,21 @@ function cleanOrg(org) {
     const c = SERVER_ID.test(id) && cleanAssignment(a);
     if (c) clean.mcp[id] = c;
   }
+  // Saved teammates from the Agent Builder (Batch 4).
+  clean.agents = [];
+  for (const a of Array.isArray(org && org.agents) ? org.agents : []) {
+    if (!a || typeof a !== 'object') continue;
+    const id = str(a.id, 32).toLowerCase();
+    const name = str(a.name, 40);
+    if (!PERSONA_ID.test(id) || !name || !userConfig.AGENT_IDS.includes(a.vendor)) continue;
+    const brainFile = str(a.brainFile, 80);
+    clean.agents.push({
+      id, name, vendor: a.vendor, role: str(a.role, 20),
+      brainFile: SKILL_FILE.test(brainFile) ? brainFile : '',
+      mcp: (Array.isArray(a.mcp) ? a.mcp : []).filter(x => typeof x === 'string' && SERVER_ID.test(x)),
+      skills: (Array.isArray(a.skills) ? a.skills : []).filter(x => typeof x === 'string' && SKILL_FILE.test(x))
+    });
+  }
   return clean;
 }
 handle('org:get', async () => {
@@ -410,7 +425,7 @@ handle('org:get', async () => {
     return cleanOrg(JSON.parse(await fs.promises.readFile(orgFile, 'utf8')));
   } catch (err) {
     if (err.code !== 'ENOENT') logger.warn('app', 'org.json could not be read', { file: orgFile, error: err.message });
-    return { skills: {}, mcp: {} };
+    return { skills: {}, mcp: {}, agents: [] };
   }
 });
 handle('org:save', async ({ org }) => {

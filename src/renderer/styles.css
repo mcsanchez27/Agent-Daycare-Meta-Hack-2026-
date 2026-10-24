@@ -1646,3 +1646,4 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
 .org-inventory-badge[title] { cursor: help; }
 .toolbelt-library .library-item { overflow-wrap: anywhere; }
 .org-item-actions.wrap { flex-wrap: wrap; }
+.builder-save { margin-top: .4rem; }
