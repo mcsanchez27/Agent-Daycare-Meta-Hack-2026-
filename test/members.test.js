@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW, TOOLS } = require('../src/renderer/members');
+const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW } = require('../src/renderer/members');
 const { createThread, addMessage, buildPrompt } = require('../src/renderer/thread');
 
 test('newMember names: vendor, then model, then number', () => {
@@ -89,13 +89,13 @@ test('a crew (TM-59): Codex designs, Gemini does UI/UX, Claude engineers; each p
   assert.equal(newMember([], { vendor: 'claude', role: 'nonsense' }).role, undefined, 'unknown roles are dropped');
 });
 
-test('member tools: tools can be assigned to members and TOOLS catalog exists (TM-60 Batch 3)', () => {
-  assert.ok(TOOLS.bash && TOOLS.stitch && TOOLS.notion && TOOLS.github && TOOLS.write && TOOLS.web);
-  const m = newMember([], { vendor: 'claude', name: 'Agent Smith', tools: ['bash', 'notion', 'web'] });
-  assert.deepEqual(m.tools, ['bash', 'notion', 'web']);
+test('a member keeps the MCP server ids picked for it (TM-60 Batch 3)', () => {
+  const m = newMember([], { vendor: 'claude', name: 'Agent Smith', mcp: ['pdf', 7, 'github'] });
+  assert.deepEqual(m.mcp, ['pdf', 'github']);
+  assert.equal(newMember([], { vendor: 'claude', mcp: [] }).mcp, undefined);
 });
 
-test('all personas have corresponding brain files on disk and valid toolsets (TM-60 Batch 2 & 3)', () => {
+test('all personas have corresponding brain files on disk (TM-60 Batch 2)', () => {
   const fs = require('fs');
   const path = require('path');
   const { PERSONAS } = require('../src/renderer/members');
@@ -105,11 +105,10 @@ test('all personas have corresponding brain files on disk and valid toolsets (TM
     assert.ok(fs.existsSync(filePath), `Brain file not found: ${filePath}`);
     const content = fs.readFileSync(filePath, 'utf8');
     assert.ok(content.length > 50, `Brain file too short: ${p.brainFile}`);
-    assert.ok(Array.isArray(p.tools) && p.tools.length > 0, `${key} missing tools`);
   }
 });
 
-test('skills library and mcp catalog files exist on disk with valid structure (TM-60 Batch 5)', () => {
+test('skills library files exist on disk (TM-60 Batch 5; the MCP directory lives beside config.json now)', () => {
   const fs = require('fs');
   const path = require('path');
   const skillsDir = path.join(__dirname, '..', 'skills');
@@ -117,10 +116,4 @@ test('skills library and mcp catalog files exist on disk with valid structure (T
   const skillFiles = fs.readdirSync(skillsDir).filter(f => f.endsWith('.md'));
   assert.ok(skillFiles.length >= 4, `expected at least 4 skill playbooks, found ${skillFiles.length}`);
 
-  const mcpFile = path.join(__dirname, '..', 'mcp-servers.json');
-  assert.ok(fs.existsSync(mcpFile), 'mcp-servers.json must exist');
-  const mcps = JSON.parse(fs.readFileSync(mcpFile, 'utf8'));
-  assert.ok(Array.isArray(mcps) && mcps.length >= 4, 'mcp catalog must have servers');
-  assert.ok(mcps.some(s => s.name === 'StitchMCP'));
-  assert.ok(mcps.some(s => s.name === 'Notion MCP'));
 });

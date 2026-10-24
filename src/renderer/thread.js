@@ -258,7 +258,7 @@
       used += line.length;
     }
 
-    const parts = since === null ? [header] : (brainUpdate ? [`[Notice: Central Brain or Persona Chip updated on disk:\n${brainUpdate.trim()}]`] : []);
+    const parts = since === null ? [header] : (brainUpdate ? [`[Notice: your Central Brain, persona or skills changed. The current text:\n${brainUpdate.trim()}]`] : []);
     if (memory && since === null) parts.push(memory);
     if (history.length) parts.push((since === null ? 'Recent conversation:\n' : 'New in this chat since your last reply:\n') + history.join('\n\n'));
     if (answers && answers.length === 1) {
@@ -322,7 +322,7 @@
     const memberMaps = [a, b].map(t => {
       const map = {};
       for (const m of t.members) {
-        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null, brain: m.brain || null, brainText: m.brainText || null, tools: m.tools || null },{ vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null, brain: m.brain || null, brainText: m.brainText || null, mcp: m.mcp || null, persona: m.persona || null },{ vendorNames: { ...vendorNames, [m.vendor]: m.name } });
         if (m.left) fresh.left = true;
         members.push(fresh);
         map[m.id] = fresh.id;

@@ -488,6 +488,6 @@ test('buildPrompt in session resume mode injects brainUpdate notice when brain f
     since: m1.id,
     brainUpdate: '--- Central Brain Update ---\nUpdated MMS Doctrine: always add unit tests.'
   });
-  assert.ok(p.includes('[Notice: Central Brain or Persona Chip updated on disk:\n--- Central Brain Update ---\nUpdated MMS Doctrine: always add unit tests.]'));
+  assert.ok(p.includes('[Notice: your Central Brain, persona or skills changed. The current text:\n--- Central Brain Update ---\nUpdated MMS Doctrine: always add unit tests.]'));
   assert.ok(p.includes("Matt's message to you:\nsecond turn"));
 });

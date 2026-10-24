@@ -42,6 +42,12 @@ contextBridge.exposeInMainWorld('api', {
   // MCP Directory (TM-60 Batch 5)
   listMcps: () => ipcRenderer.invoke('mcp:list'),
   saveMcp: (server) => ipcRenderer.invoke('mcp:save', { server }),
+  removeMcp: (id) => ipcRenderer.invoke('mcp:remove', { id }),
+  listCliMcps: (fresh = false) => ipcRenderer.invoke('mcp:cli-lists', { fresh }),
+
+  // Org Control assignments: which skills each engine and persona gets (TM-60 Batch 2)
+  getOrg: () => ipcRenderer.invoke('org:get'),
+  saveOrg: (org) => ipcRenderer.invoke('org:save', { org }),
 
   // Logging (goes to logs/latest.log in the main process)
   log: (level, message, data) => ipcRenderer.send('log:write', { level, message, data }),

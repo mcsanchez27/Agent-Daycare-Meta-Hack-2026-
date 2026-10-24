@@ -391,3 +391,43 @@ test('tool steps (TM-59), from real CLI output: Claude tool_use, Codex item.star
   assert.deepEqual(parseEvent('antigravity', JSON.stringify({ event: 'result', result: { conversation_id: 'f16d456f-8b34-4734-b966-26d2f7b315ca', status: 'SUCCESS', response: 'banana', usage: { input_tokens: 23009, output_tokens: 272 } } })),
     { sessionId: 'f16d456f-8b34-4734-b966-26d2f7b315ca', text: 'banana', usage: { inputTokens: 23009, outputTokens: 272 } });
 });
+
+test('folder files (TM-60): only CLAUDE.md, AGENTS.md and GEMINI.md are written, into the chat folder', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { runner } = makeRunner();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-files-'));
+  runner.agents.claude.path = process.execPath;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("ok")'], stdin: null });
+  runner.workingDir = dir;
+  const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
+  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', files: { 'CLAUDE.md': '# brain', 'evil.md': 'no', '../up.md': 'no' } }), true);
+  await done;
+  assert.equal(fs.readFileSync(path.join(dir, 'c1', 'CLAUDE.md'), 'utf8'), '# brain');
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'c1')), ['CLAUDE.md']);
+  assert.ok(!fs.existsSync(path.join(dir, 'up.md')));
+});
+
+test('Claude gets its MCP servers as a private per-launch file, deleted after the run; others never (TM-60 Batch 3)', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { runner } = makeRunner();
+  const mcp = { mcpServers: { pdf: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-pdf', '--stdio'] } } };
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', null, null, '/tmp/x/mcp.json').args.slice(6, 8), ['--mcp-config', '/tmp/x/mcp.json'], 'right after --strict-mcp-config');
+  assert.ok(!runner._buildAgentArgs('claude', 'hi').args.includes('--mcp-config'), 'no file, no flag');
+  assert.ok(!runner._buildAgentArgs('codex', 'hi', null, null, 'x.json').args.includes('--mcp-config'));
+  // A real launch: the file holds the servers while the process runs and is gone after.
+  runner.agents.claude.path = process.execPath;
+  let seen = null;
+  runner._buildAgentArgs = (v, p, m, s, mcpPath) => { seen = mcpPath; return { args: ['-e', 'process.stdout.write("ok")'], stdin: null }; };
+  runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-mcp-test-'));
+  const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
+  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', mcp }), true);
+  assert.ok(seen && seen.endsWith('mcp.json') && !seen.startsWith(runner.workingDir), 'a temp file outside the chat folder');
+  assert.deepEqual(JSON.parse(fs.readFileSync(seen, 'utf8')), mcp);
+  await done;
+  await new Promise(r => setTimeout(r, 200));
+  assert.ok(!fs.existsSync(seen), 'deleted after the run');
+});

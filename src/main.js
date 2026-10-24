@@ -5,6 +5,7 @@ const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
 const userConfig = require('./config');
 const chats = require('./chats');
+const cliMcp = require('./cli-mcp');
 const { spellMenu } = require('./spellcheck');
 
 let mainWindow = null;
@@ -310,35 +311,128 @@ handle('skills:create', async ({ name, text }) => {
   return { file: fileName, text: initialText };
 });
 
-const mcpFile = path.join(__dirname, '..', 'mcp-servers.json');
-handle('mcp:list', async () => {
+// The MCP directory (TM-60 Batch 3): the servers Daycare knows, beside
+// config.json and git-ignored, since entries may carry commands and keys.
+// Each is { id, name, description, command, args, env } or { ..., url, headers }.
+const mcpFile = path.join(path.dirname(configFile), 'mcp-servers.json');
+const SERVER_ID = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+function cleanServer(s) {
+  if (!s || typeof s !== 'object') return null;
+  const name = str(s.name, 60);
+  const id = str(s.id, 40).toLowerCase() || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (!name || !SERVER_ID.test(id)) return null;
+  const out = { id, name, description: str(s.description, 300) };
+  const url = str(s.url, 500);
+  if (/^https?:\/\//.test(url)) {
+    out.url = url;
+    const headers = {};
+    for (const [k, v] of Object.entries(s.headers && typeof s.headers === 'object' ? s.headers : {})) if (/^[\w-]{1,60}$/.test(k) && typeof v === 'string') headers[k] = v.slice(0, 500);
+    if (Object.keys(headers).length) out.headers = headers;
+  } else {
+    out.command = str(s.command, 300);
+    if (!out.command) return null;
+    out.args = (Array.isArray(s.args) ? s.args : []).filter(a => typeof a === 'string').slice(0, 40).map(a => a.slice(0, 500));
+    const env = {};
+    for (const [k, v] of Object.entries(s.env && typeof s.env === 'object' ? s.env : {})) if (/^[A-Z0-9_]{1,60}$/.test(k) && typeof v === 'string') env[k] = v.slice(0, 500);
+    if (Object.keys(env).length) out.env = env;
+  }
+  return out;
+}
+async function readServers() {
   try {
-    const raw = await fs.promises.readFile(mcpFile, 'utf8');
-    return JSON.parse(raw);
-  } catch (_) {
+    const list = JSON.parse(await fs.promises.readFile(mcpFile, 'utf8'));
+    return (Array.isArray(list) ? list : []).map(cleanServer).filter(Boolean);
+  } catch (err) {
+    if (err.code !== 'ENOENT') logger.warn('app', 'mcp-servers.json could not be read', { file: mcpFile, error: err.message });
     return [];
   }
+}
+async function writeServers(list) {
+  // Owner-only where the OS honours it (macOS, Linux); on Windows the file
+  // sits in Matt's own profile under its normal per-user access, like
+  // config.json. Keys would be safer in the OS keychain: a Batcave job.
+  await fs.promises.writeFile(mcpFile, JSON.stringify(list, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  return list;
+}
+handle('mcp:list', () => readServers());
+handle('mcp:save', async ({ server }) => {
+  const clean = cleanServer(server);
+  if (!clean) throw new Error('A server needs a name and a command or an http(s) URL');
+  const list = (await readServers()).filter(s => s.id !== clean.id);
+  list.push(clean);
+  logger.info('app', 'mcp server saved', { id: clean.id });
+  return writeServers(list);
+});
+handle('mcp:remove', async ({ id }) => {
+  const list = (await readServers()).filter(s => s.id !== id);
+  logger.info('app', 'mcp server removed', { id });
+  return writeServers(list);
+});
+// What Gemini, Codex and Grok already have, from their own `mcp list`;
+// cached briefly since each call runs three CLIs.
+let cliMcpCache = null;
+handle('mcp:cli-lists', async ({ fresh = false } = {}) => {
+  if (!fresh && cliMcpCache && Date.now() - cliMcpCache.at < 60000) return cliMcpCache.lists;
+  const lists = await cliMcp.readCliMcpLists();
+  cliMcpCache = { at: Date.now(), lists };
+  return lists;
 });
 
-handle('mcp:save', async ({ server }) => {
-  try {
-    let list = [];
-    try {
-      const raw = await fs.promises.readFile(mcpFile, 'utf8');
-      list = JSON.parse(raw);
-    } catch (_) {}
-    const idx = list.findIndex(s => s.id === server.id || s.name === server.name);
-    if (idx >= 0) {
-      list[idx] = { ...list[idx], ...server };
-    } else {
-      list.push({ ...server, id: server.id || server.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') });
-    }
-    await fs.promises.writeFile(mcpFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
-    return list;
-  } catch (err) {
-    logger.warn('app', 'failed to save mcp config', { error: err.message });
-    throw err;
+// Org Control assignments (TM-60 Batch 2): which skills each engine and
+// saved persona gets. Beside config.json, git-ignored; created on first save.
+const orgFile = path.join(path.dirname(configFile), 'org.json');
+const SKILL_FILE = /^[\w.-]+\.md$/;
+const PERSONA_ID = /^[a-z0-9-]{1,32}$/;
+function cleanAssignment(a) {
+  if (!a || typeof a !== 'object') return null;
+  return {
+    all: a.all === true,
+    engines: (Array.isArray(a.engines) ? a.engines : []).filter(v => userConfig.AGENT_IDS.includes(v)),
+    personas: (Array.isArray(a.personas) ? a.personas : []).filter(p => typeof p === 'string' && PERSONA_ID.test(p))
+  };
+}
+// skills are keyed by file, MCP servers (Batch 3) by server id.
+function cleanOrg(org) {
+  const clean = { skills: {}, mcp: {} };
+  for (const [file, a] of Object.entries((org && org.skills) || {})) {
+    const c = SKILL_FILE.test(file) && cleanAssignment(a);
+    if (c) clean.skills[file] = c;
   }
+  for (const [id, a] of Object.entries((org && org.mcp) || {})) {
+    const c = SERVER_ID.test(id) && cleanAssignment(a);
+    if (c) clean.mcp[id] = c;
+  }
+  // Saved teammates from the Agent Builder (Batch 4).
+  clean.agents = [];
+  for (const a of Array.isArray(org && org.agents) ? org.agents : []) {
+    if (!a || typeof a !== 'object') continue;
+    const id = str(a.id, 32).toLowerCase();
+    const name = str(a.name, 40);
+    if (!PERSONA_ID.test(id) || !name || !userConfig.AGENT_IDS.includes(a.vendor)) continue;
+    const brainFile = str(a.brainFile, 80);
+    clean.agents.push({
+      id, name, vendor: a.vendor, role: str(a.role, 20),
+      brainFile: SKILL_FILE.test(brainFile) ? brainFile : '',
+      mcp: (Array.isArray(a.mcp) ? a.mcp : []).filter(x => typeof x === 'string' && SERVER_ID.test(x)),
+      skills: (Array.isArray(a.skills) ? a.skills : []).filter(x => typeof x === 'string' && SKILL_FILE.test(x))
+    });
+  }
+  return clean;
+}
+handle('org:get', async () => {
+  try {
+    return cleanOrg(JSON.parse(await fs.promises.readFile(orgFile, 'utf8')));
+  } catch (err) {
+    if (err.code !== 'ENOENT') logger.warn('app', 'org.json could not be read', { file: orgFile, error: err.message });
+    return { skills: {}, mcp: {}, agents: [] };
+  }
+});
+handle('org:save', async ({ org }) => {
+  const clean = cleanOrg(org);
+  await fs.promises.writeFile(orgFile, JSON.stringify(clean, null, 2) + '\n');
+  logger.info('app', 'org assignments saved', { skills: Object.keys(clean.skills).length });
+  return clean;
 });
 
 // Saved chats (TM-53 Batch 2)

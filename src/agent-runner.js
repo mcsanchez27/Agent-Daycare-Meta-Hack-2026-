@@ -2,6 +2,7 @@ const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { CHAT_ID } = require('./chats');
 const { StringDecoder } = require('string_decoder');
 
@@ -120,6 +121,9 @@ const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'So
 const GROK_MODELS = [{ id: 'grok-4.6', label: 'grok-4.6' }, { id: 'grok-4.5', label: 'grok-4.5' }];
 // grok's prompt goes in this file in the chat folder (see _buildAgentArgs).
 const PROMPT_FILE = '.daycare-prompt.txt';
+// The Central Brain and skills reach Claude, Codex and Gemini as the file each
+// reads from its folder on its own (TM-60 Batch 2). Only these names are written.
+const FOLDER_FILES = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md'];
 
 // `agy models` prints a header, then one "id<TAB>label" line per model.
 function parseAgyModels(text) {
@@ -312,7 +316,7 @@ class AgentRunner {
   // runKey (`<chatId>/<memberId>`, TM-54) names the run: events carry it, and
   // Stop and the timeout act on it alone, so two members of one vendor can
   // answer at once. model is the vendor's model id, or null for its default.
-  run({ runKey, vendor, model = null, sessionId = null, prompt = '' }) {
+  run({ runKey, vendor, model = null, sessionId = null, prompt = '', files = null, mcp = null }) {
     const agent = this.agents[vendor];
     if (!agent) throw new Error(`Agent ${vendor} not found`);
     const p = String(prompt || '').trim();
@@ -336,8 +340,17 @@ class AgentRunner {
 
     const exe = this._getExecutable(agent);
     const workingDir = this.chatFolder(runKey);
-    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId);
+    let mcpPath = null;
+    if (vendor === 'claude' && mcp && mcp.mcpServers && Object.keys(mcp.mcpServers).length) {
+      mcpPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-mcp-')), 'mcp.json');
+      fs.writeFileSync(mcpPath, JSON.stringify(mcp), { mode: 0o600, flag: 'wx' });
+    }
+    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId, mcpPath);
     if (promptFile !== null) fs.writeFileSync(path.join(workingDir, PROMPT_FILE), promptFile);
+    for (const [name, text] of Object.entries(files || {})) {
+      if (FOLDER_FILES.includes(name) && typeof text === 'string') fs.writeFileSync(path.join(workingDir, name), text);
+      else this.log.warn(vendor, 'refused folder file', { run, runKey, name });
+    }
     this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, promptFile, cwd: workingDir });
 
     const cmd = launchCommand(exe, args);
@@ -351,6 +364,7 @@ class AgentRunner {
     if (!child) return false;
     Object.assign(child, ctx);
     if (promptFile !== null) child.promptPath = path.join(workingDir, PROMPT_FILE);
+    if (mcpPath) child.mcpPath = mcpPath;
 
     this.processes.set(runKey, child);
     // Timeout (TM-53): a reply that takes too long is stopped like Stop.
@@ -395,14 +409,19 @@ class AgentRunner {
   // Output (TM-55): each CLI's JSON, read by parseEvent, so the reply's
   // session can be resumed. sessionId resumes that session; codex's resume
   // takes no --sandbox, so the same setting goes in as -c.
-  _buildAgentArgs(vendor, p, model = null, sessionId = null) {
+  // mcpPath (TM-60 Batch 3): a per-launch file holding Claude's MCP servers
+  // ({ mcpServers }), written by run() in a private temp folder and deleted
+  // when the run ends, so no key sits on the command line, in the log or
+  // in the chat folder. Only Claude takes servers per launch.
+  _buildAgentArgs(vendor, p, model = null, sessionId = null, mcpPath = null) {
     const m = model ? ['-m', model] : [];
+    const mcpArgs = vendor === 'claude' && mcpPath ? ['--mcp-config', mcpPath] : [];
     if (vendor === 'codex' && sessionId) return { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...m, sessionId, '-'], stdin: p };
     if (vendor === 'codex') return { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...m, '-'], stdin: p };
     const flag = model ? ['--model', model] : [];
     // Lean Claude (TM-59): Matt's own plugins, hooks and MCP servers stay out
     // (about 66k tokens a launch down to 37k). Its login is unaffected.
-    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', ...mcpArgs, '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
     // grok (TM-60): one turn from a prompt file in the chat folder (see run):
     // its npm shim goes through cmd.exe, which a prompt on the command line
     // would not survive. Output is Claude-shaped streaming JSON. Tools are
@@ -500,6 +519,7 @@ class AgentRunner {
     child.on('close', (code) => {
       clearTimeout(child.timer);
       if (child.promptPath) fs.unlink(child.promptPath, () => {});
+      if (child.mcpPath) fs.rm(path.dirname(child.mcpPath), { recursive: true, force: true }, () => {});
       if (this.processes.get(runKey) === child) this.processes.delete(runKey);
       stdoutSink.flush();
       stderrSink.flush();

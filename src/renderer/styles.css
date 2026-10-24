@@ -1632,3 +1632,18 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
 
 /* Org Control is a full-size overlay; without this it covered the chat even when hidden (TM-60 review). */
 .org-control[hidden] { display: none; }
+
+/* Skill assignments (TM-60 Batch 2) */
+.assign-row { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .5rem; margin: .5rem 0 .2rem; }
+.assign-label { font-size: .75rem; color: var(--muted); margin-right: .2rem; }
+.assign-box { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .55rem; border: 1px solid var(--line); border-radius: 999px; font-size: .78rem; cursor: pointer; }
+.assign-box.all { border-color: #2563eb; }
+.assign-box.persona { border-style: dashed; }
+.assign-box.muted { opacity: .45; }
+.assign-box input { margin: 0; }
+
+/* MCP Directory (TM-60 Batch 3) */
+.org-inventory-badge[title] { cursor: help; }
+.toolbelt-library .library-item { overflow-wrap: anywhere; }
+.org-item-actions.wrap { flex-wrap: wrap; }
+.builder-save { margin-top: .4rem; }
