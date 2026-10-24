@@ -6,7 +6,7 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./members'));
   else root.ChatThread = factory(root.ChatMembers);
-})(typeof self !== 'undefined' ? self : this, function ({ VENDORS, VENDOR_NAMES, newMember }) {
+})(typeof self !== 'undefined' ? self : this, function ({ VENDORS, VENDOR_NAMES, ROLES, newMember }) {
   const ENDINGS = ['stopped', 'timed out'];
   const TITLE_LENGTH = 40;
 
@@ -28,7 +28,10 @@
   // an app note, records a background ask this chat made
   // ({ chatId, chatTitle, asker, question, state, hop, answer? }).
   // Returns the new message, or throws on bad input.
-  function addMessage(thread, { from, to = null, text, relayOf = null, endedAs = null, threadOf = null, handoff = null, guest = null, side = null }) {
+  // What an agent did while it answered (TM-59), kept with its reply.
+  const MAX_STEPS = 50;
+
+  function addMessage(thread, { from, to = null, text, relayOf = null, endedAs = null, threadOf = null, handoff = null, guest = null, side = null, steps = null }) {
     const body = String(text == null ? '' : text).trim();
     if (!body) throw new Error('A message needs text');
     if (from !== 'matt' && from !== 'system' && from !== 'guest' && !isMember(thread, from)) {
@@ -58,6 +61,7 @@
     if (relayOf) message.relayOf = relayOf;
     if (threadOf !== null) message.threadOf = threadOf;
     if (handoff) message.handoff = { from: handoff.from, to: handoff.to };
+    if (Array.isArray(steps) && steps.length && isMember(thread, from)) message.steps = steps.slice(-MAX_STEPS).map(String);
     if (endedAs !== null) {
       if (!isMember(thread, from) || !ENDINGS.includes(endedAs)) throw new Error(`Bad ending: ${endedAs}`);
       message.endedAs = endedAs;
@@ -155,6 +159,12 @@
   // Agents bringing each other in stops after this many hops until Matt says
   // something in the thread.
   const HOP_LIMIT = 3;
+  // A crew (agents with roles, TM-59) passes work along more: brief, design,
+  // build, a question back. It gets more handoffs in a row before Matt.
+  const CREW_HOP_LIMIT = 6;
+  function hopLimit(thread) {
+    return (thread.members || []).some(m => m.role && !m.left) ? CREW_HOP_LIMIT : HOP_LIMIT;
+  }
 
   function hopsSinceMatt(thread, rootId) {
     let hops = 0;
@@ -199,9 +209,12 @@
     const who = `You are ${me.name} (${me.vendor}, model ${me.model || 'default'})`;
     // Agents Matt removed (TM-57, `left`) aren't in the room any more.
     const here = members.filter(m => !m.left);
-    const intro = here.length === 1
+    // Roles (TM-59): each agent knows its own brief and who does what.
+    const roleOf = (m) => (m.role && ROLES[m.role] ? ROLES[m.role] : null);
+    const intro = (here.length === 1
       ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
-      : `${who}, one of ${here.length} AI agents (${list(here.map(m => m.name))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `;
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring another agent in, write @Name in your reply; only do that when you need it to act, since every @ launches it (not to thank or agree). `) +
+      (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '');
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
       (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
@@ -301,7 +314,7 @@
     const memberMaps = [a, b].map(t => {
       const map = {};
       for (const m of t.members) {
-        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null }, { vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null },{ vendorNames: { ...vendorNames, [m.vendor]: m.name } });
         if (m.left) fresh.left = true;
         members.push(fresh);
         map[m.id] = fresh.id;
@@ -336,5 +349,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
+  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
 });

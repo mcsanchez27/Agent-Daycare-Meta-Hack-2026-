@@ -1,6 +1,8 @@
 const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
+const path = require('path');
+const { CHAT_ID } = require('./chats');
 const { StringDecoder } = require('string_decoder');
 
 const execFileAsync = promisify(execFile);
@@ -29,6 +31,28 @@ const MAX_PENDING = 4 * 1024 * 1024;
 // One line of a CLI's JSON output (TM-55) as what the app needs from it:
 // { text?, sessionId?, usage?: { inputTokens, outputTokens, contextWindow? },
 // plan? (Claude only: 5-hour and 7-day use) }, or null for anything else.
+// One line saying what a tool call does (TM-59): "Reading note.txt",
+// "Running npm test". Each CLI names its tools and arguments differently.
+function describeTool(name, params = {}) {
+  const p = params && typeof params === 'object' ? params : {};
+  const short = (s, n = 70) => { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+  const file = p.file_path || p.path || p.Path || p.AbsolutePath || p.TargetFile || p.FilePath || p.notebook_path;
+  const base = file ? String(file).split(/[\\/]/).pop() : null;
+  const command = p.command || p.CommandLine;
+  const n = String(name || 'a tool');
+  if (command) {
+    // Codex wraps commands as powershell.exe -Command '...'; show the inside.
+    const inner = /-Command\s+'([\s\S]*)'\s*$/.exec(String(command));
+    return `Running ${short(inner ? inner[1] : command)}`;
+  }
+  if (/^(read|view_file|read_file)/i.test(n)) return base ? `Reading ${base}` : 'Reading a file';
+  if (/^(write|write_to_file|create)/i.test(n)) return base ? `Writing ${base}` : 'Writing a file';
+  if (/edit|replace/i.test(n)) return base ? `Editing ${base}` : 'Editing a file';
+  if (/glob|grep|search|find|list_dir/i.test(n)) return `Searching${p.pattern || p.query || p.Query ? ` for ${short(p.pattern || p.query || p.Query, 50)}` : ''}`;
+  if (/web|fetch|url/i.test(n)) return `Looking up ${short(p.url || p.query || p.Url || 'the web', 60)}`;
+  return `Using ${short(n, 50)}`;
+}
+
 function parseEvent(vendor, line) {
   let j;
   try { j = JSON.parse(line); } catch (_) { return null; }
@@ -37,7 +61,9 @@ function parseEvent(vendor, line) {
     if (j.type === 'system' && j.subtype === 'init') return sessionOk(j.session_id) ? { sessionId: j.session_id } : null;
     if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
       const text = j.message.content.filter(c => c.type === 'text').map(c => c.text).join('');
-      return text ? { text } : null;
+      const steps = j.message.content.filter(c => c.type === 'tool_use').map(c => describeTool(c.name, c.input));
+      if (!text && !steps.length) return null;
+      return { ...(text ? { text } : {}), ...(steps.length ? { steps } : {}) };
     }
     if (j.type === 'result') {
       const u = j.usage || {};
@@ -56,9 +82,29 @@ function parseEvent(vendor, line) {
   if (vendor === 'codex') {
     if (j.type === 'thread.started') return sessionOk(j.thread_id) ? { sessionId: j.thread_id } : null;
     if (j.type === 'item.completed' && j.item && j.item.type === 'agent_message' && j.item.text) return { text: j.item.text };
+    if (j.type === 'item.started' && j.item) {
+      const it = j.item;
+      if (it.type === 'command_execution') return { steps: [describeTool('command', { command: it.command })] };
+      if (it.type === 'file_change') {
+        const files = (Array.isArray(it.changes) ? it.changes : []).map(c => String(c.path || '').split(/[\\/]/).pop()).filter(Boolean);
+        return { steps: [files.length ? `Editing ${files.join(', ')}` : 'Editing files'] };
+      }
+      if (it.type === 'mcp_tool_call') return { steps: [`Using ${[it.server, it.tool].filter(Boolean).join(' ') || 'a tool'}`] };
+      if (it.type === 'web_search') return { steps: [`Searching the web${it.query ? ` for ${String(it.query).slice(0, 50)}` : ''}`] };
+    }
     if (j.type === 'turn.completed' && j.usage) return { usage: { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 } };
     return null;
   }
+  // agy --output-format stream-json (TM-59): init, step_update, result.
+  if (j.event === 'init' && j.conversation_id) return sessionOk(j.conversation_id) ? { sessionId: j.conversation_id } : null;
+  if (j.event === 'step_update' && j.step_update && j.step_update.step_type === 'tool') {
+    const s = j.step_update;
+    const what = describeTool(s.tool_name || (s.tool_info && s.tool_info.name), s.tool_info && s.tool_info.parameters);
+    if (s.state === 'ACTIVE') return { steps: [what] };
+    if (s.state === 'ERROR') return { steps: [`${what} (failed${/denied permission/i.test(JSON.stringify(s.tool_info && s.tool_info.error || '')) ? ': not allowed' : ''})`] };
+    return null;
+  }
+  if (j.event === 'result' && j.result) j = j.result;
   if (j.conversation_id || j.response) {
     const out = {};
     if (sessionOk(j.conversation_id)) out.sessionId = j.conversation_id;
@@ -284,7 +330,7 @@ class AgentRunner {
     if (this.processes.has(runKey)) this.stop(runKey);
 
     const exe = this._getExecutable(agent);
-    const workingDir = this.workingDir || process.cwd();
+    const workingDir = this.chatFolder(runKey);
     const { args, stdin } = this._buildAgentArgs(vendor, p, model, sessionId);
     this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, cwd: workingDir });
 
@@ -312,6 +358,17 @@ class AgentRunner {
     return true;
   }
 
+  // Each chat works in a folder of its own inside the working folder (TM-59),
+  // named by its id, so a crew owns its project files. Created on first use.
+  chatFolder(runKey) {
+    const base = this.workingDir || process.cwd();
+    const chatId = String(runKey || '').split('/')[0];
+    if (!CHAT_ID.test(chatId)) return base;
+    const dir = path.join(base, chatId);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
   _getExecutable(agent) {
     return resolveExecutable(agent);
   }
@@ -320,8 +377,13 @@ class AgentRunner {
   // its prompt from stdin ("-") so the prompt never passes through cmd.exe
   // when Codex is an npm codex.cmd shim.
   // Access (TM-53): every agent may write inside the working folder without
-  // asking. Claude: acceptEdits. Codex: the workspace-write sandbox.
-  // Antigravity: --mode accept-edits. A model (TM-54) adds the vendor's model
+  // asking, and run commands (TM-59). Claude: acceptEdits plus Bash and
+  // PowerShell; on Windows its commands start in the chat folder but aren't
+  // fenced in (no Claude sandbox there). Codex: the workspace-write sandbox.
+  // Antigravity: --mode accept-edits, with --sandbox (blocks writes outside
+  // the folder, tested) and --dangerously-skip-permissions (headless agy
+  // otherwise denies every command).
+  // A model (TM-54) adds the vendor's model
   // flag; null leaves the CLI on its default.
   // Output (TM-55): each CLI's JSON, read by parseEvent, so the reply's
   // session can be resumed. sessionId resumes that session; codex's resume
@@ -331,9 +393,11 @@ class AgentRunner {
     if (vendor === 'codex' && sessionId) return { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...m, sessionId, '-'], stdin: p };
     if (vendor === 'codex') return { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...m, '-'], stdin: p };
     const flag = model ? ['--model', model] : [];
-    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    // Lean Claude (TM-59): Matt's own plugins, hooks and MCP servers stay out
+    // (about 66k tokens a launch down to 37k). Its login is unaffected.
+    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
     // antigravity (agy): -p takes the next word as the prompt, so it goes last
-    return { args: ['--mode', 'accept-edits', '--output-format', 'json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
+    return { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }
 
   _spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin = null) {
@@ -371,13 +435,19 @@ class AgentRunner {
 
     // stdout is JSON, one event per line (TM-55): the reply text goes to the
     // window as it comes; the session id and usage ride along on agent:done.
-    // agy prints one envelope at the end, possibly over several lines.
+    // Tool calls go to the window as steps (TM-59). agy runs as stream-json,
+    // one event per line like the others; a leftover that isn't JSON at the
+    // end is shown as text.
     child.meta = {};
     let pendingLine = '';
     const take = (line) => {
       const ev = parseEvent(vendor, line);
       if (!ev) return false;
-      if (ev.text) this.emitOutput(child, ev.text);
+      // Each CLI sends its messages whole ("I'll check…", tools, then the
+      // answer), so they get a blank line between them.
+      if (ev.text) this.emitOutput(child, (child.saidSomething ? '\n\n' : '') + ev.text);
+      if (ev.text) child.saidSomething = true;
+      if (ev.steps) for (const step of ev.steps) this._send('agent:step', { runKey, vendor, run, step });
       if (ev.sessionId) child.meta.sessionId = ev.sessionId;
       if (ev.usage) child.meta.usage = { ...child.meta.usage, ...ev.usage };
       if (ev.plan) child.meta.plan = ev.plan;
@@ -388,8 +458,7 @@ class AgentRunner {
         stdoutSink.push(data);
         const lines = (pendingLine + stdoutDecoder.write(data)).split('\n');
         pendingLine = lines.pop();
-        if (vendor !== 'antigravity') lines.forEach(take);
-        else if (lines.length) pendingLine = lines.concat(pendingLine).join('\n');
+        lines.forEach(take);
         if (pendingLine.length > MAX_PENDING) {
           this.log.warn(vendor, 'output too large to read as JSON, shown as text', { run, runKey, bytes: pendingLine.length });
           this.emitOutput(child, pendingLine);

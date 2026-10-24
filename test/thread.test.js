@@ -433,3 +433,23 @@ test('a follow-up with several answers lists them all, and leaves the asks out o
   assert.ok(p.endsWith("The chats you asked answered:\n\n'One': 4\n\n'Two': 6\n\nFinish your reply to Matt."), p);
   assert.ok(!p.includes('It answered: 4'), 'the answered asks are not repeated in history');
 });
+
+test('a reply keeps its steps (TM-59); notes and Matt never do', () => {
+  const t = createThread(V1());
+  addMessage(t, { from: 'matt', to: 'claude', text: 'go', steps: ['x'] });
+  const r = addMessage(t, { from: 'claude', text: 'done', steps: Array.from({ length: 60 }, (_, i) => `step ${i}`) });
+  assert.equal(r.steps.length, 50);
+  assert.equal(r.steps[49], 'step 59', 'the newest are kept');
+  assert.equal(t.messages[0].steps, undefined);
+  assert.equal(addMessage(t, { from: 'claude', text: 'no tools', steps: [] }).steps, undefined);
+});
+
+test('a crew gets 6 handoffs in a row before Matt, other chats 3 (TM-59)', () => {
+  const { hopLimit } = require('../src/renderer/thread');
+  const { newMember: nm, CREW } = require('../src/renderer/members');
+  const crew = [];
+  for (const c of CREW) crew.push(nm(crew, c));
+  assert.equal(hopLimit(createThread(crew)), 6);
+  assert.equal(hopLimit(createThread(V1())), 3);
+  assert.equal(hopLimit(createThread(crew.map(m => ({ ...m, left: true })))), 3, 'only agents still in the chat count');
+});

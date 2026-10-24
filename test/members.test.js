@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { newMember, ensureMembers, renameRetired, memberById, VENDORS } = require('../src/renderer/members');
+const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW } = require('../src/renderer/members');
 const { createThread, addMessage, buildPrompt } = require('../src/renderer/thread');
 
 test('newMember names: vendor, then model, then number', () => {
@@ -74,4 +74,17 @@ test('saved members named Antigravity become Gemini (TM-57), unless the name is 
   assert.deepEqual(renameRetired(t).members.map(m => m.name), ['Gemini', 'Gemini 2', 'Scout', 'Antigravity']);
   const clash = { members: [{ id: 'm1', vendor: 'claude', name: 'Gemini' }, { id: 'm2', vendor: 'antigravity', name: 'Antigravity' }] };
   assert.deepEqual(renameRetired(clash).members.map(m => m.name), ['Gemini', 'Antigravity']);
+});
+
+test('a crew (TM-59): Codex designs, Gemini does UI/UX, Claude engineers; each prompt carries its role', () => {
+  const members = [];
+  for (const c of CREW) members.push(newMember(members, c));
+  assert.deepEqual(members.map(m => [m.id, m.name, m.role]), [['m1', 'Codex', 'design'], ['m2', 'Gemini', 'uiux'], ['m3', 'Claude', 'engineering']]);
+  const t = createThread(members);
+  addMessage(t, { from: 'matt', to: 'm2', text: 'design the screen' });
+  const p = buildPrompt(t, 'm2');
+  assert.match(p, /one of 3 AI agents \(Codex \(Design\), Gemini \(UI\/UX\) and Claude \(Engineering\)\)/);
+  assert.ok(p.includes(`Your role: UI/UX. ${ROLES.uiux.brief}`), p);
+  assert.match(ROLES.uiux.brief, /Stitch/);
+  assert.equal(newMember([], { vendor: 'claude', role: 'nonsense' }).role, undefined, 'unknown roles are dropped');
 });

@@ -16,8 +16,8 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, HOP_LIMIT } = window.ChatThread;
-const { VENDORS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
+const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
+const { VENDORS, ROLES, CREW, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -26,6 +26,7 @@ const vendors = {}; // vendor -> { id, name, color } from config.json
 let models = null; // vendor -> [{ id, label }], from api.listModels()
 const chats = new Map(); // id -> { id, title, createdAt, updatedAt, thread? } (thread once loaded)
 let currentId = null;
+let workingDir = null; // from config.json; each chat works in <workingDir>\<chat id> (TM-59)
 // runKey -> the reply being streamed: { chatId, memberId, threadOf, text, stderr, started }.
 // One per member: each member runs one process at a time.
 const pending = {};
@@ -152,6 +153,19 @@ function createChat(vendor, model, modelLabel) {
   showChat(chat.id);
 }
 
+// "New crew" (TM-59): Codex designs, Gemini does UI/UX, Claude engineers,
+// each on its default model, in one chat with its own folder.
+function createCrew() {
+  const now = new Date().toISOString();
+  const members = [];
+  for (const c of CREW) members.push(newMember(members, c, { vendorNames: vendorNames() }));
+  const chat = { id: newChatId(), title: 'New chat', createdAt: now, updatedAt: now, thread: createThread(members) };
+  chats.set(chat.id, chat);
+  hideChooser();
+  showChat(chat.id);
+  api.log('info', 'crew created', { chatId: chat.id, members: members.map(m => `${m.vendor}:${m.role}`) });
+}
+
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
 // ({ title, name, text } from another chat), name (keep this name if it's
 // free), fromTitle (for the note), threadOf (where the note goes).
@@ -218,6 +232,8 @@ async function openChat(id) {
 function showChat(id) {
   currentId = id;
   closePanel();
+  // Each chat's agents work in a folder of their own (TM-59).
+  if (workingDir) el.folder.textContent = `Working folder: ${workingDir}\\${id}`;
   renderChatList();
   renderMembers();
   renderView(main);
@@ -344,8 +360,9 @@ function renderMembers() {
     const chip = document.createElement('span');
     chip.className = 'member' + (working ? ' working' : '');
     chip.style.setProperty('--agent-color', vendors[m.vendor] ? vendors[m.vendor].color : '#888');
-    chip.textContent = `${m.name} · ${modelText(m)}` + (working ? ' · working…' : '');
-    chip.title = `${vendorName(m.vendor)}, ${modelText(m)}` + (m.memory ? `, with background from "${m.memory.title}"` : '');
+    const role = m.role && ROLES[m.role];
+    chip.textContent = `${m.name} · ${role ? `${role.label} · ` : ''}${modelText(m)}` + (working ? ' · working…' : '');
+    chip.title = `${vendorName(m.vendor)}, ${modelText(m)}` + (m.memory ? `, with background from "${m.memory.title}"` : '') + (role ? `\nRole: ${role.brief}` : '');
     // Context meter (TM-55): what its last reply used. Only Claude says how
     // big its window is; the others show tokens.
     const u = m.usage;
@@ -492,11 +509,14 @@ function showChooser(mode = 'new', vendor = null) {
   } else if (!vendor) {
     h.textContent = mode === 'new' ? 'Who do you want to talk to?' : 'Add which agent to this chat?';
     for (const v of VENDORS) option(vendorName(v), null, vendors[v] && vendors[v].color, () => showChooser(mode, v));
+    if (mode === 'new') {
+      option('Crew', CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), null, createCrew);
+    }
     if (mode === 'add' && chats.size > 1) option('From another chat…', 'brings that chat as background', null, () => showChooser('from'));
   } else {
     const color = vendors[vendor] && vendors[vendor].color;
     h.textContent = `Which ${vendorName(vendor)} model?`;
-    option('Default', `whatever ${vendor} uses by default`, color, () => pick(vendor, null, null));
+    option('Default', `whatever ${vendorName(vendor)} uses by default`, color, () => pick(vendor, null, null));
     const list = (models && models[vendor]) || [];
     for (const m of list) option(m.label, m.id, color, () => pick(vendor, m.id, m.label));
     if (vendor === 'antigravity' && models && !list.length) {
@@ -734,6 +754,7 @@ function renderMessage(view, m) {
   }
   const { row } = createRow(view, m.from, metaText, m.text);
   row.dataset.id = m.id;
+  if (m.steps && m.steps.length) addSteps(row, m.steps);
   if (view === panel && m.id === panel.threadOf) row.classList.add('root');
   if (view === main && m.from !== 'system') {
     addActions(row, [{ label: 'Thread', title: 'Open a thread on this message beside the chat', onClick: () => openPanel(m.id) }]);
@@ -831,10 +852,42 @@ function updatePendingMeta(key) {
   const p = pending[key];
   const r = pendingRows[key];
   if (!p || !r) return;
-  // Antigravity can take ~30s, so the wait shows a seconds counter.
-  r.meta.textContent = p.text
-    ? `${nameOf(p.memberId)} · replying…`
-    : `${nameOf(p.memberId)} · thinking… ${Math.round((Date.now() - p.started) / 1000)}s`;
+  // Antigravity can take ~30s, so the wait shows a seconds counter, and
+  // what the agent is doing right now (TM-59) once it uses a tool.
+  const secs = `${Math.round((Date.now() - p.started) / 1000)}s`;
+  const now = p.steps.length ? p.steps[p.steps.length - 1] : null;
+  r.meta.textContent = p.text && !now ? `${nameOf(p.memberId)} · replying…`
+    : now ? `${nameOf(p.memberId)} · ${now} · ${secs}`
+    : `${nameOf(p.memberId)} · thinking… ${secs}`;
+  if (p.steps.length) {
+    if (!r.steps) {
+      r.steps = document.createElement('ol');
+      r.steps.className = 'steps live';
+      r.bubble.after(r.steps);
+    }
+    // The last few, newest at the bottom; the reply keeps all of them.
+    r.steps.replaceChildren(...p.steps.slice(-4).map(t => Object.assign(document.createElement('li'), { textContent: t })));
+  }
+}
+
+// An agent used a tool (TM-59): "Reading note.txt", "Running npm test".
+function onStep({ runKey, step }) {
+  const p = pending[runKey];
+  if (!p || !step) return;
+  p.steps.push(step);
+  updatePendingMeta(runKey);
+}
+
+// What an agent did while it answered, folded under its reply.
+function addSteps(row, steps) {
+  const d = document.createElement('details');
+  d.className = 'steps';
+  const s = document.createElement('summary');
+  s.textContent = `${steps.length} step${steps.length === 1 ? '' : 's'}`;
+  const ol = document.createElement('ol');
+  ol.replaceChildren(...steps.map(t => Object.assign(document.createElement('li'), { textContent: t })));
+  d.append(s, ol);
+  row.querySelector('.bubble').after(d);
 }
 
 setInterval(() => Object.keys(pendingRows).forEach(updatePendingMeta), 1000);
@@ -857,7 +910,7 @@ function addActions(row, buttons) {
 
 // A member's finished reply that names another agent with @ brings it in,
 // in the same place (the main chat or the thread it is in). An agent not in
-// the chat joins on its default model. After HOP_LIMIT handoffs in a row
+// the chat joins on its default model. After hopLimit (3, or 6 in a crew) handoffs in a row
 // there, Matt has to say something first.
 function handOff(chatId, m) {
   const chat = chats.get(chatId);
@@ -867,8 +920,9 @@ function handOff(chatId, m) {
   const name = (id) => nameOf(id, chat);
   const toName = target.memberId ? name(target.memberId) : vendorName(target.vendor);
   const hops = hopsSinceMatt(chat.thread, where);
-  if (hops >= HOP_LIMIT) {
-    post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} asked for ${toName}, but the agents have handed off ${HOP_LIMIT} times in a row. Reply here to keep going.` });
+  const limit = hopLimit(chat.thread);
+  if (hops >= limit) {
+    post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} asked for ${toName}, but the agents have handed off ${limit} times in a row. Reply here to keep going.` });
     api.log('info', 'hop limit reached', { chatId, where, from: m.from, to: target });
     return;
   }
@@ -1087,7 +1141,7 @@ function ask(chatId, memberId, threadOf = null, { side = null, answer = null, ho
   const prompt = buildPrompt(thread, memberId, { threadOf, answer, chatTitles, since: session ? session.lastId : null });
   const runKey = runKeyOf(chatId, memberId);
   pending[runKey] = {
-    chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', started: Date.now(),
+    chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(),
     where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1
   };
   if (chatId === currentId) {
@@ -1163,7 +1217,7 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
   const threadOf = p.threadOf || null;
   let m = null;
   if (reply) {
-    m = post(p.chatId, { from: p.memberId, text: reply, endedAs: stopped ? 'stopped' : timedOut ? 'timed out' : null, threadOf });
+    m = post(p.chatId, { from: p.memberId, text: reply, endedAs: stopped ? 'stopped' : timedOut ? 'timed out' : null, threadOf, steps: p.steps });
   }
   if (timedOut) {
     post(p.chatId, { from: 'system', threadOf, text: `${name} took longer than ${durationLabel(timeoutSec)} and was stopped.` + (reply ? ' Its reply so far is above.' : '') + ' The limit is timeoutSec in config.json.' });
@@ -1175,7 +1229,8 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
     const reason = why || (notFound ? `the app couldn't find ${name}. Check its path in config.json`
       : code === 0 ? 'it finished without saying anything' : `it exited with code ${code}`);
     const detail = p.stderr.trim().split(/\r?\n/).slice(-3).join('\n');
-    post(p.chatId, { from: 'system', threadOf, text: `${name} didn't reply: ${reason}.` + (detail ? `\n${detail}` : '') });
+    const lastStep = p.steps.length ? `\nIts last step: ${p.steps[p.steps.length - 1]}.` : '';
+    post(p.chatId, { from: 'system', threadOf, text: `${name} didn't reply: ${reason}.` + lastStep + (detail ? `\n${detail}` : '') });
     api.log('warn', 'agent gave no reply', { runKey, code, why: why || null });
   } else {
     // #chat asks other chats in the background; otherwise @ may hand off
@@ -1213,6 +1268,7 @@ el.addAgent.addEventListener('click', () => showChooser('add'));
 el.panelClose.addEventListener('click', () => { closePanel(); main.input.focus(); });
 
 api.onAgentOutput(onOutput);
+api.onAgentStep(onStep);
 api.onAgentDone(({ runKey, code, ...outcome }) => finishReply(runKey, code, null, outcome));
 api.onNotice(({ text }) => { if (current()) post(currentId, { from: 'system', text }); });
 
@@ -1228,7 +1284,8 @@ async function init() {
   }).catch((err) => api.log('warn', 'could not list models', { error: err.message }));
 
   const { config } = await api.getConfig();
-  el.folder.textContent = `Working folder: ${config.workingDir}`;
+  workingDir = config.workingDir;
+  el.folder.textContent = `Working folder: ${workingDir}`;
 
   const { chats: saved } = await api.listChats();
   for (const s of saved) chats.set(s.id, { ...s });
