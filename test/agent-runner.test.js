@@ -391,3 +391,20 @@ test('tool steps (TM-59), from real CLI output: Claude tool_use, Codex item.star
   assert.deepEqual(parseEvent('antigravity', JSON.stringify({ event: 'result', result: { conversation_id: 'f16d456f-8b34-4734-b966-26d2f7b315ca', status: 'SUCCESS', response: 'banana', usage: { input_tokens: 23009, output_tokens: 272 } } })),
     { sessionId: 'f16d456f-8b34-4734-b966-26d2f7b315ca', text: 'banana', usage: { inputTokens: 23009, outputTokens: 272 } });
 });
+
+test('folder files (TM-60): only CLAUDE.md, AGENTS.md and GEMINI.md are written, into the chat folder', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { runner } = makeRunner();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-files-'));
+  runner.agents.claude.path = process.execPath;
+  runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("ok")'], stdin: null });
+  runner.workingDir = dir;
+  const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
+  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', files: { 'CLAUDE.md': '# brain', 'evil.md': 'no', '../up.md': 'no' } }), true);
+  await done;
+  assert.equal(fs.readFileSync(path.join(dir, 'c1', 'CLAUDE.md'), 'utf8'), '# brain');
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'c1')), ['CLAUDE.md']);
+  assert.ok(!fs.existsSync(path.join(dir, 'up.md')));
+});

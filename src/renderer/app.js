@@ -18,6 +18,7 @@
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
 const { VENDORS, ROLES, CREW, PERSONAS, TOOLS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
+const { folderFile, personaIdOf, skillsFor, folderText, describeAssignment, textSig } = window.ChatOrg;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -679,6 +680,21 @@ function renderToolbelt() {
     chipStatus.textContent = '● Attached';
     chipItem.append(chipName, chipStatus);
     caps.appendChild(chipItem);
+
+    // The skills this member gets (TM-60 Batch 2), looked up after the card draws.
+    const skillsItem = document.createElement('div');
+    skillsItem.className = 'toolbelt-cap-item';
+    const skillsName = document.createElement('span');
+    skillsName.className = 'toolbelt-cap-name';
+    skillsName.textContent = '⚡ Skills: …';
+    skillsItem.appendChild(skillsName);
+    caps.appendChild(skillsItem);
+    Promise.all([api.getOrg(), api.listSkills()]).then(([org, skills]) => {
+      const mine = skillsFor({ vendor: m.vendor, persona: personaIdOf(m) }, skills || [], (org && org.skills) || {});
+      const names = [...mine.engine, ...mine.persona].map(s => s.title);
+      const how = folderFile(m.vendor) ? `via ${folderFile(m.vendor)}` : 'in the prompt';
+      skillsName.textContent = `⚡ Skills: ${names.length ? `${names.join(', ')} (${how})` : 'none'}`;
+    }).catch(() => { skillsName.textContent = '⚡ Skills: unknown'; });
 
     const memberTools = Array.isArray(m.tools) && m.tools.length ? m.tools : ['bash', 'write'];
     for (const tId of memberTools) {
@@ -1684,7 +1700,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   const runKey = runKeyOf(chatId, memberId);
   const p = pending[runKey] = {
     chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(),
-    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1, resolvedBrainMtime: 0
+    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1, brainSig: ''
   };
   if (chatId === currentId) {
     openViews().forEach(renderPendingRows);
@@ -1698,38 +1714,40 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   let centralBrain = null;
   let personaChip = null;
   let brainUpdate = null;
-  let resolvedBrainMtime = 0;
+  let files = null;
   try {
     const resolved = await api.resolveBrains({ personaFile: member.brain });
-    if (resolved) {
-      if (resolved.central) {
-        centralBrain = resolved.central.text;
-        resolvedBrainMtime = Math.max(resolvedBrainMtime, resolved.central.mtime || 0);
-      }
-      if (resolved.persona) {
-        personaChip = resolved.persona.text;
-        resolvedBrainMtime = Math.max(resolvedBrainMtime, resolved.persona.mtime || 0);
-      }
-      // If resuming an existing session, check if brain files were updated on disk since last run
-      // A session that never saw the brains (brainMtime 0, or saved before
-      // they could be read) catches up here with the full text.
-      if (session && resolvedBrainMtime > (session.brainMtime || 0)) {
-        const notices = [];
-        if (resolved.central && resolved.central.mtime > (session.brainMtime || 0)) {
-          notices.push(`--- Central Brain Update ---\n${resolved.central.text.trim()}`);
-        }
-        if (resolved.persona && resolved.persona.mtime > (session.brainMtime || 0)) {
-          notices.push(`--- Persona Chip (${resolved.persona.file}) Update ---\n${resolved.persona.text.trim()}`);
-        }
-        if (notices.length) brainUpdate = notices.join('\n\n');
-      }
-    }
+    if (resolved && resolved.central) centralBrain = resolved.central.text;
+    if (resolved && resolved.persona) personaChip = resolved.persona.text;
   } catch (err) {
     api.log('warn', 'brain resolution failed', { error: err.message });
   }
 
+  // Skills (TM-60 Batch 2): the Central Brain and the engine's skills go into
+  // the chat folder as the file this CLI reads on its own; persona skills
+  // ride in the prompt. Grok has no such file, so it keeps both in the prompt.
+  try {
+    const [org, skills] = await Promise.all([api.getOrg(), api.listSkills()]);
+    const mine = skillsFor({ vendor: member.vendor, persona: personaIdOf(member) }, skills || [], (org && org.skills) || {});
+    const file = folderFile(member.vendor);
+    if (file) {
+      files = { [file]: folderText(centralBrain, mine.engine) };
+      centralBrain = null;
+    } else if (mine.engine.length) {
+      centralBrain = `${centralBrain || ''}\n\n${mine.engine.map(s => s.text.trim()).join('\n\n')}`;
+    }
+    if (mine.persona.length) personaChip = `${personaChip || ''}\n\n${mine.persona.map(s => s.text.trim()).join('\n\n')}`;
+  } catch (err) {
+    api.log('warn', 'skills resolution failed', { error: err.message });
+  }
   if (pending[runKey] !== p) return; // stopped or replaced while the brains were read
-  p.resolvedBrainMtime = resolvedBrainMtime; // 0 when no brain file could be read
+  // What rides in this agent's prompt header (the folder file carries the
+  // rest). A resumed session only saw the header once, so when this text
+  // differs from what the session last got (an edit, a new skill, or a
+  // session from before the brains worked), the launch carries it again.
+  const promptBrain = [centralBrain, personaChip].filter(Boolean).join('\n\n');
+  p.brainSig = promptBrain ? textSig(promptBrain) : '';
+  if (session && promptBrain && p.brainSig !== (session.brainSig || '')) brainUpdate = promptBrain;
   const prompt = buildPrompt(thread, memberId, {
     threadOf,
     answer,
@@ -1740,7 +1758,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
     brainUpdate
   });
 
-  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: p.sessionId, prompt }).then((started) => {
+  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: p.sessionId, prompt, files }).then((started) => {
     if (started === false) finishReply(runKey, null, 'it could not be started');
   }).catch((err) => finishReply(runKey, null, err.message));
 }
@@ -1800,7 +1818,7 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
   if (member && sessionId && !stopped && !timedOut) {
     member.sessions = {
       ...(member.sessions || {}),
-      [p.where]: { id: sessionId, lastId: p.seenUpTo, brainMtime: p.resolvedBrainMtime || 0 }
+      [p.where]: { id: sessionId, lastId: p.seenUpTo, brainSig: p.brainSig || '' }
     };
   }
   if (member && usage) member.usage = { ...usage, at: new Date().toISOString() };
@@ -2208,6 +2226,44 @@ async function renderOrgMcps(panel) {
   panel.appendChild(grid);
 }
 
+// Tick boxes for an assignment: "All agents", then each engine and each saved
+// persona. onChange gets the new { all, engines, personas }.
+function assignmentRow(current, onChange) {
+  const a = { all: Boolean(current && current.all), engines: [...((current && current.engines) || [])], personas: [...((current && current.personas) || [])] };
+  const row = document.createElement('div');
+  row.className = 'assign-row';
+  const label = document.createElement('span');
+  label.className = 'assign-label';
+  label.textContent = 'Give to';
+  row.appendChild(label);
+  const boxes = [];
+  const box = (text, checked, onToggle, cls = '') => {
+    const l = document.createElement('label');
+    l.className = 'assign-box' + (cls ? ` ${cls}` : '');
+    const c = document.createElement('input');
+    c.type = 'checkbox';
+    c.checked = checked;
+    c.addEventListener('change', () => { onToggle(c.checked); sync(); onChange({ ...a }); });
+    const t = document.createElement('span');
+    t.textContent = text;
+    l.append(c, t);
+    row.appendChild(l);
+    boxes.push({ c, l });
+    return c;
+  };
+  const allBox = box('All agents', a.all, (on) => { a.all = on; }, 'all');
+  const engineBoxes = VENDORS.map(v => box(vendorName(v), a.engines.includes(v), (on) => {
+    a.engines = on ? [...new Set([...a.engines, v])] : a.engines.filter(x => x !== v);
+  }));
+  const personaBoxes = Object.values(PERSONAS).map(p => box(p.name, a.personas.includes(p.id), (on) => {
+    a.personas = on ? [...new Set([...a.personas, p.id])] : a.personas.filter(x => x !== p.id);
+  }, 'persona'));
+  // With "All agents" on, the single boxes don't matter, so they grey out.
+  const sync = () => { for (const c of [...engineBoxes, ...personaBoxes]) { c.disabled = allBox.checked; c.closest('label').classList.toggle('muted', allBox.checked); } };
+  sync();
+  return row;
+}
+
 async function renderOrgSkills(panel) {
   const topCard = document.createElement('div');
   topCard.className = 'org-section-card';
@@ -2223,7 +2279,7 @@ async function renderOrgSkills(panel) {
 
   const topDesc = document.createElement('p');
   topDesc.className = 'org-item-desc';
-  topDesc.textContent = 'Operational playbooks and specialized skills catalog for Mountain Man Studios. Editable playbooks provide standard operating procedures for specialized workflows.';
+  topDesc.textContent = "Drop a .md into skills/ (or add one below) and say who gets it. An engine's skills, with the Central Brain, are written into each chat's folder as the file that CLI reads on its own (CLAUDE.md, AGENTS.md for Codex, GEMINI.md) before every launch; a persona's skills go into that agent's prompt; Grok gets everything in its prompt.";
   topCard.append(topHead, topDesc);
   panel.appendChild(topCard);
 
@@ -2264,8 +2320,10 @@ async function renderOrgSkills(panel) {
   grid.className = 'org-grid-2';
 
   let skills = [];
+  let org = { skills: {} };
   try {
-    skills = await api.listSkills();
+    [skills, org] = await Promise.all([api.listSkills(), api.getOrg()]);
+    org = org || { skills: {} };
   } catch (_) {}
 
   for (const s of skills) {
@@ -2281,7 +2339,18 @@ async function renderOrgSkills(panel) {
 
     const sDesc = document.createElement('div');
     sDesc.className = 'org-item-desc';
-    sDesc.textContent = `Playbook file: skills/${s.file}`;
+    const given = (a) => `Playbook file: skills/${s.file} · given to: ${describeAssignment(a, vendorNames())}`;
+    sDesc.textContent = given((org.skills || {})[s.file]);
+    // Who gets this skill (TM-60 Batch 2): everyone, or chosen engines and personas.
+    const assign = assignmentRow((org.skills || {})[s.file], async (a) => {
+      org.skills = { ...(org.skills || {}), [s.file]: a };
+      try {
+        org = await api.saveOrg(org);
+        sDesc.textContent = given((org.skills || {})[s.file]);
+      } catch (err) {
+        sDesc.textContent = `Could not save: ${err.message}`;
+      }
+    });
 
     const editorBox = document.createElement('textarea');
     editorBox.className = 'org-textarea';
@@ -2326,7 +2395,7 @@ async function renderOrgSkills(panel) {
     });
 
     actions.append(toggleEditBtn, saveSkillBtn);
-    sCard.append(sHead, sDesc, editorBox, actions);
+    sCard.append(sHead, sDesc, assign, editorBox, actions);
     grid.appendChild(sCard);
   }
   panel.appendChild(grid);

@@ -120,6 +120,9 @@ const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'So
 const GROK_MODELS = [{ id: 'grok-4.6', label: 'grok-4.6' }, { id: 'grok-4.5', label: 'grok-4.5' }];
 // grok's prompt goes in this file in the chat folder (see _buildAgentArgs).
 const PROMPT_FILE = '.daycare-prompt.txt';
+// The Central Brain and skills reach Claude, Codex and Gemini as the file each
+// reads from its folder on its own (TM-60 Batch 2). Only these names are written.
+const FOLDER_FILES = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md'];
 
 // `agy models` prints a header, then one "id<TAB>label" line per model.
 function parseAgyModels(text) {
@@ -312,7 +315,7 @@ class AgentRunner {
   // runKey (`<chatId>/<memberId>`, TM-54) names the run: events carry it, and
   // Stop and the timeout act on it alone, so two members of one vendor can
   // answer at once. model is the vendor's model id, or null for its default.
-  run({ runKey, vendor, model = null, sessionId = null, prompt = '' }) {
+  run({ runKey, vendor, model = null, sessionId = null, prompt = '', files = null }) {
     const agent = this.agents[vendor];
     if (!agent) throw new Error(`Agent ${vendor} not found`);
     const p = String(prompt || '').trim();
@@ -338,6 +341,10 @@ class AgentRunner {
     const workingDir = this.chatFolder(runKey);
     const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId);
     if (promptFile !== null) fs.writeFileSync(path.join(workingDir, PROMPT_FILE), promptFile);
+    for (const [name, text] of Object.entries(files || {})) {
+      if (FOLDER_FILES.includes(name) && typeof text === 'string') fs.writeFileSync(path.join(workingDir, name), text);
+      else this.log.warn(vendor, 'refused folder file', { run, runKey, name });
+    }
     this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, promptFile, cwd: workingDir });
 
     const cmd = launchCommand(exe, args);

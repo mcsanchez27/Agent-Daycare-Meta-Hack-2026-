@@ -258,7 +258,7 @@
       used += line.length;
     }
 
-    const parts = since === null ? [header] : (brainUpdate ? [`[Notice: Central Brain or Persona Chip updated on disk:\n${brainUpdate.trim()}]`] : []);
+    const parts = since === null ? [header] : (brainUpdate ? [`[Notice: your Central Brain, persona or skills changed. The current text:\n${brainUpdate.trim()}]`] : []);
     if (memory && since === null) parts.push(memory);
     if (history.length) parts.push((since === null ? 'Recent conversation:\n' : 'New in this chat since your last reply:\n') + history.join('\n\n'));
     if (answers && answers.length === 1) {

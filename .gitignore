@@ -8,3 +8,4 @@ chats/
 
 .env
 .env.local
+org.json

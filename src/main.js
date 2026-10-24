@@ -341,6 +341,38 @@ handle('mcp:save', async ({ server }) => {
   }
 });
 
+// Org Control assignments (TM-60 Batch 2): which skills each engine and
+// saved persona gets. Beside config.json, git-ignored; created on first save.
+const orgFile = path.join(path.dirname(configFile), 'org.json');
+const SKILL_FILE = /^[\w.-]+\.md$/;
+const PERSONA_ID = /^[a-z0-9-]{1,32}$/;
+function cleanOrg(org) {
+  const clean = { skills: {} };
+  for (const [file, a] of Object.entries((org && org.skills) || {})) {
+    if (!SKILL_FILE.test(file) || !a || typeof a !== 'object') continue;
+    clean.skills[file] = {
+      all: a.all === true,
+      engines: (Array.isArray(a.engines) ? a.engines : []).filter(v => userConfig.AGENT_IDS.includes(v)),
+      personas: (Array.isArray(a.personas) ? a.personas : []).filter(p => typeof p === 'string' && PERSONA_ID.test(p))
+    };
+  }
+  return clean;
+}
+handle('org:get', async () => {
+  try {
+    return cleanOrg(JSON.parse(await fs.promises.readFile(orgFile, 'utf8')));
+  } catch (err) {
+    if (err.code !== 'ENOENT') logger.warn('app', 'org.json could not be read', { file: orgFile, error: err.message });
+    return { skills: {} };
+  }
+});
+handle('org:save', async ({ org }) => {
+  const clean = cleanOrg(org);
+  await fs.promises.writeFile(orgFile, JSON.stringify(clean, null, 2) + '\n');
+  logger.info('app', 'org assignments saved', { skills: Object.keys(clean.skills).length });
+  return clean;
+});
+
 // Saved chats (TM-53 Batch 2)
 handle('chats:list', async () => {
   const r = await chats.list(chatsDir);
