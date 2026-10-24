@@ -15,7 +15,7 @@
     // Work passes between them as files in the chat's folder (TM-59 Batch 4).
     design: { label: 'Design', brief: "You lead design and brainstorming: shape the idea with Matt, push back on weak ideas, and write the brief to brief.md in this chat's folder (goal, users, features, what's out of scope). Then hand the screens to the UI/UX agent with @Name." },
     uiux: { label: 'UI/UX', brief: "You own the user interface and experience: design the screens from brief.md in Stitch (your StitchMCP tools). Save each screen's HTML from Stitch into this chat's folder under design/, with design/NOTES.md describing layout, colours and behaviour. Then hand it to the engineer with @Name, naming the files." },
-    engineering: { label: 'Engineering', brief: "You build it: write the code in this chat's folder from brief.md and the files in design/, run it or test it, and say plainly what works and what doesn't. Ask the UI/UX or design agent with @Name if something is unclear." }
+    engineering: { label: 'Engineering', brief: "You build it: write the code in this chat's folder from brief.md and the files in design/, run it or test it, and say plainly what works and what doesn't. Keep your code, tests and any scratch files in this chat's folder. Files in design/ come from Stitch: read them as reference, never run or import them. Ask the UI/UX or design agent with @Name if something is unclear." }
   };
   // "New crew": one chat with all three, the designer first (it answers Matt
   // by default).

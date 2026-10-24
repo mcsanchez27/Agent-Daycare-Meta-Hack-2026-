@@ -213,7 +213,7 @@
     const roleOf = (m) => (m.role && ROLES[m.role] ? ROLES[m.role] : null);
     const intro = (here.length === 1
       ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
-      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring another agent in, write @Name in your reply. `) +
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring another agent in, write @Name in your reply; only do that when you need it to act, since every @ launches it (not to thank or agree). `) +
       (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '');
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +

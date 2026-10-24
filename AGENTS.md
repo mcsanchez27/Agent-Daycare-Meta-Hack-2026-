@@ -23,6 +23,14 @@
 - **Names:** `agents.<vendor>.name` in `config.json` is the vendor's display name, the default name for new chat members (TM-54). Each chat member has its own `name`, used everywhere for that member: header chips, bubbles, @, handoff markers and prompts.
 - **Gemini (TM-57 Batch 1):** the `antigravity` vendor is shown as "Gemini" (the models the `agy` CLI runs). The vendor id stays `antigravity` in code, config keys and chat files. A `config.json` name still "Antigravity" becomes "Gemini" on load (`RETIRED_NAMES` in `config.js`), and saved members named "Antigravity" or "Antigravity N" are renamed when a chat opens (`renameRetired` in `members.js`). Old message text is not rewritten.
 
+## Crew run and command access (TM-59 Batch 4)
+- **Commands:** Claude gets `--allowedTools Bash,PowerShell`; agy gets `--sandbox --dangerously-skip-permissions`; Codex keeps its `workspace-write` sandbox. Matt approved this for the crew flow on 2026-10-23.
+- A chat with roles allows 6 handoffs in a row before Matt (`hopLimit` in `thread.js`; others 3). `config.json` timeouts were raised to 900s on Matt's PC.
+- Role briefs hand work over as files: `brief.md` (design), `design/*.html` + `design/NOTES.md` from Stitch (UI/UX), then the code (engineering, told to keep everything in the chat folder and never run files from `design/`). Group prompts say to @ only when another agent must act.
+- Every CLI's separate messages get a blank line between them.
+- **Proven 2026-10-23:** a crew built the habit tracker (brief → 3 Stitch screens + notes → `index.html` with 39 passing headless-Chrome checks) in 14.8 minutes, 4 handoffs, no help.
+- **Known limits (Batcave must solve these, not Daycare):** on Windows, Claude's commands aren't fenced (it wrote test files in a temp folder outside the chat folder; an outside write was tested and went through). agy's `--sandbox` blocks writes outside the folder (tested) but not reads: Gemini read `~/.gemini/antigravity-cli/mcp/`, which holds the Stitch API key. Anything an agent reads (guest messages, Stitch output, web pages) can steer what it runs. Real isolation needs a container or a separate Windows user.
+
 ## Live tool steps (TM-59 Batch 3)
 - `parseEvent` turns tool calls into `steps` ("Reading note.txt", "Running npm test", "… (failed: not allowed)") via `describeTool`: Claude `tool_use` blocks, Codex `item.started` (command_execution, file_change, mcp_tool_call, web_search), agy `step_update` (ACTIVE, ERROR). The runner sends each as `agent:step` (`onAgentStep` in preload).
 - **agy now runs with `--output-format stream-json`** (one event per line: `init` has the conversation id, `result` the reply and usage). The old one-envelope `json` parsing is still accepted.

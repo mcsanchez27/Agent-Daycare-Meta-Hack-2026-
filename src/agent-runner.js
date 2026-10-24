@@ -443,9 +443,9 @@ class AgentRunner {
     const take = (line) => {
       const ev = parseEvent(vendor, line);
       if (!ev) return false;
-      // Codex sends each message whole ("I'll check…", then the answer), so
-      // they get a blank line between them; the others stream one reply.
-      if (ev.text) this.emitOutput(child, (vendor === 'codex' && child.saidSomething ? '\n\n' : '') + ev.text);
+      // Each CLI sends its messages whole ("I'll check…", tools, then the
+      // answer), so they get a blank line between them.
+      if (ev.text) this.emitOutput(child, (child.saidSomething ? '\n\n' : '') + ev.text);
       if (ev.text) child.saidSomething = true;
       if (ev.steps) for (const step of ev.steps) this._send('agent:step', { runKey, vendor, run, step });
       if (ev.sessionId) child.meta.sessionId = ev.sessionId;
