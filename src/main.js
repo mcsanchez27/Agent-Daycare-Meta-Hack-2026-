@@ -108,14 +108,29 @@ function createWindow() {
   // Links and window.open from the page (the preview's ↗, Notion links) go to
   // the system browser, never to a new window that carries this app's bridge
   // (TM-60 review): a page an agent wrote must not get window.api.
+  // Only http(s) links, or .html files inside the agents' working folder,
+  // ever open; any other scheme (ms-settings:, file: to an .exe) is dropped.
+  const openOutside = (url) => {
+    let u;
+    try { u = new URL(url); } catch (_) { return logger.warn('app', 'blocked link', { url }); }
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      return shell.openExternal(url).catch((err) => logger.warn('app', 'could not open link', { url, error: err.message }));
+    }
+    if (u.protocol === 'file:') {
+      const file = path.resolve(decodeURIComponent(u.pathname.replace(/^\/([A-Za-z]:)/, '$1')));
+      const root = config ? path.resolve(config.workingDir) + path.sep : null;
+      if (root && file.startsWith(root) && /\.html?$/i.test(file)) return shell.openPath(file);
+    }
+    logger.warn('app', 'blocked link', { url });
+  };
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url).catch((err) => logger.warn('app', 'could not open link', { url, error: err.message }));
+    openOutside(url);
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url === mainWindow.webContents.getURL()) return;
     event.preventDefault();
-    shell.openExternal(url).catch(() => {});
+    openOutside(url);
   });
 
   mainWindow.on('closed', () => {
