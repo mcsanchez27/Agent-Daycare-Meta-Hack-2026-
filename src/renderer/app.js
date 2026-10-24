@@ -673,16 +673,16 @@ const NOTION_TICKETS = {
     status: 'In Progress',
     priority: 'P1 High',
     assignee: 'Matt Sanchez',
-    desc: 'Collects all test cases for V3.1, V4 crew flow, tool steps, vendor sessions, threads, Calm UI, agent builder and toolbelt.',
+    desc: 'Consolidated test pass for V3.1–V4, Calm UI, agent builder and toolbelt.',
     url: 'https://app.notion.com/p/Agent-Daycare-Windows-test-pass-V3-1-V4-40263104ef7881419817c02646db0615',
     tasks: [
-      { text: 'Verify obsidian palette & floating composer', done: true },
-      { text: 'Verify session sidecar context gauges & plan meters', done: true },
-      { text: 'Verify Agent Builder with brain presets & engine selection', done: true },
-      { text: 'Verify Grok CLI 4th vendor streaming & resume', done: true },
-      { text: 'Verify expandable sidecar inspector tabs (Session, Preview, Toolbelt)', done: true },
-      { text: 'Verify native Notion glance card & live HTML webview', done: true },
-      { text: 'Verify Toolbelt checklist during custom agent forging', done: true }
+      { text: 'Flight 1: Calm Obsidian Shell & Sidecar Inspector (Tabs, ⤢ 55vw toggle, capsule composer)', done: false },
+      { text: 'Flight 2: Saved Personas & Agent Builder (Gallery, custom forge, brain presets, toolbelt checklist)', done: false },
+      { text: 'Flight 3: Live Notion Glance & Webview Sandbox (Calm Notion card, live index.html iframe)', done: false },
+      { text: 'Flight 4: 4-Engine Roster Ping (Gemini, Claude, Codex, Grok streaming check)', done: false },
+      { text: 'Flight 5: Autonomous Crew Collaboration (Design → UI/UX → Engineering handoff with live tool steps)', done: false },
+      { text: 'Flight 6: Team Management & Debug Maintenance (Member × remove / @ rejoin, Delete all chats purge)', done: false }
+    ]
     ]
   },
   'TM-60': {
