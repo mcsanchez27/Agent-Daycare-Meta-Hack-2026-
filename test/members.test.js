@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW } = require('../src/renderer/members');
+const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW, TOOLS } = require('../src/renderer/members');
 const { createThread, addMessage, buildPrompt } = require('../src/renderer/thread');
 
 test('newMember names: vendor, then model, then number', () => {
@@ -13,7 +13,7 @@ test('newMember names: vendor, then model, then number', () => {
   assert.deepEqual(members.map(m => m.name), ['Claude', 'Opus', 'Claude 2', 'Sonnet', 'Claude 3']);
   assert.deepEqual(members.map(m => m.id), ['m1', 'm2', 'm3', 'm4', 'm5']);
   assert.equal(members[2].model, null);
-  assert.throws(() => newMember(members, { vendor: 'grok' }), /Unknown vendor/);
+  assert.throws(() => newMember(members, { vendor: 'deepseek' }), /Unknown vendor/);
 });
 
 test('a renamed vendor gives new members its name; memory is kept', () => {
@@ -49,7 +49,7 @@ test('one-on-one header names the vendor and model', () => {
   addMessage(t, { from: 'matt', to: 'm1', text: 'hi' });
   const p = buildPrompt(t, 'm1');
   assert.ok(p.startsWith('You are Claude (claude, model opus), chatting one-on-one with Matt.'), p);
-  assert.match(p, /@Gemini, @Claude or @Codex/);
+  assert.match(p, /@Gemini, @Claude, @Codex or @Grok/);
 });
 
 test('group header lists the members', () => {
@@ -61,7 +61,7 @@ test('group header lists the members', () => {
   assert.match(p, /^You are Haiku \(claude, model haiku\)/);
   assert.match(p, /Claude and Haiku/);
   assert.ok(!p.includes('one-on-one'));
-  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex']);
+  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok']);
 });
 
 test('saved members named Antigravity become Gemini (TM-57), unless the name is taken', () => {
@@ -87,4 +87,40 @@ test('a crew (TM-59): Codex designs, Gemini does UI/UX, Claude engineers; each p
   assert.ok(p.includes(`Your role: UI/UX. ${ROLES.uiux.brief}`), p);
   assert.match(ROLES.uiux.brief, /Stitch/);
   assert.equal(newMember([], { vendor: 'claude', role: 'nonsense' }).role, undefined, 'unknown roles are dropped');
+});
+
+test('member tools: tools can be assigned to members and TOOLS catalog exists (TM-60 Batch 3)', () => {
+  assert.ok(TOOLS.bash && TOOLS.stitch && TOOLS.notion && TOOLS.github && TOOLS.write && TOOLS.web);
+  const m = newMember([], { vendor: 'claude', name: 'Agent Smith', tools: ['bash', 'notion', 'web'] });
+  assert.deepEqual(m.tools, ['bash', 'notion', 'web']);
+});
+
+test('all personas have corresponding brain files on disk and valid toolsets (TM-60 Batch 2 & 3)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { PERSONAS } = require('../src/renderer/members');
+  for (const [key, p] of Object.entries(PERSONAS)) {
+    assert.ok(p.brainFile, `${key} missing brainFile`);
+    const filePath = path.join(__dirname, '..', 'brains', p.brainFile);
+    assert.ok(fs.existsSync(filePath), `Brain file not found: ${filePath}`);
+    const content = fs.readFileSync(filePath, 'utf8');
+    assert.ok(content.length > 50, `Brain file too short: ${p.brainFile}`);
+    assert.ok(Array.isArray(p.tools) && p.tools.length > 0, `${key} missing tools`);
+  }
+});
+
+test('skills library and mcp catalog files exist on disk with valid structure (TM-60 Batch 5)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const skillsDir = path.join(__dirname, '..', 'skills');
+  assert.ok(fs.existsSync(skillsDir), 'skills directory must exist');
+  const skillFiles = fs.readdirSync(skillsDir).filter(f => f.endsWith('.md'));
+  assert.ok(skillFiles.length >= 4, `expected at least 4 skill playbooks, found ${skillFiles.length}`);
+
+  const mcpFile = path.join(__dirname, '..', 'mcp-servers.json');
+  assert.ok(fs.existsSync(mcpFile), 'mcp-servers.json must exist');
+  const mcps = JSON.parse(fs.readFileSync(mcpFile, 'utf8'));
+  assert.ok(Array.isArray(mcps) && mcps.length >= 4, 'mcp catalog must have servers');
+  assert.ok(mcps.some(s => s.name === 'StitchMCP'));
+  assert.ok(mcps.some(s => s.name === 'Notion MCP'));
 });

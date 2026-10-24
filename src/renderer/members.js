@@ -6,20 +6,43 @@
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.ChatMembers = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
-  const VENDORS = ['antigravity', 'claude', 'codex'];
-  const VENDOR_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex' };
+  const VENDORS = ['antigravity', 'claude', 'codex', 'grok'];
+  const VENDOR_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex', grok: 'Grok' };
   // A member's part in a chat (TM-59), carried in its prompts. Matt's own
   // flow: design and brainstorm with Codex, UI/UX with Gemini, engineering
-  // with Claude.
+  // with Claude, security with Smith, ops with Morpheus, and market scouting with Grok.
   const ROLES = {
     // Work passes between them as files in the chat's folder (TM-59 Batch 4).
     design: { label: 'Design', brief: "You lead design and brainstorming: shape the idea with Matt, push back on weak ideas, and write the brief to brief.md in this chat's folder (goal, users, features, what's out of scope). Then hand the screens to the UI/UX agent with @Name." },
     uiux: { label: 'UI/UX', brief: "You own the user interface and experience: design the screens from brief.md in Stitch (your StitchMCP tools). Save each screen's HTML from Stitch into this chat's folder under design/, with design/NOTES.md describing layout, colours and behaviour. Then hand it to the engineer with @Name, naming the files." },
-    engineering: { label: 'Engineering', brief: "You build it: write the code in this chat's folder from brief.md and the files in design/, run it or test it, and say plainly what works and what doesn't. Keep your code, tests and any scratch files in this chat's folder. Files in design/ come from Stitch: read them as reference, never run or import them. Ask the UI/UX or design agent with @Name if something is unclear." }
+    engineering: { label: 'Engineering', brief: "You build it: write the code in this chat's folder from brief.md and the files in design/, run it or test it, and say plainly what works and what doesn't. Keep your code, tests and any scratch files in this chat's folder. Files in design/ come from Stitch: read them as reference, never run or import them. Ask the UI/UX or design agent with @Name if something is unclear." },
+    security: { label: 'Security', brief: "You are the security inquisitor and pen-tester (Agent Smith): inspect code, dependencies, and network boundaries for vulnerabilities, injection risks, and unauthorized access. Demand rigorous verification." },
+    operations: { label: 'Operations', brief: "You are the operations and community manager (Morpheus): maintain high-signal coordination, evaluate player/user delight, and challenge weak ideas with disciplined strategic thinking." },
+    market: { label: 'Market', brief: "You are the market and sentiment scout: track industry trends, user requests, and competitor developments, providing structured opportunity digests." }
   };
   // "New crew": one chat with all three, the designer first (it answers Matt
   // by default).
   const CREW = [{ vendor: 'codex', role: 'design' }, { vendor: 'antigravity', role: 'uiux' }, { vendor: 'claude', role: 'engineering' }];
+
+  // Saved Agent Personas (TM-60 Batch 2): preconfigured agent brains & roles.
+  const PERSONAS = {
+    smith: { id: 'smith', name: 'Agent Smith', vendor: 'antigravity', role: 'security', brainFile: 'agent-smith.md', color: '#10b981', tools: ['bash', 'write', 'web', 'github'] },
+    morpheus: { id: 'morpheus', name: 'Morpheus', vendor: 'claude', role: 'operations', brainFile: 'morpheus.md', color: '#8b5cf6', tools: ['bash', 'web', 'notion'] },
+    scout: { id: 'scout', name: 'Grok Scout', vendor: 'grok', role: 'market', brainFile: 'market-scout.md', color: '#94a3b8', tools: ['web', 'notion'] },
+    architect: { id: 'architect', name: 'Lead Architect', vendor: 'codex', role: 'design', brainFile: 'lead-architect.md', color: '#38bdf8', tools: ['bash', 'write', 'github'] },
+    engineer: { id: 'engineer', name: 'Claude Engineer', vendor: 'claude', role: 'engineering', brainFile: 'fullstack-engineer.md', color: '#2563eb', tools: ['bash', 'write', 'github'] },
+    uiux: { id: 'uiux', name: 'Stitch Prototyper', vendor: 'antigravity', role: 'uiux', brainFile: 'uiux-prototyper.md', color: '#ec4899', tools: ['stitch', 'write', 'web'] }
+  };
+
+  // Toolbelt & MCP capabilities library (TM-60 Batch 3)
+  const TOOLS = {
+    bash: { id: 'bash', label: 'Terminal / Shell', brief: 'Run local shell commands and test scripts' },
+    write: { id: 'write', label: 'Filesystem Writes', brief: 'Create and modify files in chat folder' },
+    stitch: { id: 'stitch', label: 'StitchMCP (UI Design)', brief: 'Generate screens and tokens in Stitch' },
+    notion: { id: 'notion', label: 'Notion MCP (Tickets)', brief: 'Read and update Notion task cards' },
+    github: { id: 'github', label: 'GitHub MCP', brief: 'Manage PRs, issues, and git commits' },
+    web: { id: 'web', label: 'Web Search', brief: 'Search documentation and external web' }
+  };
 
   // Default names that were retired (TM-57: Antigravity is shown as Gemini,
   // the models its CLI runs).
@@ -28,16 +51,19 @@
   // A new member for a chat that already has `members`. Its name is unique in
   // the chat (case-insensitive): the vendor's name, else the model's label,
   // else the vendor's name with a number ("Claude 2").
-  function newMember(members, { vendor, model = null, memory = null, role = null }, { vendorNames = VENDOR_NAMES, modelLabel = null } = {}) {
+  function newMember(members, { vendor, model = null, memory = null, role = null, name = null, brain = null, brainText = null, tools = null }, { vendorNames = VENDOR_NAMES, modelLabel = null } = {}) {
     if (!VENDORS.includes(vendor)) throw new Error(`Unknown vendor: ${vendor}`);
     const next = 1 + Math.max(0, ...members.map(m => /^m(\d+)$/.exec(m.id)).filter(Boolean).map(r => Number(r[1])));
     const taken = new Set(members.map(m => m.name.toLowerCase()));
     const base = vendorNames[vendor] || VENDOR_NAMES[vendor];
-    let name = [base, modelLabel].find(n => n && !taken.has(n.toLowerCase()));
-    for (let k = 2; !name; k++) if (!taken.has(`${base} ${k}`.toLowerCase())) name = `${base} ${k}`;
-    const member = { id: `m${next}`, vendor, model: model || null, name };
+    let chosenName = [name, base, modelLabel].find(n => n && !taken.has(n.toLowerCase()));
+    for (let k = 2; !chosenName; k++) if (!taken.has(`${name || base} ${k}`.toLowerCase())) chosenName = `${name || base} ${k}`;
+    const member = { id: `m${next}`, vendor, model: model || null, name: chosenName };
     if (memory) member.memory = memory;
     if (role && ROLES[role]) member.role = role;
+    if (brain) member.brain = brain;
+    if (brainText) member.brainText = brainText;
+    if (Array.isArray(tools)) member.tools = tools;
     return member;
   }
 
@@ -77,5 +103,5 @@
     return (thread.members || []).find(m => m.id === id) || null;
   }
 
-  return { VENDORS, VENDOR_NAMES, ROLES, CREW, newMember, ensureMembers, renameRetired, memberById };
+  return { VENDORS, VENDOR_NAMES, ROLES, CREW, PERSONAS, TOOLS, newMember, ensureMembers, renameRetired, memberById };
 });

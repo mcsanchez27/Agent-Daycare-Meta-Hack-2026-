@@ -26,6 +26,23 @@ contextBridge.exposeInMainWorld('api', {
   loadChat: (id) => ipcRenderer.invoke('chats:load', { id }),
   saveChat: (chat) => ipcRenderer.invoke('chats:save', { chat }),
 
+  // Preset Brains & Central Brain (TM-60 Batch 2, 4, 5)
+  listBrains: () => ipcRenderer.invoke('brains:list'),
+  getCentralBrain: () => ipcRenderer.invoke('brains:get-central'),
+  resolveBrains: (opts) => ipcRenderer.invoke('brains:resolve', opts),
+  saveCentralBrain: (text) => ipcRenderer.invoke('brains:save-central', { text }),
+  savePersonaBrain: (file, text) => ipcRenderer.invoke('brains:save-persona', { file, text }),
+  createPersonaBrain: (name, text) => ipcRenderer.invoke('brains:create-persona', { name, text }),
+
+  // Skills Library (TM-60 Batch 5)
+  listSkills: () => ipcRenderer.invoke('skills:list'),
+  saveSkill: (file, text) => ipcRenderer.invoke('skills:save', { file, text }),
+  createSkill: (name, text) => ipcRenderer.invoke('skills:create', { name, text }),
+
+  // MCP Directory (TM-60 Batch 5)
+  listMcps: () => ipcRenderer.invoke('mcp:list'),
+  saveMcp: (server) => ipcRenderer.invoke('mcp:save', { server }),
+
   // Logging (goes to logs/latest.log in the main process)
   log: (level, message, data) => ipcRenderer.send('log:write', { level, message, data }),
   openLogsFolder: () => ipcRenderer.invoke('logs:open-folder')

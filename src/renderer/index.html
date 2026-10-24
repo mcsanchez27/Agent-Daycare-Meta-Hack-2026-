@@ -8,20 +8,60 @@
 </head>
 <body>
   <aside class="sidebar">
-    <div class="brand">Agent Daycare</div>
+    <div class="brand">
+      <span class="brand-sparkle">✨</span>
+      <span class="brand-name">Agent Daycare</span>
+    </div>
+    <button type="button" class="nav-org-btn" id="nav-org-btn" title="Organization Control & MMS Hub">
+      <span class="nav-org-icon">🏛️</span>
+      <span class="nav-org-label">Org Control</span>
+      <span class="nav-org-badge">HQ</span>
+    </button>
     <div class="plan" id="plan" hidden></div>
     <button type="button" class="new-chat" id="new-chat">+ New chat</button>
+    <div class="sidebar-section-label">Recent Chats</div>
     <nav class="chat-list" id="chat-list" aria-label="Chats"></nav>
+    <div class="sidebar-footer">
+      <div class="user-badge">
+        <span class="user-avatar">M</span>
+        <div class="user-info">
+          <span class="user-name">Matt</span>
+          <span class="user-role">Operator</span>
+        </div>
+      </div>
+    </div>
   </aside>
 
   <section class="chat">
     <header class="top">
-      <div class="members" id="members" aria-label="Agents in this chat"></div>
+      <div class="chat-header-info">
+        <span class="chat-header-title" id="chat-header-title">Chat</span>
+        <div class="members" id="members" aria-label="Agents in this chat"></div>
+      </div>
       <button type="button" class="add-agent" id="add-agent" title="Add a new agent, or one from another chat">+ Add agent</button>
       <div class="folder" id="folder" title="Agents work in this folder">Working folder: …</div>
     </header>
 
     <section class="chooser" id="chooser" hidden aria-label="Pick an agent for the new chat"></section>
+
+    <!-- Organization Control Deck (TM-60 Batch 5) -->
+    <section class="org-control" id="org-control" hidden aria-label="Organization Control Center">
+      <header class="org-header">
+        <div class="org-title-wrap">
+          <div class="org-title"><span class="org-icon">🏛️</span> Org Control</div>
+          <div class="org-subtitle">Mountain Man Studios Ecosystem · Master Memory, Persona Chips, MCPs & Skills</div>
+        </div>
+        <div class="org-tabs">
+          <button type="button" class="org-tab active" id="org-tab-memory" data-tab="memory">🧠 Master Memory</button>
+          <button type="button" class="org-tab" id="org-tab-personas" data-tab="personas">💾 Persona Chips</button>
+          <button type="button" class="org-tab" id="org-tab-mcps" data-tab="mcps">🔌 MCP Directory</button>
+          <button type="button" class="org-tab" id="org-tab-skills" data-tab="skills">⚡ Skills Library</button>
+          <button type="button" class="org-tab" id="org-tab-builder" data-tab="builder">🛠️ Agent Builder</button>
+        </div>
+        <button type="button" class="org-close-btn" id="org-close-btn" title="Back to Chat">✕</button>
+      </header>
+      <div class="org-body" id="org-body"></div>
+    </section>
 
     <main class="thread" id="thread" aria-live="polite">
       <p class="empty" id="empty">Say hi.</p>
@@ -30,26 +70,141 @@
     <form class="composer" id="composer" autocomplete="off">
       <div class="mentions" id="mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
       <div class="input-row">
-        <textarea id="message" rows="1" placeholder="Message Claude… (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
-        <button type="submit" id="send">Send</button>
+        <textarea id="message" rows="1" placeholder="Message your crew… (Enter to send, Shift+Enter for newline, @ or # for mentions)" aria-label="Message"></textarea>
+        <button type="submit" id="send" title="Send message">
+          <span class="send-arrow">↑</span>
+        </button>
       </div>
     </form>
   </section>
 
-  <!-- Threads open beside the main chat (TM-54 Batch 4). -->
-  <aside class="thread-panel" id="thread-panel" hidden aria-label="Thread">
-    <header class="panel-top">
-      <span class="panel-label" id="panel-label">Thread</span>
-      <button type="button" class="panel-close" id="panel-close" title="Close the thread">×</button>
-    </header>
-    <div class="thread" id="panel-thread" aria-live="polite"></div>
-    <form class="composer" id="panel-composer" autocomplete="off">
-      <div class="mentions" id="panel-mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
-      <div class="input-row">
-        <textarea id="panel-message" rows="1" aria-label="Reply in the thread"></textarea>
-        <button type="submit" id="panel-send">Send</button>
+  <!-- Right sidecar: Expandable Inspector (Session, Preview, Toolbelt) & Threads -->
+  <aside class="sidecar" id="sidecar" aria-label="Session Info">
+    <div class="sidecar-tabs-header" id="sidecar-tabs-header">
+      <div class="sidecar-tabs">
+        <button type="button" class="sidecar-tab active" id="tab-session" data-tab="session">Session</button>
+        <button type="button" class="sidecar-tab" id="tab-preview" data-tab="preview">Preview</button>
+        <button type="button" class="sidecar-tab" id="tab-toolbelt" data-tab="toolbelt">Toolbelt</button>
       </div>
-    </form>
+      <button type="button" class="sidecar-expand-btn" id="sidecar-expand-btn" title="Expand / collapse sidecar (55vw)">⤢</button>
+    </div>
+
+    <!-- Inspector Tab 1: Session Info -->
+    <div class="sidecar-content" id="sidecar-content">
+      <div class="sidecar-header">
+        <span class="sidecar-title">Session Info</span>
+      </div>
+      <div class="sidecar-section">
+        <div class="sidecar-section-title">Context & Usage</div>
+        <div id="sidecar-context" class="sidecar-context">
+          <div class="context-gauge-row">
+            <span class="context-gauge-label" id="context-gauge-label">Context Window</span>
+            <span class="context-gauge-val" id="context-gauge-val">0 tokens</span>
+          </div>
+          <div class="context-bar-wrap">
+            <div class="context-bar" id="context-bar" style="width: 0%;"></div>
+          </div>
+          <div class="sidecar-plan-wrap" id="sidecar-plan-wrap"></div>
+        </div>
+      </div>
+
+      <div class="sidecar-section">
+        <div class="sidecar-section-title">Active Models</div>
+        <div id="sidecar-models" class="sidecar-models"></div>
+      </div>
+
+      <div class="sidecar-section">
+        <div class="sidecar-section-title">Workspace</div>
+        <div class="sidecar-workspace" id="sidecar-workspace">
+          <div class="workspace-row">
+            <span class="workspace-label">Folder</span>
+            <span class="workspace-val" id="sidecar-folder">…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inspector Tab 2: Live Preview & Notion Glance -->
+    <div class="sidecar-view sidecar-preview-view" id="sidecar-preview" hidden>
+      <div class="preview-toolbar">
+        <span class="preview-title" id="preview-title">Glance & Live Preview</span>
+        <div class="preview-actions">
+          <button type="button" class="preview-btn" id="preview-reload" title="Reload preview">↻</button>
+          <button type="button" class="preview-btn" id="preview-external" title="Open in browser">↗</button>
+        </div>
+      </div>
+      <div class="preview-body" id="preview-body">
+        <div class="preview-empty" id="preview-empty">
+          <div class="preview-empty-icon">👁</div>
+          <div class="preview-empty-text">No active preview.</div>
+          <div class="preview-empty-sub">Agents can output HTML files or link Notion cards to preview here.</div>
+          <div class="preview-quick-actions">
+            <button type="button" class="preview-quick-btn" id="preview-glance-tm58">📋 TM-58 test pass (link)</button>
+            <button type="button" class="preview-quick-btn" id="preview-glance-tm60">📋 TM-59 crew flow (link)</button>
+          </div>
+        </div>
+        <!-- No allow-same-origin: a page an agent wrote runs as a stranger, with no reach into this window. -->
+        <iframe class="preview-iframe" id="preview-iframe" hidden sandbox="allow-scripts allow-forms"></iframe>
+        <div class="notion-glance-card" id="notion-glance" hidden>
+          <div class="notion-card-header">
+            <div class="notion-card-tag">NOTION TICKET</div>
+            <div class="notion-card-title" id="notion-title">TM-58: Agent Daycare Windows test pass V3.1 & V4</div>
+            <div class="notion-card-meta">
+              <span class="notion-badge status" id="notion-status">Test Pass</span>
+              <span class="notion-badge priority" id="notion-priority">P1 High</span>
+              <span class="notion-badge assignee" id="notion-assignee">Matt Sanchez</span>
+            </div>
+          </div>
+          <div class="notion-card-body">
+            <div class="notion-section-title">Ticket Scope & Summary</div>
+            <div class="notion-card-desc" id="notion-desc">Windows test pass collection for V3.1 and V4 features, Calm UI, agent builder and tool integrations.</div>
+            <div class="notion-section-title">Checklist / Test Items</div>
+            <ul class="notion-task-list" id="notion-tasks"></ul>
+          </div>
+          <div class="notion-card-footer">
+            <a href="#" target="_blank" rel="noopener noreferrer" class="notion-card-link" id="notion-link">Open in Notion ↗</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inspector Tab 3: Agent Toolbelt & MCP Library -->
+    <div class="sidecar-view sidecar-toolbelt-view" id="sidecar-toolbelt" hidden>
+      <div class="sidecar-header">
+        <span class="sidecar-title">Agent Toolbelt</span>
+      </div>
+      <div class="sidecar-section">
+        <div class="sidecar-section-title">Active Capabilities</div>
+        <div class="toolbelt-list" id="toolbelt-list"></div>
+      </div>
+      <div class="sidecar-section">
+        <div class="sidecar-section-title">What the CLIs can actually reach</div>
+        <div class="toolbelt-library">
+          <div class="library-item"><span class="library-dot green"></span> Gemini: StitchMCP, and its other agy MCP servers</div>
+          <div class="library-item"><span class="library-dot green"></span> Codex: its own MCP servers (GitHub, Notion, PDF)</div>
+          <div class="library-item"><span class="library-dot blue"></span> Claude: files and shell only (runs lean, no MCP)</div>
+          <div class="library-item"><span class="library-dot blue"></span> All: files and commands in this chat's folder</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Threads open inside the sidecar when active (TM-54 Batch 4) -->
+    <div class="thread-panel" id="thread-panel" hidden aria-label="Thread">
+      <header class="panel-top">
+        <span class="panel-label" id="panel-label">Thread</span>
+        <button type="button" class="panel-close" id="panel-close" title="Close the thread">×</button>
+      </header>
+      <div class="thread" id="panel-thread" aria-live="polite"></div>
+      <form class="composer panel-composer-dock" id="panel-composer" autocomplete="off">
+        <div class="mentions" id="panel-mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
+        <div class="input-row">
+          <textarea id="panel-message" rows="1" placeholder="Reply in thread…" aria-label="Reply in the thread"></textarea>
+          <button type="submit" id="panel-send" title="Send reply">
+            <span class="send-arrow">↑</span>
+          </button>
+        </div>
+      </form>
+    </div>
   </aside>
 
   <script src="members.js"></script>

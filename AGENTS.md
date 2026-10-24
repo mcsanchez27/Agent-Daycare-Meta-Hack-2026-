@@ -1,10 +1,50 @@
 # Agent Daycare: notes for AI agents
 
 ## Read this first
-- **Active ticket:** TM-59 (V4 crew flow) on `tm-59/v4-crew`. TM-57 (V3.1) is merged; Matt's test cases for V3.1 and V4 collect on **TM-58**. **Active version:** V3 is merged on `master`: one-agent and group chats (vendor and model per agent), @ and # (background asks), threads in a side panel, merging chats, agents keeping their own CLI sessions, a context meter. Tickets TM-47, 53, 54, 55 are Done; Matt's Windows test pass, TM-56, is Done.
+- **Active ticket:** TM-60 (Calm UI & Agent Builder; **no Notion ticket exists yet**) on `tm-60/calm-ui`, built by Matt with Antigravity and reviewed by Claude on 2026-10-24 (see "TM-60 review" below). TM-59 (V4 crew flow) and TM-57 (V3.1) are merged; Matt's test cases for V3.1 and V4 collect on **TM-58**. **Active version:** V4 on `master`: one-agent and group chats (vendor and model per agent), crew flow, tool steps, vendor sessions, threads in side panel. Tickets TM-47, 53, 54, 55, 57, 59 are Done.
 - **Where work happens:** `master` holds everything built so far. Each new ticket gets its own branch off `master` named `tm-<id>/<short-name>`, merged by PR when done. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
+
+## TM-60 review (2026-10-24, overnight)
+- **Fixed:** `main.js` never required `fs`, so every brains/skills/MCP handler failed inside its `try` and returned nothing: no Central Brain or persona in any prompt, and an empty Org Control. `.org-control` had no `[hidden]` rule and covered the chat. `TOOLS` wasn't pulled into `app.js` (crash on the Toolbelt tab and Agent Builder). Five files had been saved in the wrong text encoding ("…" as "â€¦"). `ask()` set `pending` only after an await, so a quick double send could launch an agent twice. `window.open` and links now go to the system browser (`setWindowOpenHandler` + `will-navigate`), so a page an agent wrote never opens in a window that has `window.api`; the preview iframe lost `allow-same-origin` (the page runs as a stranger; its localStorage is off). A session that never saw the brains catches up on its next resume (`brainMtime` is 0 until a brain was really sent). `mergeThreads` keeps `brain`, `brainText` and `tools`.
+- **Grok:** it launches through its npm `grok.cmd`, so the prompt goes in `.daycare-prompt.txt` in the chat folder (`--prompt-file`, deleted on exit) and every argument stays allow-list safe. Output is `--output-format streaming-messages-json`, the same shape as Claude's, read by the same parser. Models seen: grok-4.6, grok-4.5. **It needs `grok login --device-code` once on this PC**; until then every reply is "Not signed in". It runs with `--always-approve` and is not fenced in.
+- **Decorative, not wired:** `mcp-servers.json` and the MCP Directory list servers and connect nothing (each CLI uses its own MCP settings: `claude mcp`, `codex mcp`, `agy mcp`). A member's `tools` is a label on the chip, not a capability. The Notion "glance" only links out (`NOTION_LINKS` in `app.js`); the window is not connected to Notion. Their badges now say "listed" / "declared" / "not live".
+- `brains/` and `skills/` live in the repo, so editing them in Org Control changes tracked files.
+
+## Organization Control Center (TM-60 Batch 5)
+- **Dedicated Hub (`🏛️ Org Control`):** First-class view in the sidebar toggling the main workspace into the Mountain Man Studios Command Center.
+- **Master Memory Editor:** Direct in-app markdown editor for `brains/central-brain.md` with instant "Save & Push to All Active Agents" disk hot-reloading.
+- **Persona Chips & Deployment Inventory:** Live tracking of all persona chips on disk (`brains/*.md`), showing active deployment counts across chats (e.g. `Agent Smith: Active in 2 chats`), in-app direct editor, and inline "+ Forge New Persona Chip" creator.
+- **MCP Directory:** Integration registry (`mcp-servers.json`) cataloging StitchMCP, Notion MCP, GitHub MCP, Playwright MCP, and CLI Terminal, with live tool manifests and "+ Add MCP Server" registration.
+- **Skills Library:** Repository of operational playbooks (`skills/*.md`: Security Auditing, Stitch Prototyping, Headless Testing, Notion Sync, Market Scouting), direct editor, and "+ Add Skill" creator.
+- **Agent Builder Studio Workbench:** Full fabrication bench embedded inside Org Control to forge teammates with engine, persona chip, toolbelt capabilities, and deploy directly into new mission chats or summon into the current team.
+
+## Central Brain & Dynamic Persona Chips (TM-60 Batch 4)
+- **Central Brain (`brains/central-brain.md`):** Institutional memory, Mountain Man Studios operating doctrine, workspace boundaries, and `@` / `#` cross-chat collaboration rules. Inherited automatically by *all* agents across all chats.
+- **Persona Chips (`brains/<chip>.md`):** Specialized persona chips (Agent Smith, Morpheus, Grok Scout, Lead Architect, Fullstack Engineer, Stitch Prototyper) layered on top of the Central Brain.
+- **Dynamic Pointer Resolution (Hot-Reloading):** On every turn, `api.resolveBrains({ personaFile })` reads the brain files directly from disk. Editing `central-brain.md` or any persona chip immediately updates all active and future agents without restarting the app.
+- **Session Update Notices:** When resuming an existing vendor session (`--resume`), if brain files on disk were modified since the member's previous turn (`mtime > session.brainMtime`), a structured `[Notice: Central Brain or Persona Chip updated on disk: ...]` preamble is automatically injected.
+- **Toolbelt Status:** The Session Sidecar Toolbelt tab displays a prominent Central Brain sync status (`🧠 Central Brain: ● Active across all agents · Synced`) and the member's attached Persona Chip.
+
+## Sidecar Inspector, Webview Preview & Toolbelt (TM-60 Batch 3)
+- **Inspector Tabs:** `[Session]`, `[Preview]`, and `[Toolbelt]` tabs in the right-side rail.
+- **Expandable Rail:** `⤢` button toggles width between 320px and 55vw for reading tickets or inspecting previews without cramping the main chat.
+- **Live Preview:** Webview embedded for testing local dev servers or HTML deliverables directly in-app.
+- **Notion Card Glance:** Instant native Calm Obsidian glance for Notion tickets (e.g. TM-58), with checklist states and batch progress.
+
+## Agent Builder, Brains & Grok (TM-60 Batch 2)
+- **Grok:** xAI's Grok CLI (`grok`) is added as the 4th vendor (`grok -p --permission-mode acceptEdits --always-approve`), with session resume and Messages-API wire format streaming. Color is `#e2e8f0`.
+- **Brain Presets (`brains/`):** Markdown files defining institutional memory, role directives, and boundaries (e.g. `lead-architect.md`, `uiux-prototyper.md`, `fullstack-engineer.md`, `agent-smith.md`, `morpheus.md`, `market-scout.md`). Loaded via `api.listBrains()`.
+- **Saved Personas & Custom Builder:** The Chooser modal now includes:
+  - **Saved Personas:** One-click summon for specialized teammates (Agent Smith, Morpheus, Grok Scout, Lead Architect, Fullstack Engineer, Stitch Prototyper).
+  - **Agent Builder:** Form to forge a custom teammate: choose name, choose engine (Gemini, Claude, Codex, Grok), attach a preset brain or write custom instructions.
+  - When a teammate runs, its brain directives are automatically injected into `buildPrompt` in `thread.js`.
+
+## Calm UI & Session Sidecar (TM-60 Batch 1)
+- **Calm Obsidian Palette:** Dark obsidian base (`#131314`), surface panel (`#1e1f20`), hairline border dividers (`#282a2e`), royal blue (`#2563eb`) for Matt. Floating capsule prompt composer with quick-send button.
+- **Session Sidecar:** Right rail displays live context window token gauges, active models list with vendor dots and roles, Claude rate limit plan meters, and active workspace folder. Threads dock inside the sidecar column when open.
+- **Centered Chooser Modal:** Modern card dialog with backdrop blur for vendor, model, crew, persona, and builder selection.
 
 ## How it works
 - Each message to an agent is a **one-shot launch** of its CLI (stdin closed, or closed right after Codex's prompt):

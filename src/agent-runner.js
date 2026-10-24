@@ -57,7 +57,7 @@ function parseEvent(vendor, line) {
   let j;
   try { j = JSON.parse(line); } catch (_) { return null; }
   if (!j || typeof j !== 'object') return null;
-  if (vendor === 'claude') {
+  if (vendor === 'claude' || vendor === 'grok') {
     if (j.type === 'system' && j.subtype === 'init') return sessionOk(j.session_id) ? { sessionId: j.session_id } : null;
     if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
       const text = j.message.content.filter(c => c.type === 'text').map(c => c.text).join('');
@@ -116,6 +116,10 @@ function parseEvent(vendor, line) {
 }
 
 const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
+// What `grok models` listed on 2026-10-24 (it answers even when signed out).
+const GROK_MODELS = [{ id: 'grok-4.6', label: 'grok-4.6' }, { id: 'grok-4.5', label: 'grok-4.5' }];
+// grok's prompt goes in this file in the chat folder (see _buildAgentArgs).
+const PROMPT_FILE = '.daycare-prompt.txt';
 
 // `agy models` prints a header, then one "id<TAB>label" line per model.
 function parseAgyModels(text) {
@@ -197,7 +201,8 @@ class AgentRunner {
     this.agents = {
       antigravity: { id: 'antigravity', name: 'Gemini', command: 'agy.exe', path: 'agy.exe', color: '#9d4edd', installed: true, version: 'Unknown' },
       claude: { id: 'claude', name: 'Claude', command: 'claude.exe', path: 'claude.exe', color: '#e76f51', installed: true, version: 'Unknown' },
-      codex: { id: 'codex', name: 'Codex', command: 'codex.exe', path: 'codex.exe', color: '#2a9d8f', installed: true, version: 'Unknown' }
+      codex: { id: 'codex', name: 'Codex', command: 'codex.exe', path: 'codex.exe', color: '#2a9d8f', installed: true, version: 'Unknown' },
+      grok: { id: 'grok', name: 'Grok', command: 'grok.cmd', path: 'grok.cmd', color: '#e2e8f0', installed: true, version: 'Unknown' }
     };
 
     if (config) this.applyConfig(config);
@@ -289,7 +294,7 @@ class AgentRunner {
           this.log.warn('antigravity', 'could not list models', { error: err.message });
           return [];
         })
-        .then(antigravity => ({ antigravity, claude: CLAUDE_MODELS, codex: [] }));
+        .then(antigravity => ({ antigravity, claude: CLAUDE_MODELS, codex: [], grok: GROK_MODELS }));
     }
     return this._models;
   }
@@ -331,8 +336,9 @@ class AgentRunner {
 
     const exe = this._getExecutable(agent);
     const workingDir = this.chatFolder(runKey);
-    const { args, stdin } = this._buildAgentArgs(vendor, p, model, sessionId);
-    this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, cwd: workingDir });
+    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId);
+    if (promptFile !== null) fs.writeFileSync(path.join(workingDir, PROMPT_FILE), promptFile);
+    this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, promptFile, cwd: workingDir });
 
     const cmd = launchCommand(exe, args);
     if (!cmd) {
@@ -344,6 +350,7 @@ class AgentRunner {
     const child = this._spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin);
     if (!child) return false;
     Object.assign(child, ctx);
+    if (promptFile !== null) child.promptPath = path.join(workingDir, PROMPT_FILE);
 
     this.processes.set(runKey, child);
     // Timeout (TM-53): a reply that takes too long is stopped like Stop.
@@ -396,6 +403,11 @@ class AgentRunner {
     // Lean Claude (TM-59): Matt's own plugins, hooks and MCP servers stay out
     // (about 66k tokens a launch down to 37k). Its login is unaffected.
     if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    // grok (TM-60): one turn from a prompt file in the chat folder (see run):
+    // its npm shim goes through cmd.exe, which a prompt on the command line
+    // would not survive. Output is Claude-shaped streaming JSON. Tools are
+    // auto-approved like the others; it isn't fenced in.
+    if (vendor === 'grok') return { args: ['--output-format', 'streaming-messages-json', '--permission-mode', 'acceptEdits', '--always-approve', ...m, ...(sessionId ? ['--resume', sessionId] : []), '--prompt-file', PROMPT_FILE], stdin: null, promptFile: p };
     // antigravity (agy): -p takes the next word as the prompt, so it goes last
     return { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }
@@ -487,6 +499,7 @@ class AgentRunner {
 
     child.on('close', (code) => {
       clearTimeout(child.timer);
+      if (child.promptPath) fs.unlink(child.promptPath, () => {});
       if (this.processes.get(runKey) === child) this.processes.delete(runKey);
       stdoutSink.flush();
       stderrSink.flush();

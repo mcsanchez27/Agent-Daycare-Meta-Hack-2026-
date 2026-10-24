@@ -17,7 +17,7 @@
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
-const { VENDORS, ROLES, CREW, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
+const { VENDORS, ROLES, CREW, PERSONAS, TOOLS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -46,7 +46,47 @@ const el = {
   panel: $('thread-panel'),
   panelLabel: $('panel-label'),
   panelClose: $('panel-close'),
-  plan: $('plan')
+  plan: $('plan'),
+  sidecar: $('sidecar'),
+  sidecarContent: $('sidecar-content'),
+  chatHeaderTitle: $('chat-header-title'),
+  sidecarFolder: $('sidecar-folder'),
+  sidecarModels: $('sidecar-models'),
+  contextGaugeLabel: $('context-gauge-label'),
+  contextGaugeVal: $('context-gauge-val'),
+  contextBar: $('context-bar'),
+  sidecarPlanWrap: $('sidecar-plan-wrap'),
+  tabSession: $('tab-session'),
+  tabPreview: $('tab-preview'),
+  tabToolbelt: $('tab-toolbelt'),
+  sidecarExpandBtn: $('sidecar-expand-btn'),
+  sidecarPreview: $('sidecar-preview'),
+  sidecarToolbelt: $('sidecar-toolbelt'),
+  toolbeltList: $('toolbelt-list'),
+  previewTitle: $('preview-title'),
+  previewReload: $('preview-reload'),
+  previewExternal: $('preview-external'),
+  previewEmpty: $('preview-empty'),
+  previewIframe: $('preview-iframe'),
+  notionGlance: $('notion-glance'),
+  notionTitle: $('notion-title'),
+  notionStatus: $('notion-status'),
+  notionPriority: $('notion-priority'),
+  notionAssignee: $('notion-assignee'),
+  notionDesc: $('notion-desc'),
+  notionTasks: $('notion-tasks'),
+  notionLink: $('notion-link'),
+  previewGlanceTm58: $('preview-glance-tm58'),
+  previewGlanceTm60: $('preview-glance-tm60'),
+  navOrgBtn: $('nav-org-btn'),
+  orgControl: $('org-control'),
+  orgCloseBtn: $('org-close-btn'),
+  orgBody: $('org-body'),
+  orgTabMemory: $('org-tab-memory'),
+  orgTabPersonas: $('org-tab-personas'),
+  orgTabMcps: $('org-tab-mcps'),
+  orgTabSkills: $('org-tab-skills'),
+  orgTabBuilder: $('org-tab-builder')
 };
 
 // The two places messages show: the main chat, and the thread panel beside
@@ -139,6 +179,7 @@ function newChatId() {
 // A new chat starts by picking its agent: vendor, then model (TM-54). It is
 // only saved once something is said in it, so empty chats don't pile up.
 function startNewChat() {
+  closeOrgControl();
   const c = current();
   if (c && c.thread && c.thread.messages.length === 0) chats.delete(c.id);
   showChooser('new');
@@ -166,18 +207,31 @@ function createCrew() {
   api.log('info', 'crew created', { chatId: chat.id, members: members.map(m => `${m.vendor}:${m.role}`) });
 }
 
+function createCustomChat(memberOpts) {
+  const now = new Date().toISOString();
+  const member = newMember([], memberOpts, { vendorNames: vendorNames() });
+  const chat = { id: newChatId(), title: 'New chat', createdAt: now, updatedAt: now, thread: createThread([member]) };
+  chats.set(chat.id, chat);
+  hideChooser();
+  showChat(chat.id);
+  api.log('info', 'custom agent chat created', { chatId: chat.id, agent: member.name, vendor: member.vendor });
+}
+
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
 // ({ title, name, text } from another chat), name (keep this name if it's
 // free), fromTitle (for the note), threadOf (where the note goes).
-function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, fromTitle = null, threadOf = null } = {}) {
+function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, role = null, brain = null, brainText = null, tools = null, fromTitle = null, threadOf = null } = {}) {
   const chat = chats.get(chatId);
   const names = name ? { ...vendorNames(), [vendor]: name } : vendorNames();
-  const member = newMember(chat.thread.members, { vendor, model, memory }, { vendorNames: names, modelLabel });
+  const member = newMember(chat.thread.members, { vendor, model, memory, role, name, brain, brainText, tools }, { vendorNames: names, modelLabel });
   chat.thread.members.push(member);
   const what = member.name === vendorName(vendor) ? modelText(member) : `${vendorName(vendor)}, ${modelText(member)}`;
   post(chatId, { from: 'system', threadOf, text: `${member.name} (${what}) joined` + (fromTitle ? ` from "${fromTitle}"` : '') + '.' });
   api.log('info', 'agent joined', { chatId, member: member.id, vendor, model, from: fromTitle });
-  if (chatId === currentId) renderMembers();
+  if (chatId === currentId) {
+    renderMembers();
+    if (activeSidecarTab === 'toolbelt') renderToolbelt();
+  }
   return member;
 }
 
@@ -230,16 +284,43 @@ async function openChat(id) {
 }
 
 function showChat(id) {
+  closeOrgControl();
   currentId = id;
   closePanel();
+  const c = current();
+  if (el.chatHeaderTitle) el.chatHeaderTitle.textContent = c ? c.title : 'Chat';
   // Each chat's agents work in a folder of their own (TM-59).
   if (workingDir) el.folder.textContent = `Working folder: ${workingDir}\\${id}`;
   renderChatList();
   renderMembers();
+  renderSidecar();
   renderView(main);
   updatePlaceholder(main);
   updateSendButtons();
   main.input.focus();
+}
+
+let activeSidecarTab = 'session'; // 'session' | 'preview' | 'toolbelt'
+
+function setSidecarTab(tab) {
+  activeSidecarTab = tab;
+  if (panelOpen()) {
+    removePendingRows(panel);
+    closeMentions(panel);
+    panel.threadOf = null;
+    panel.list.replaceChildren();
+    el.panel.hidden = true;
+  }
+  if (el.tabSession) el.tabSession.classList.toggle('active', tab === 'session');
+  if (el.tabPreview) el.tabPreview.classList.toggle('active', tab === 'preview');
+  if (el.tabToolbelt) el.tabToolbelt.classList.toggle('active', tab === 'toolbelt');
+
+  if (el.sidecarContent) el.sidecarContent.hidden = (tab !== 'session');
+  if (el.sidecarPreview) el.sidecarPreview.hidden = (tab !== 'preview');
+  if (el.sidecarToolbelt) el.sidecarToolbelt.hidden = (tab !== 'toolbelt');
+
+  if (tab === 'session' && currentId) renderSidecar();
+  if (tab === 'toolbelt') renderToolbelt();
 }
 
 // Opens a thread in the panel beside the main chat.
@@ -247,6 +328,9 @@ function openPanel(rootId) {
   const root = current().thread.messages.find(m => m.id === rootId);
   if (!root) return;
   panel.threadOf = rootId;
+  if (el.sidecarContent) el.sidecarContent.hidden = true;
+  if (el.sidecarPreview) el.sidecarPreview.hidden = true;
+  if (el.sidecarToolbelt) el.sidecarToolbelt.hidden = true;
   el.panel.hidden = false;
   el.panelLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : nameOf(root.from) + "'s"} message`;
   renderView(panel);
@@ -261,6 +345,7 @@ function closePanel() {
   panel.threadOf = null;
   panel.list.replaceChildren();
   el.panel.hidden = true;
+  setSidecarTab(activeSidecarTab);
 }
 
 // Whether a message belongs in a view. The panel shows the thread's first message too.
@@ -290,6 +375,10 @@ function renderChatList() {
     item.type = 'button';
     item.className = 'chat-item' + (chat.id === currentId && el.chooser.hidden ? ' active' : '');
     item.title = chat.title;
+
+    const headerRow = document.createElement('div');
+    headerRow.className = 'chat-header-row';
+
     const title = document.createElement('span');
     title.className = 'chat-title';
     title.textContent = chat.title;
@@ -298,6 +387,21 @@ function renderChatList() {
     const busy = Object.values(pending).filter(p => p.chatId === chat.id).length;
     when.textContent = busy ? 'working…' : dayLabel(chat.updatedAt);
     if (busy) item.classList.add('busy');
+    headerRow.append(title, when);
+
+    const agentsRow = document.createElement('div');
+    agentsRow.className = 'chat-agents';
+    if (chat.thread && chat.thread.members) {
+      for (const m of chat.thread.members) {
+        if (m.left) continue;
+        const dot = document.createElement('span');
+        dot.className = 'chat-agent-dot';
+        dot.style.setProperty('--agent-color', vendors[m.vendor] ? vendors[m.vendor].color : '#888');
+        dot.title = m.name;
+        agentsRow.appendChild(dot);
+      }
+    }
+
     const rename = document.createElement('span');
     rename.className = 'chat-rename';
     rename.textContent = '✎';
@@ -308,7 +412,7 @@ function renderChatList() {
     merge.textContent = '⇆';
     merge.title = 'Merge with another chat (makes a new chat; both stay)';
     merge.addEventListener('click', (e) => { e.stopPropagation(); showChooser('merge', chat.id); });
-    item.append(title, when, rename, merge);
+    item.append(headerRow, agentsRow, rename, merge);
     // The first click opens the chat and redraws this list, so a double-click
     // never lands on one element: the second click's count says it instead.
     item.addEventListener('click', (e) => (e.detail >= 2 ? editTitle(chat, item) : openChat(chat.id)));
@@ -390,6 +494,111 @@ function renderMembers() {
     }
     el.members.appendChild(chip);
   }
+  renderSidecar();
+}
+
+// Sidecar (TM-60): Right rail displaying live session telemetry, context gauges,
+// active models, and workspace folder.
+function renderSidecar() {
+  if (!el.sidecar) return;
+  if (activeSidecarTab === 'toolbelt') renderToolbelt();
+  const c = current();
+  if (!c) {
+    if (el.sidecarModels) el.sidecarModels.replaceChildren();
+    if (el.contextGaugeVal) el.contextGaugeVal.textContent = '0 tokens';
+    if (el.contextBar) el.contextBar.style.width = '0%';
+    if (el.sidecarFolder) el.sidecarFolder.textContent = '—';
+    if (el.sidecarPlanWrap) el.sidecarPlanWrap.replaceChildren();
+    return;
+  }
+
+  // Workspace folder
+  if (el.sidecarFolder) {
+    const fPath = workingDir ? `${workingDir}\\${c.id}` : '—';
+    el.sidecarFolder.textContent = fPath;
+    el.sidecarFolder.title = fPath;
+  }
+
+  // Context gauge and tokens
+  let totalTokens = 0;
+  let maxWindow = 0;
+  for (const m of c.thread.members) {
+    if (m.left) continue;
+    if (m.usage && m.usage.inputTokens) {
+      totalTokens += m.usage.inputTokens;
+      if (m.usage.contextWindow && m.usage.contextWindow > maxWindow) {
+        maxWindow = m.usage.contextWindow;
+      }
+    }
+  }
+
+  if (el.contextGaugeVal && el.contextBar) {
+    if (maxWindow > 0) {
+      const pct = Math.min(100, (100 * totalTokens) / maxWindow);
+      el.contextGaugeVal.textContent = `${tokens(totalTokens)} / ${tokens(maxWindow)}`;
+      el.contextBar.style.width = `${pct.toFixed(1)}%`;
+      el.contextBar.title = `${totalTokens.toLocaleString()} of ${maxWindow.toLocaleString()} tokens (${pct.toFixed(1)}%)`;
+    } else if (totalTokens > 0) {
+      el.contextGaugeVal.textContent = `${tokens(totalTokens)} tokens`;
+      el.contextBar.style.width = '25%';
+      el.contextBar.title = `${totalTokens.toLocaleString()} tokens read in last responses`;
+    } else {
+      el.contextGaugeVal.textContent = '0 tokens';
+      el.contextBar.style.width = '0%';
+      el.contextBar.title = 'No token usage recorded yet';
+    }
+  }
+
+  // Claude plan info
+  if (el.sidecarPlanWrap) {
+    el.sidecarPlanWrap.replaceChildren();
+    const p = plans.claude;
+    if (p) {
+      const pct = (w) => (w ? `${Math.round(w.used * 100)}%` : '?');
+      const planDiv = document.createElement('div');
+      planDiv.className = 'sidecar-plan' + (p.status && p.status !== 'allowed' || (p.fiveHour && p.fiveHour.used >= 0.8) ? ' warn' : '');
+      planDiv.textContent = `Claude plan: 5h ${pct(p.fiveHour)} · 7d ${pct(p.sevenDay)}`;
+      el.sidecarPlanWrap.appendChild(planDiv);
+    }
+  }
+
+  // Active models
+  if (el.sidecarModels) {
+    el.sidecarModels.replaceChildren();
+    for (const m of c.thread.members) {
+      if (m.left) continue;
+      const working = Boolean(pending[runKeyOf(c.id, m.id)]);
+      const item = document.createElement('div');
+      item.className = 'sidecar-model-item' + (working ? ' working' : '');
+
+      const left = document.createElement('div');
+      left.className = 'sidecar-model-left';
+
+      const dot = document.createElement('span');
+      dot.className = 'sidecar-model-dot';
+      dot.style.setProperty('--agent-color', vendors[m.vendor] ? vendors[m.vendor].color : '#888');
+
+      const name = document.createElement('span');
+      name.className = 'sidecar-model-name';
+      name.textContent = m.name;
+
+      left.append(dot, name);
+
+      if (m.role && ROLES[m.role]) {
+        const role = document.createElement('span');
+        role.className = 'sidecar-model-role';
+        role.textContent = ROLES[m.role].label;
+        left.appendChild(role);
+      }
+
+      const status = document.createElement('span');
+      status.className = 'sidecar-model-status';
+      status.textContent = working ? 'working…' : modelText(m);
+
+      item.append(left, status);
+      el.sidecarModels.appendChild(item);
+    }
+  }
 }
 
 // 66501 -> "67k", 1000000 -> "1M".
@@ -402,13 +611,179 @@ function tokens(n) {
 function renderPlan() {
   const p = plans.claude;
   el.plan.hidden = !p;
-  if (!p) return;
-  const pct = (w) => (w ? `${Math.round(w.used * 100)}%` : '?');
-  const when = (w) => (w && w.resetsAt ? new Date(w.resetsAt * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'unknown');
-  el.plan.textContent = `Claude plan · 5h ${pct(p.fiveHour)} · 7d ${pct(p.sevenDay)}`;
-  el.plan.title = `5-hour window resets ${when(p.fiveHour)}; 7-day window resets ${when(p.sevenDay)}.` +
-    (p.status && p.status !== 'allowed' ? `\nStatus: ${p.status}.` : '') + `\nAs of ${new Date(p.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
-  el.plan.classList.toggle('warn', p.status !== 'allowed' || (p.fiveHour && p.fiveHour.used >= 0.8));
+  if (p) {
+    const pct = (w) => (w ? `${Math.round(w.used * 100)}%` : '?');
+    const when = (w) => (w && w.resetsAt ? new Date(w.resetsAt * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'unknown');
+    el.plan.textContent = `Claude plan · 5h ${pct(p.fiveHour)} · 7d ${pct(p.sevenDay)}`;
+    el.plan.title = `5-hour window resets ${when(p.fiveHour)}; 7-day window resets ${when(p.sevenDay)}.` +
+      (p.status && p.status !== 'allowed' ? `\nStatus: ${p.status}.` : '') + `\nAs of ${new Date(p.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    el.plan.classList.toggle('warn', p.status !== 'allowed' || (p.fiveHour && p.fiveHour.used >= 0.8));
+  }
+  renderSidecar();
+}
+
+// Sidecar expansion toggle (TM-60 Batch 3)
+function toggleSidecarExpand() {
+  if (!el.sidecar) return;
+  const isExpanded = el.sidecar.classList.toggle('expanded');
+  if (el.sidecarExpandBtn) {
+    el.sidecarExpandBtn.textContent = isExpanded ? '⤡' : '⤢';
+    el.sidecarExpandBtn.title = isExpanded ? 'Collapse sidecar (320px)' : 'Expand sidecar (55vw)';
+  }
+}
+
+// Renders the toolbelt capabilities tab (TM-60 Batch 3, 4)
+function renderToolbelt() {
+  if (!el.toolbeltList) return;
+  el.toolbeltList.replaceChildren();
+  const c = current();
+  if (!c || !c.thread || !c.thread.members) return;
+
+  // Central Brain institutional header (TM-60 Batch 4)
+  const centralBanner = document.createElement('div');
+  centralBanner.className = 'toolbelt-central-banner';
+  const cbTitle = document.createElement('div');
+  cbTitle.className = 'toolbelt-central-title';
+  cbTitle.textContent = '🧠 Central Brain (MMS Operating Doctrine)';
+  const cbStatus = document.createElement('div');
+  cbStatus.className = 'toolbelt-central-status';
+  cbStatus.textContent = '● Active across all agents · Synced from brains/central-brain.md';
+  centralBanner.append(cbTitle, cbStatus);
+  el.toolbeltList.appendChild(centralBanner);
+
+  for (const m of c.thread.members) {
+    if (m.left) continue;
+    const card = document.createElement('div');
+    card.className = 'toolbelt-agent-card';
+
+    const head = document.createElement('div');
+    head.className = 'toolbelt-agent-head';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = m.name;
+    const modelSpan = document.createElement('span');
+    modelSpan.className = 'sidecar-model-role';
+    modelSpan.textContent = modelText(m);
+    head.append(nameSpan, modelSpan);
+
+    const caps = document.createElement('div');
+    caps.className = 'toolbelt-caps';
+
+    // Persona Chip status
+    const chipItem = document.createElement('div');
+    chipItem.className = 'toolbelt-cap-item';
+    const chipName = document.createElement('span');
+    chipName.className = 'toolbelt-cap-name';
+    chipName.textContent = m.brain ? `💾 Persona Chip (${m.brain})` : '💾 Persona Chip (Default)';
+    const chipStatus = document.createElement('span');
+    chipStatus.className = 'toolbelt-cap-status';
+    chipStatus.textContent = '● Attached';
+    chipItem.append(chipName, chipStatus);
+    caps.appendChild(chipItem);
+
+    const memberTools = Array.isArray(m.tools) && m.tools.length ? m.tools : ['bash', 'write'];
+    for (const tId of memberTools) {
+      const toolDef = TOOLS[tId] || { id: tId, label: tId, brief: 'Agent capability' };
+      const capItem = document.createElement('div');
+      capItem.className = 'toolbelt-cap-item';
+      const capName = document.createElement('span');
+      capName.className = 'toolbelt-cap-name';
+      capName.textContent = toolDef.label;
+      const capStatus = document.createElement('span');
+      capStatus.className = 'toolbelt-cap-status';
+      capStatus.textContent = 'declared';
+      capItem.append(capName, capStatus);
+      caps.appendChild(capItem);
+    }
+
+    card.append(head, caps);
+    el.toolbeltList.appendChild(card);
+  }
+}
+
+// The window isn't connected to Notion (TM-60 built the card, not the
+// link). A glance can only open a ticket whose page Matt's work has a link
+// for; nothing here is live.
+const NOTION_LINKS = {
+  'TM-56': 'https://app.notion.com/p/40263104ef7881d7abdbd44ad8f0093b',
+  'TM-57': 'https://app.notion.com/p/40263104ef78813b9ea1fd88e575d48d',
+  'TM-58': 'https://app.notion.com/p/40263104ef7881419817c02646db0615',
+  'TM-59': 'https://app.notion.com/p/40263104ef7881c1a7abda21b02931d0'
+};
+
+let currentPreviewUrl = null;
+
+// Displays live webview or native Notion glance in the preview tab
+function showPreview({ title, url = null, type = 'html', ticketData = null }) {
+  setSidecarTab('preview');
+  if (el.previewTitle) el.previewTitle.textContent = title || 'Glance & Live Preview';
+
+  if (type === 'notion' && ticketData) {
+    if (el.previewEmpty) el.previewEmpty.hidden = true;
+    if (el.previewIframe) {
+      el.previewIframe.hidden = true;
+      el.previewIframe.src = 'about:blank';
+    }
+    if (el.notionGlance) {
+      el.notionGlance.hidden = false;
+      if (el.notionTitle) el.notionTitle.textContent = `${ticketData.id}: ${ticketData.title}`;
+      if (el.notionStatus) el.notionStatus.textContent = ticketData.status || 'Active';
+      if (el.notionPriority) { el.notionPriority.textContent = ticketData.priority || ''; el.notionPriority.hidden = !ticketData.priority; }
+      if (el.notionAssignee) { el.notionAssignee.textContent = ticketData.assignee || ''; el.notionAssignee.hidden = !ticketData.assignee; }
+      if (el.notionDesc) el.notionDesc.textContent = ticketData.desc || '';
+      if (el.notionLink) { el.notionLink.href = ticketData.url || '#'; el.notionLink.hidden = !ticketData.url; }
+      if (el.notionTasks) {
+        el.notionTasks.replaceChildren();
+        for (const item of (ticketData.tasks || [])) {
+          const li = document.createElement('li');
+          li.className = 'notion-task-item' + (item.done ? ' done' : '');
+          const box = document.createElement('input');
+          box.type = 'checkbox';
+          box.checked = !!item.done;
+          box.disabled = true;
+          const span = document.createElement('span');
+          span.textContent = item.text;
+          li.append(box, span);
+          el.notionTasks.appendChild(li);
+        }
+      }
+    }
+    currentPreviewUrl = ticketData.url || null;
+  } else if (url) {
+    if (el.notionGlance) el.notionGlance.hidden = true;
+    if (el.previewEmpty) el.previewEmpty.hidden = true;
+    if (el.previewIframe) {
+      el.previewIframe.hidden = false;
+      el.previewIframe.src = url;
+    }
+    currentPreviewUrl = url;
+  }
+}
+
+function glanceNotionFromText(text) {
+  const match = /(TM-\d+)/i.exec(text);
+  const id = match ? match[1].toUpperCase() : null;
+  const url = id ? NOTION_LINKS[id] || null : null;
+  showPreview({ title: id ? `Notion: ${id}` : 'Notion', type: 'notion', ticketData: {
+    id: id || 'Notion',
+    title: url ? 'Open in Notion for the live ticket' : 'No link saved for this ticket',
+    status: 'not live',
+    desc: "The window isn't connected to Notion, so this card only links out. A live glance is an idea, not built.",
+    url,
+    tasks: []
+  } });
+}
+
+function previewFromText(text) {
+  const hostMatch = /(https?:\/\/localhost:\d+[^\s]*)/i.exec(text);
+  const htmlMatch = /([a-zA-Z0-9_\-\/]+\.html)/i.exec(text);
+  if (hostMatch) {
+    showPreview({ title: hostMatch[1], url: hostMatch[1], type: 'html' });
+  } else if (htmlMatch) {
+    const filename = htmlMatch[1];
+    const cFolder = workingDir && currentId ? `${workingDir}/${currentId}`.replace(/\\/g, '/') : '';
+    const fUrl = `file:///${cFolder}/${filename}`;
+    showPreview({ title: filename, url: fUrl, type: 'html' });
+  }
 }
 
 // Adds a message to a chat (open or not), saves it, and draws it wherever it shows.
@@ -436,6 +811,7 @@ function post(chatId, message) {
 // agent from another chat). vendor: the vendor picked so far, if any.
 
 function showChooser(mode = 'new', vendor = null) {
+  closeOrgControl();
   el.chooser.hidden = false;
   el.chooser.dataset.mode = mode;
   el.chooser.dataset.vendor = vendor || '';
@@ -444,11 +820,16 @@ function showChooser(mode = 'new', vendor = null) {
   closeMentions(main);
   renderChatList();
   el.chooser.replaceChildren();
+
+  const card = document.createElement('div');
+  card.className = 'chooser-card';
+  el.chooser.appendChild(card);
+
   const h = document.createElement('h2');
-  el.chooser.appendChild(h);
+  card.appendChild(h);
   const options = document.createElement('div');
   options.className = 'options';
-  el.chooser.appendChild(options);
+  card.appendChild(options);
   const option = (label, sub, color, onClick) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -482,7 +863,7 @@ function showChooser(mode = 'new', vendor = null) {
     const note = document.createElement('p');
     note.className = 'chooser-note';
     note.textContent = 'This makes a new chat with both chats\' agents and messages. Both chats stay as they are.';
-    el.chooser.insertBefore(note, options);
+    card.insertBefore(note, options);
     for (const c of [...chats.values()].filter(c => c.id !== first.id).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))) {
       option(c.title, dayLabel(c.updatedAt), null, () => mergeChats(first, c));
     }
@@ -506,13 +887,155 @@ function showChooser(mode = 'new', vendor = null) {
         });
       }
     }
-  } else if (!vendor) {
+  } else if (!vendor && mode !== 'personas' && mode !== 'builder') {
     h.textContent = mode === 'new' ? 'Who do you want to talk to?' : 'Add which agent to this chat?';
-    for (const v of VENDORS) option(vendorName(v), null, vendors[v] && vendors[v].color, () => showChooser(mode, v));
     if (mode === 'new') {
-      option('Crew', CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), null, createCrew);
+      option('Autonomous Crew', CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), '#2563eb', createCrew);
     }
+    option('Saved Personas…', 'Agent Smith, Morpheus, Grok Scout, Lead Architect', '#8b5cf6', () => showChooser('personas', mode));
+    option('Agent Builder…', 'Forge an agent with custom engine, brain and role', '#10b981', () => showChooser('builder', mode));
+    for (const v of VENDORS) option(vendorName(v), `Run with ${vendorName(v)} default`, vendors[v] && vendors[v].color, () => showChooser(mode, v));
     if (mode === 'add' && chats.size > 1) option('From another chat…', 'brings that chat as background', null, () => showChooser('from'));
+  } else if (mode === 'personas') {
+    const prevMode = vendor || 'new';
+    h.textContent = 'Saved Teammate Personas';
+    const note = document.createElement('p');
+    note.className = 'chooser-note';
+    note.textContent = 'Specialized teammates with preset Persona Chips layered on top of Central Brain.';
+    card.insertBefore(note, options);
+    for (const [key, p] of Object.entries(PERSONAS)) {
+      option(p.name, `${vendorName(p.vendor)} · ${ROLES[p.role] ? ROLES[p.role].label : p.role}`, p.color, async () => {
+        let brainText = '';
+        try {
+          const brains = await api.listBrains();
+          const match = (brains || []).find(b => b.file === p.brainFile);
+          if (match) brainText = match.text;
+        } catch (_) {}
+        if (prevMode === 'add') {
+          join(currentId, p.vendor, { name: p.name, role: p.role, brain: p.brainFile, brainText, tools: p.tools });
+          hideChooser();
+          showChat(currentId);
+        } else {
+          createCustomChat({ vendor: p.vendor, name: p.name, role: p.role, brain: p.brainFile, brainText, tools: p.tools });
+        }
+      });
+    }
+  } else if (mode === 'builder') {
+    const prevMode = vendor || 'new';
+    h.textContent = 'Agent Builder';
+    const note = document.createElement('p');
+    note.className = 'chooser-note';
+    note.textContent = 'Configure a new specialized agent from the ground up.';
+    card.insertBefore(note, options);
+
+    const form = document.createElement('form');
+    form.className = 'builder-form';
+
+    // Agent Name
+    const nameField = document.createElement('div');
+    nameField.className = 'builder-field';
+    const nameLabel = document.createElement('label');
+    nameLabel.className = 'builder-label';
+    nameLabel.textContent = 'Agent Name';
+    const nameInput = document.createElement('input');
+    nameInput.className = 'builder-input';
+    nameInput.placeholder = 'e.g. Agent Smith, Neo, Security Auditor';
+    nameInput.required = true;
+    nameField.append(nameLabel, nameInput);
+
+    // Engine / Vendor Select
+    const engineField = document.createElement('div');
+    engineField.className = 'builder-field';
+    const engineLabel = document.createElement('label');
+    engineLabel.className = 'builder-label';
+    engineLabel.textContent = 'CLI Engine (Vendor)';
+    const engineSelect = document.createElement('select');
+    engineSelect.className = 'builder-select';
+    for (const v of VENDORS) {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = vendorName(v);
+      engineSelect.appendChild(opt);
+    }
+    engineField.append(engineLabel, engineSelect);
+
+    // Persona Chip Preset Select (TM-60 Batch 4)
+    const brainField = document.createElement('div');
+    brainField.className = 'builder-field';
+    const brainLabel = document.createElement('label');
+    brainLabel.className = 'builder-label';
+    brainLabel.textContent = 'Preset Persona Chip (Central Brain inherited automatically)';
+    const brainSelect = document.createElement('select');
+    brainSelect.className = 'builder-select';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'Standard Teammate (Central Brain only)';
+    brainSelect.appendChild(noneOpt);
+
+    let loadedBrains = [];
+    api.listBrains().then(list => {
+      loadedBrains = list || [];
+      for (const b of loadedBrains) {
+        const opt = document.createElement('option');
+        opt.value = b.file;
+        opt.textContent = `${b.title} (${b.file})`;
+        brainSelect.appendChild(opt);
+      }
+    }).catch(() => {});
+
+    brainField.append(brainLabel, brainSelect);
+
+    // Toolbelt & MCP Capabilities (TM-60 Batch 3)
+    const toolsField = document.createElement('div');
+    toolsField.className = 'builder-field';
+    const toolsLabel = document.createElement('label');
+    toolsLabel.className = 'builder-label';
+    toolsLabel.textContent = "Capabilities (a label on the agent; it doesn't change what its CLI can do)";
+    const toolsGrid = document.createElement('div');
+    toolsGrid.className = 'builder-tools-grid';
+
+    const toolCheckboxes = {};
+    for (const [tId, tool] of Object.entries(TOOLS)) {
+      const toolItem = document.createElement('label');
+      toolItem.className = 'builder-tool-item';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.value = tId;
+      chk.checked = (tId === 'bash' || tId === 'write');
+      toolCheckboxes[tId] = chk;
+      const tText = document.createElement('span');
+      tText.textContent = tool.label;
+      toolItem.append(chk, tText);
+      toolsGrid.appendChild(toolItem);
+    }
+    toolsField.append(toolsLabel, toolsGrid);
+
+    // Submit button
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'builder-submit';
+    submitBtn.textContent = 'Forge & Deploy Teammate';
+
+    form.append(nameField, engineField, brainField, toolsField, submitBtn);
+    card.appendChild(form);
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const aName = nameInput.value.trim();
+      if (!aName) return;
+      const aVendor = engineSelect.value;
+      const bFile = brainSelect.value;
+      const match = loadedBrains.find(b => b.file === bFile);
+      const bText = match ? match.text : null;
+      const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
+      if (prevMode === 'add') {
+        join(currentId, aVendor, { name: aName, brain: bFile, brainText: bText, tools: selectedTools });
+        hideChooser();
+        showChat(currentId);
+      } else {
+        createCustomChat({ vendor: aVendor, name: aName, brain: bFile, brainText: bText, tools: selectedTools });
+      }
+    });
   } else {
     const color = vendors[vendor] && vendors[vendor].color;
     h.textContent = `Which ${vendorName(vendor)} model?`;
@@ -523,7 +1046,7 @@ function showChooser(mode = 'new', vendor = null) {
       const note = document.createElement('p');
       note.className = 'chooser-note';
       note.textContent = "Couldn't get Gemini's model list (agy models), so only its default is offered.";
-      el.chooser.appendChild(note);
+      card.appendChild(note);
     }
     if (vendor === 'codex') {
       // Codex can't list its models, so its model is typed.
@@ -542,16 +1065,22 @@ function showChooser(mode = 'new', vendor = null) {
         if (MODEL_TEXT.test(input.value.trim())) pick('codex', input.value.trim(), input.value.trim());
       });
       row.append(input, use);
-      el.chooser.appendChild(row);
+      card.appendChild(row);
     }
   }
   const nav = document.createElement('div');
   nav.className = 'chooser-nav';
-  if ((vendor || mode === 'from') && mode !== 'merge') {
+  if ((vendor || mode === 'from' || mode === 'personas' || mode === 'builder') && mode !== 'merge') {
     const back = document.createElement('button');
     back.type = 'button';
     back.textContent = '← Back';
-    back.addEventListener('click', () => showChooser(mode === 'from' && !vendor ? 'add' : mode, null));
+    back.addEventListener('click', () => {
+      if (mode === 'personas' || mode === 'builder') {
+        showChooser(vendor || 'new', null);
+      } else {
+        showChooser(mode === 'from' && !vendor ? 'add' : mode, null);
+      }
+    });
     nav.appendChild(back);
   }
   const returnTo = mode === 'new' ? newest() : current();
@@ -562,7 +1091,12 @@ function showChooser(mode = 'new', vendor = null) {
     cancel.addEventListener('click', () => openChat(returnTo.id));
     nav.appendChild(cancel);
   }
-  el.chooser.appendChild(nav);
+  card.appendChild(nav);
+  el.chooser.onclick = (e) => {
+    if (e.target === el.chooser && returnTo) {
+      openChat(returnTo.id);
+    }
+  };
 }
 
 // Two chats into a new group chat (TM-54 Batch 6). Both originals stay.
@@ -757,7 +1291,14 @@ function renderMessage(view, m) {
   if (m.steps && m.steps.length) addSteps(row, m.steps);
   if (view === panel && m.id === panel.threadOf) row.classList.add('root');
   if (view === main && m.from !== 'system') {
-    addActions(row, [{ label: 'Thread', title: 'Open a thread on this message beside the chat', onClick: () => openPanel(m.id) }]);
+    const buttons = [{ label: 'Thread', title: 'Open a thread on this message beside the chat', onClick: () => openPanel(m.id) }];
+    if (/([a-zA-Z0-9_\-\/]+\.html|https?:\/\/localhost:\d+)/i.test(m.text)) {
+      buttons.push({ label: '👁 Preview', title: 'Live preview in sidecar inspector', onClick: () => previewFromText(m.text) });
+    }
+    if (/(TM-\d+|notion\.(so|com))/i.test(m.text)) {
+      buttons.push({ label: '📋 Glance Ticket', title: 'Glance Notion ticket card in inspector', onClick: () => glanceNotionFromText(m.text) });
+    }
+    addActions(row, buttons);
   }
 }
 
@@ -1128,7 +1669,7 @@ function wireComposer(view) {
 // (background asks): side ({ chatId, messageId, hop }) when this reply answers
 // another chat; answer ({ chatTitle, text }, or a list of them) for an asker's follow-up; hop,
 // how many chats have asked each other so far in this chain.
-function ask(chatId, memberId, threadOf = null, { side = null, answer = null, hop = 0 } = {}) {
+async function ask(chatId, memberId, threadOf = null, { side = null, answer = null, hop = 0 } = {}) {
   const thread = chats.get(chatId).thread;
   const member = memberById(thread, memberId);
   // The newest 15 other chats with real titles, so the agent can ask one with #.
@@ -1138,11 +1679,12 @@ function ask(chatId, memberId, threadOf = null, { side = null, answer = null, ho
   // Resuming sends only what's new since it last saw the chat.
   const where = threadOf === null ? 'main' : String(threadOf);
   const session = (member.sessions || {})[where] || null;
-  const prompt = buildPrompt(thread, memberId, { threadOf, answer, chatTitles, since: session ? session.lastId : null });
+  // The reply is pending from here, before the brain files are read (an
+  // await): Send stays off, so a second send can't launch the agent twice.
   const runKey = runKeyOf(chatId, memberId);
-  pending[runKey] = {
+  const p = pending[runKey] = {
     chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(),
-    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1
+    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1, resolvedBrainMtime: 0
   };
   if (chatId === currentId) {
     openViews().forEach(renderPendingRows);
@@ -1152,7 +1694,53 @@ function ask(chatId, memberId, threadOf = null, { side = null, answer = null, ho
   renderChatList();
   updateSendButtons();
 
-  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: pending[runKey].sessionId, prompt }).then((started) => {
+  // TM-60 Batch 4: Dynamic Central Brain & Persona Chip Resolution
+  let centralBrain = null;
+  let personaChip = null;
+  let brainUpdate = null;
+  let resolvedBrainMtime = 0;
+  try {
+    const resolved = await api.resolveBrains({ personaFile: member.brain });
+    if (resolved) {
+      if (resolved.central) {
+        centralBrain = resolved.central.text;
+        resolvedBrainMtime = Math.max(resolvedBrainMtime, resolved.central.mtime || 0);
+      }
+      if (resolved.persona) {
+        personaChip = resolved.persona.text;
+        resolvedBrainMtime = Math.max(resolvedBrainMtime, resolved.persona.mtime || 0);
+      }
+      // If resuming an existing session, check if brain files were updated on disk since last run
+      // A session that never saw the brains (brainMtime 0, or saved before
+      // they could be read) catches up here with the full text.
+      if (session && resolvedBrainMtime > (session.brainMtime || 0)) {
+        const notices = [];
+        if (resolved.central && resolved.central.mtime > (session.brainMtime || 0)) {
+          notices.push(`--- Central Brain Update ---\n${resolved.central.text.trim()}`);
+        }
+        if (resolved.persona && resolved.persona.mtime > (session.brainMtime || 0)) {
+          notices.push(`--- Persona Chip (${resolved.persona.file}) Update ---\n${resolved.persona.text.trim()}`);
+        }
+        if (notices.length) brainUpdate = notices.join('\n\n');
+      }
+    }
+  } catch (err) {
+    api.log('warn', 'brain resolution failed', { error: err.message });
+  }
+
+  if (pending[runKey] !== p) return; // stopped or replaced while the brains were read
+  p.resolvedBrainMtime = resolvedBrainMtime; // 0 when no brain file could be read
+  const prompt = buildPrompt(thread, memberId, {
+    threadOf,
+    answer,
+    chatTitles,
+    since: session ? session.lastId : null,
+    centralBrain,
+    personaChip,
+    brainUpdate
+  });
+
+  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: p.sessionId, prompt }).then((started) => {
     if (started === false) finishReply(runKey, null, 'it could not be started');
   }).catch((err) => finishReply(runKey, null, err.message));
 }
@@ -1210,7 +1798,10 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
   }
   // Remember the session to resume next time, and what it has seen; usage for the meter.
   if (member && sessionId && !stopped && !timedOut) {
-    member.sessions = { ...(member.sessions || {}), [p.where]: { id: sessionId, lastId: p.seenUpTo } };
+    member.sessions = {
+      ...(member.sessions || {}),
+      [p.where]: { id: sessionId, lastId: p.seenUpTo, brainMtime: p.resolvedBrainMtime || 0 }
+    };
   }
   if (member && usage) member.usage = { ...usage, at: new Date().toISOString() };
   const reply = p.text.trim();
@@ -1259,6 +1850,639 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
   updateSendButtons();
 }
 
+// ---- Organization Control Deck (TM-60 Batch 5) -----------------------------
+
+let isOrgControlOpen = false;
+let activeOrgTab = 'memory'; // 'memory' | 'personas' | 'mcps' | 'skills' | 'builder'
+
+function openOrgControl(tab = 'memory') {
+  isOrgControlOpen = true;
+  activeOrgTab = tab;
+  if (el.orgControl) el.orgControl.hidden = false;
+  if (el.navOrgBtn) el.navOrgBtn.classList.add('active');
+  hideChooser();
+  renderOrgDeck();
+}
+
+function closeOrgControl() {
+  isOrgControlOpen = false;
+  if (el.orgControl) el.orgControl.hidden = true;
+  if (el.navOrgBtn) el.navOrgBtn.classList.remove('active');
+}
+
+function setOrgTab(tab) {
+  activeOrgTab = tab;
+  renderOrgDeck();
+}
+
+function getChipDeploymentStats() {
+  const stats = {};
+  for (const [cId, chat] of chats) {
+    if (!chat || !chat.thread || !chat.thread.members) continue;
+    for (const m of chat.thread.members) {
+      if (m.left) continue;
+      const b = m.brain || 'unassigned';
+      if (!stats[b]) stats[b] = [];
+      stats[b].push({ chatId: cId, chatTitle: chat.title || 'Untitled', memberName: m.name, vendor: m.vendor });
+    }
+  }
+  return stats;
+}
+
+async function renderOrgDeck() {
+  if (!el.orgBody) return;
+  el.orgBody.replaceChildren();
+
+  const tabBtns = [el.orgTabMemory, el.orgTabPersonas, el.orgTabMcps, el.orgTabSkills, el.orgTabBuilder];
+  tabBtns.forEach(btn => {
+    if (btn) btn.classList.toggle('active', btn.dataset.tab === activeOrgTab);
+  });
+
+  const panel = document.createElement('div');
+  panel.className = 'org-panel';
+  el.orgBody.appendChild(panel);
+
+  if (activeOrgTab === 'memory') {
+    await renderOrgMemory(panel);
+  } else if (activeOrgTab === 'personas') {
+    await renderOrgPersonas(panel);
+  } else if (activeOrgTab === 'mcps') {
+    await renderOrgMcps(panel);
+  } else if (activeOrgTab === 'skills') {
+    await renderOrgSkills(panel);
+  } else if (activeOrgTab === 'builder') {
+    await renderOrgBuilder(panel);
+  }
+}
+
+async function renderOrgMemory(panel) {
+  const card = document.createElement('div');
+  card.className = 'org-section-card';
+
+  const head = document.createElement('div');
+  head.className = 'org-card-head';
+  const title = document.createElement('div');
+  title.className = 'org-card-title';
+  title.textContent = '🧠 Central Brain (MMS Operating Doctrine)';
+  const badge = document.createElement('span');
+  badge.className = 'org-card-badge';
+  badge.textContent = '● Active across all agents · Synced';
+  head.append(title, badge);
+
+  const desc = document.createElement('p');
+  desc.className = 'org-item-desc';
+  desc.textContent = 'Foundational institutional memory, workspace boundaries, engine labor division, and collaboration rules. Automatically inherited by every teammate across all chats. Save to hot-reload directly into all active sessions.';
+
+  const editorWrap = document.createElement('div');
+  editorWrap.className = 'org-editor-wrap';
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'org-textarea';
+  textarea.rows = 15;
+
+  let centralData = null;
+  try {
+    centralData = await api.getCentralBrain();
+    if (centralData) textarea.value = centralData.text;
+  } catch (_) {}
+
+  const actions = document.createElement('div');
+  actions.className = 'org-editor-actions';
+
+  const meta = document.createElement('div');
+  meta.className = 'org-meta-info';
+  meta.textContent = centralData ? `File: brains/${centralData.file} · Synced: ${new Date(centralData.mtime).toLocaleTimeString()}` : 'File: brains/central-brain.md';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'org-save-btn';
+  saveBtn.textContent = '💾 Save & Push to All Active Agents';
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      const res = await api.saveCentralBrain(textarea.value);
+      saveBtn.textContent = '✓ Pushed to All Agents!';
+      meta.textContent = `File: brains/${res.file} · Pushed: ${new Date(res.mtime).toLocaleTimeString()}`;
+      setTimeout(() => {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '💾 Save & Push to All Active Agents';
+      }, 2000);
+    } catch (_) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Error saving';
+    }
+  });
+
+  actions.append(meta, saveBtn);
+  editorWrap.append(textarea, actions);
+  card.append(head, desc, editorWrap);
+  panel.appendChild(card);
+}
+
+async function renderOrgPersonas(panel) {
+  const stats = getChipDeploymentStats();
+
+  const topCard = document.createElement('div');
+  topCard.className = 'org-section-card';
+  const topHead = document.createElement('div');
+  topHead.className = 'org-card-head';
+  const topTitle = document.createElement('div');
+  topTitle.className = 'org-card-title';
+  topTitle.textContent = '💾 Specialized Persona Chips (Operational Roles)';
+  const topBadge = document.createElement('span');
+  topBadge.className = 'org-card-badge';
+  topBadge.textContent = 'Dynamic Disk Hot-Reloading';
+  topHead.append(topTitle, topBadge);
+
+  const topDesc = document.createElement('p');
+  topDesc.className = 'org-item-desc';
+  topDesc.textContent = 'Specialized persona directives layered on top of the Central Brain. Track deployment across active chats and edit chip directives directly on disk.';
+  topCard.append(topHead, topDesc);
+  panel.appendChild(topCard);
+
+  // Chip creation card
+  const createCard = document.createElement('div');
+  createCard.className = 'org-section-card';
+  const createTitle = document.createElement('div');
+  createTitle.className = 'org-card-title';
+  createTitle.textContent = '➕ Forge New Persona Chip';
+  const formRow = document.createElement('div');
+  formRow.className = 'org-form-row';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'org-input';
+  nameInput.placeholder = 'Chip Name (e.g. Database Architect, Fuzzing Specialist)';
+  const createBtn = document.createElement('button');
+  createBtn.type = 'button';
+  createBtn.className = 'org-action-btn primary';
+  createBtn.textContent = 'Forge Chip';
+  formRow.append(nameInput, createBtn);
+  createCard.append(createTitle, formRow);
+
+  createBtn.addEventListener('click', async () => {
+    const val = nameInput.value.trim();
+    if (!val) return;
+    createBtn.disabled = true;
+    try {
+      await api.createPersonaBrain(val);
+      nameInput.value = '';
+      renderOrgDeck();
+    } catch (_) {
+      createBtn.disabled = false;
+    }
+  });
+  panel.appendChild(createCard);
+
+  // List chips in grid
+  const grid = document.createElement('div');
+  grid.className = 'org-grid-2';
+
+  let brains = [];
+  try {
+    brains = await api.listBrains();
+  } catch (_) {}
+
+  for (const b of brains) {
+    const chipCard = document.createElement('div');
+    chipCard.className = 'org-item-card';
+
+    const cHead = document.createElement('div');
+    cHead.className = 'org-item-head';
+    const cTitle = document.createElement('div');
+    cTitle.className = 'org-item-title';
+    cTitle.textContent = b.title || b.file;
+
+    const deployed = stats[b.file] || [];
+    const invBadge = document.createElement('span');
+    invBadge.className = 'org-inventory-badge';
+    invBadge.textContent = deployed.length ? `● ${deployed.length} active agent${deployed.length > 1 ? 's' : ''}` : '○ 0 deployed';
+    cHead.append(cTitle, invBadge);
+
+    const cDesc = document.createElement('div');
+    cDesc.className = 'org-item-desc';
+    if (deployed.length) {
+      cDesc.textContent = `Deployed in: ${deployed.map(d => `${d.memberName} ("${d.chatTitle}")`).join(', ')}`;
+    } else {
+      cDesc.textContent = `File: brains/${b.file} · Ready to equip on any teammate.`;
+    }
+
+    const editorBox = document.createElement('textarea');
+    editorBox.className = 'org-textarea';
+    editorBox.style.minHeight = '140px';
+    editorBox.value = b.text;
+    editorBox.hidden = true;
+
+    const actions = document.createElement('div');
+    actions.className = 'org-item-actions';
+    const toggleEditBtn = document.createElement('button');
+    toggleEditBtn.type = 'button';
+    toggleEditBtn.className = 'org-action-btn';
+    toggleEditBtn.textContent = 'Edit Directives';
+
+    const saveChipBtn = document.createElement('button');
+    saveChipBtn.type = 'button';
+    saveChipBtn.className = 'org-action-btn primary';
+    saveChipBtn.textContent = 'Save & Push Down';
+    saveChipBtn.hidden = true;
+
+    toggleEditBtn.addEventListener('click', () => {
+      const isEditing = !editorBox.hidden;
+      editorBox.hidden = isEditing;
+      saveChipBtn.hidden = isEditing;
+      toggleEditBtn.textContent = isEditing ? 'Edit Directives' : 'Collapse';
+    });
+
+    saveChipBtn.addEventListener('click', async () => {
+      saveChipBtn.disabled = true;
+      saveChipBtn.textContent = 'Saving…';
+      try {
+        await api.savePersonaBrain(b.file, editorBox.value);
+        saveChipBtn.textContent = '✓ Saved!';
+        setTimeout(() => {
+          saveChipBtn.disabled = false;
+          saveChipBtn.textContent = 'Save & Push Down';
+        }, 1500);
+      } catch (_) {
+        saveChipBtn.disabled = false;
+        saveChipBtn.textContent = 'Error';
+      }
+    });
+
+    actions.append(toggleEditBtn, saveChipBtn);
+    chipCard.append(cHead, cDesc, editorBox, actions);
+    grid.appendChild(chipCard);
+  }
+  panel.appendChild(grid);
+}
+
+async function renderOrgMcps(panel) {
+  const topCard = document.createElement('div');
+  topCard.className = 'org-section-card';
+  const topHead = document.createElement('div');
+  topHead.className = 'org-card-head';
+  const topTitle = document.createElement('div');
+  topTitle.className = 'org-card-title';
+  topTitle.textContent = '🔌 MCP Directory & Integration Registry';
+  const topBadge = document.createElement('span');
+  topBadge.className = 'org-card-badge';
+  topBadge.textContent = 'Reference list';
+  topHead.append(topTitle, topBadge);
+
+  const topDesc = document.createElement('p');
+  topDesc.className = 'org-item-desc';
+  topDesc.textContent = "A list of MCP servers for reference (mcp-servers.json). It doesn't connect anything: each agent uses the MCP servers set up in its own CLI (claude mcp, codex mcp, agy mcp).";
+  topCard.append(topHead, topDesc);
+  panel.appendChild(topCard);
+
+  // Add MCP Server Card
+  const addCard = document.createElement('div');
+  addCard.className = 'org-section-card';
+  const addTitle = document.createElement('div');
+  addTitle.className = 'org-card-title';
+  addTitle.textContent = '➕ Add MCP Server';
+  const formRow = document.createElement('div');
+  formRow.className = 'org-form-row';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'org-input';
+  nameInput.placeholder = 'Server Name (e.g. SQLite MCP, Slack MCP)';
+  const cmdInput = document.createElement('input');
+  cmdInput.className = 'org-input';
+  cmdInput.placeholder = 'Command (e.g. npx -y @modelcontextprotocol/server-sqlite)';
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'org-action-btn primary';
+  addBtn.textContent = 'Register Server';
+  formRow.append(nameInput, cmdInput, addBtn);
+  addCard.append(addTitle, formRow);
+
+  addBtn.addEventListener('click', async () => {
+    const sName = nameInput.value.trim();
+    const sCmd = cmdInput.value.trim();
+    if (!sName || !sCmd) return;
+    addBtn.disabled = true;
+    try {
+      await api.saveMcp({ name: sName, command: sCmd, status: 'listed', description: 'Added from Org Control', tools: [] });
+      nameInput.value = '';
+      cmdInput.value = '';
+      renderOrgDeck();
+    } catch (_) {
+      addBtn.disabled = false;
+    }
+  });
+  panel.appendChild(addCard);
+
+  // List MCP servers
+  const grid = document.createElement('div');
+  grid.className = 'org-grid-2';
+
+  let mcps = [];
+  try {
+    mcps = await api.listMcps();
+  } catch (_) {}
+
+  for (const m of mcps) {
+    const mCard = document.createElement('div');
+    mCard.className = 'org-item-card';
+
+    const mHead = document.createElement('div');
+    mHead.className = 'org-item-head';
+    const mTitle = document.createElement('div');
+    mTitle.className = 'org-item-title';
+    mTitle.textContent = m.name;
+    const mStatus = document.createElement('span');
+    mStatus.className = 'org-card-badge';
+    mStatus.textContent = 'listed';
+    mHead.append(mTitle, mStatus);
+
+    const mDesc = document.createElement('div');
+    mDesc.className = 'org-item-desc';
+    mDesc.textContent = m.description || `Command: ${m.command}`;
+
+    const toolsDiv = document.createElement('div');
+    toolsDiv.className = 'org-meta-info';
+    toolsDiv.textContent = `Tools: ${(m.tools || []).join(', ')}`;
+
+    mCard.append(mHead, mDesc, toolsDiv);
+    grid.appendChild(mCard);
+  }
+  panel.appendChild(grid);
+}
+
+async function renderOrgSkills(panel) {
+  const topCard = document.createElement('div');
+  topCard.className = 'org-section-card';
+  const topHead = document.createElement('div');
+  topHead.className = 'org-card-head';
+  const topTitle = document.createElement('div');
+  topTitle.className = 'org-card-title';
+  topTitle.textContent = '⚡ Operational Skills & Playbooks Library';
+  const topBadge = document.createElement('span');
+  topBadge.className = 'org-card-badge';
+  topBadge.textContent = 'Institutional Skills';
+  topHead.append(topTitle, topBadge);
+
+  const topDesc = document.createElement('p');
+  topDesc.className = 'org-item-desc';
+  topDesc.textContent = 'Operational playbooks and specialized skills catalog for Mountain Man Studios. Editable playbooks provide standard operating procedures for specialized workflows.';
+  topCard.append(topHead, topDesc);
+  panel.appendChild(topCard);
+
+  // Add Skill Card
+  const addCard = document.createElement('div');
+  addCard.className = 'org-section-card';
+  const addTitle = document.createElement('div');
+  addTitle.className = 'org-card-title';
+  addTitle.textContent = '➕ Add Institutional Skill';
+  const formRow = document.createElement('div');
+  formRow.className = 'org-form-row';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'org-input';
+  nameInput.placeholder = 'Skill Name (e.g. Database Migrations, API Design)';
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'org-action-btn primary';
+  addBtn.textContent = 'Create Skill';
+  formRow.append(nameInput, addBtn);
+  addCard.append(addTitle, formRow);
+
+  addBtn.addEventListener('click', async () => {
+    const sName = nameInput.value.trim();
+    if (!sName) return;
+    addBtn.disabled = true;
+    try {
+      await api.createSkill(sName);
+      nameInput.value = '';
+      renderOrgDeck();
+    } catch (_) {
+      addBtn.disabled = false;
+    }
+  });
+  panel.appendChild(addCard);
+
+  // List skills
+  const grid = document.createElement('div');
+  grid.className = 'org-grid-2';
+
+  let skills = [];
+  try {
+    skills = await api.listSkills();
+  } catch (_) {}
+
+  for (const s of skills) {
+    const sCard = document.createElement('div');
+    sCard.className = 'org-item-card';
+
+    const sHead = document.createElement('div');
+    sHead.className = 'org-item-head';
+    const sTitle = document.createElement('div');
+    sTitle.className = 'org-item-title';
+    sTitle.textContent = s.title || s.file;
+    sHead.append(sTitle);
+
+    const sDesc = document.createElement('div');
+    sDesc.className = 'org-item-desc';
+    sDesc.textContent = `Playbook file: skills/${s.file}`;
+
+    const editorBox = document.createElement('textarea');
+    editorBox.className = 'org-textarea';
+    editorBox.style.minHeight = '140px';
+    editorBox.value = s.text;
+    editorBox.hidden = true;
+
+    const actions = document.createElement('div');
+    actions.className = 'org-item-actions';
+    const toggleEditBtn = document.createElement('button');
+    toggleEditBtn.type = 'button';
+    toggleEditBtn.className = 'org-action-btn';
+    toggleEditBtn.textContent = 'Edit Playbook';
+
+    const saveSkillBtn = document.createElement('button');
+    saveSkillBtn.type = 'button';
+    saveSkillBtn.className = 'org-action-btn primary';
+    saveSkillBtn.textContent = 'Save Skill';
+    saveSkillBtn.hidden = true;
+
+    toggleEditBtn.addEventListener('click', () => {
+      const isEditing = !editorBox.hidden;
+      editorBox.hidden = isEditing;
+      saveSkillBtn.hidden = isEditing;
+      toggleEditBtn.textContent = isEditing ? 'Edit Playbook' : 'Collapse';
+    });
+
+    saveSkillBtn.addEventListener('click', async () => {
+      saveSkillBtn.disabled = true;
+      saveSkillBtn.textContent = 'Saving…';
+      try {
+        await api.saveSkill(s.file, editorBox.value);
+        saveSkillBtn.textContent = '✓ Saved!';
+        setTimeout(() => {
+          saveSkillBtn.disabled = false;
+          saveSkillBtn.textContent = 'Save Skill';
+        }, 1500);
+      } catch (_) {
+        saveSkillBtn.disabled = false;
+        saveSkillBtn.textContent = 'Error';
+      }
+    });
+
+    actions.append(toggleEditBtn, saveSkillBtn);
+    sCard.append(sHead, sDesc, editorBox, actions);
+    grid.appendChild(sCard);
+  }
+  panel.appendChild(grid);
+}
+
+async function renderOrgBuilder(panel) {
+  const card = document.createElement('div');
+  card.className = 'org-section-card';
+
+  const head = document.createElement('div');
+  head.className = 'org-card-head';
+  const title = document.createElement('div');
+  title.className = 'org-card-title';
+  title.textContent = '🛠️ Agent Builder Workbench';
+  const badge = document.createElement('span');
+  badge.className = 'org-card-badge';
+  badge.textContent = 'Fabrication Bench';
+  head.append(title, badge);
+
+  const desc = document.createElement('p');
+  desc.className = 'org-item-desc';
+  desc.textContent = 'Forge a specialized teammate from the ground up: choose engine, attach Persona Chip (with Central Brain inherited automatically), equip MCP capabilities and skills, and deploy into your missions.';
+  card.append(head, desc);
+
+  const form = document.createElement('div');
+  form.className = 'builder-form';
+
+  // Agent Name
+  const nameField = document.createElement('div');
+  nameField.className = 'builder-field';
+  const nameLabel = document.createElement('label');
+  nameLabel.className = 'builder-label';
+  nameLabel.textContent = 'Agent Name';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'builder-input';
+  nameInput.placeholder = 'e.g. Agent Smith, Sentinel, Lead Architect';
+  nameInput.value = 'Custom Teammate';
+  nameField.append(nameLabel, nameInput);
+
+  // Engine Select
+  const engineField = document.createElement('div');
+  engineField.className = 'builder-field';
+  const engineLabel = document.createElement('label');
+  engineLabel.className = 'builder-label';
+  engineLabel.textContent = 'CLI Engine (Vendor)';
+  const engineSelect = document.createElement('select');
+  engineSelect.className = 'builder-select';
+  for (const v of VENDORS) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = vendorName(v);
+    engineSelect.appendChild(opt);
+  }
+  engineField.append(engineLabel, engineSelect);
+
+  // Persona Chip Select
+  const chipField = document.createElement('div');
+  chipField.className = 'builder-field';
+  const chipLabel = document.createElement('label');
+  chipLabel.className = 'builder-label';
+  chipLabel.textContent = 'Assigned Persona Chip (Central Brain inherited automatically)';
+  const chipSelect = document.createElement('select');
+  chipSelect.className = 'builder-select';
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = 'Standard Teammate (Central Brain only)';
+  chipSelect.appendChild(noneOpt);
+
+  let loadedBrains = [];
+  try {
+    loadedBrains = await api.listBrains();
+    for (const b of loadedBrains) {
+      const opt = document.createElement('option');
+      opt.value = b.file;
+      opt.textContent = `${b.title} (${b.file})`;
+      chipSelect.appendChild(opt);
+    }
+  } catch (_) {}
+  chipField.append(chipLabel, chipSelect);
+
+  // Enabled Tools & MCPs
+  const toolsField = document.createElement('div');
+  toolsField.className = 'builder-field';
+  const toolsLabel = document.createElement('label');
+  toolsLabel.className = 'builder-label';
+  toolsLabel.textContent = "Capabilities (a label on the agent; it doesn't change what its CLI can do)";
+  const toolsGrid = document.createElement('div');
+  toolsGrid.className = 'builder-tools-grid';
+
+  const toolCheckboxes = {};
+  for (const [tId, tool] of Object.entries(TOOLS)) {
+    const toolItem = document.createElement('label');
+    toolItem.className = 'builder-tool-item';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.value = tId;
+    chk.checked = (tId === 'bash' || tId === 'write');
+    toolCheckboxes[tId] = chk;
+    const tText = document.createElement('span');
+    tText.textContent = tool.label;
+    toolItem.append(chk, tText);
+    toolsGrid.appendChild(toolItem);
+  }
+  toolsField.append(toolsLabel, toolsGrid);
+
+  // Action buttons
+  const actionRow = document.createElement('div');
+  actionRow.style.display = 'flex';
+  actionRow.style.gap = '.8rem';
+  actionRow.style.marginTop = '.6rem';
+
+  const deployNewBtn = document.createElement('button');
+  deployNewBtn.type = 'button';
+  deployNewBtn.className = 'org-save-btn';
+  deployNewBtn.textContent = '🚀 Deploy into New Mission Chat';
+
+  const deployCurrentBtn = document.createElement('button');
+  deployCurrentBtn.type = 'button';
+  deployCurrentBtn.className = 'org-action-btn primary';
+  deployCurrentBtn.style.padding = '.5rem 1rem';
+  deployCurrentBtn.textContent = '👥 Summon into Current Chat';
+
+  function getBuilderConfig() {
+    const aName = nameInput.value.trim() || 'Custom Agent';
+    const aVendor = engineSelect.value;
+    const bFile = chipSelect.value;
+    let bText = '';
+    const match = (loadedBrains || []).find(b => b.file === bFile);
+    if (match) bText = match.text;
+    const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
+    return { name: aName, vendor: aVendor, brain: bFile, brainText: bText, tools: selectedTools };
+  }
+
+  deployNewBtn.addEventListener('click', () => {
+    const cfg = getBuilderConfig();
+    closeOrgControl();
+    createCustomChat({ vendor: cfg.vendor, name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+  });
+
+  deployCurrentBtn.addEventListener('click', () => {
+    const cfg = getBuilderConfig();
+    closeOrgControl();
+    if (currentId) {
+      join(currentId, cfg.vendor, { name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+      showChat(currentId);
+    } else {
+      createCustomChat({ vendor: cfg.vendor, name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+    }
+  });
+
+  actionRow.append(deployNewBtn, deployCurrentBtn);
+  form.append(nameField, engineField, chipField, toolsField, actionRow);
+  card.appendChild(form);
+  panel.appendChild(card);
+}
+
 // ---- Start-up -----------------------------------------------------------------
 
 wireComposer(main);
@@ -1266,6 +2490,27 @@ wireComposer(panel);
 el.newChat.addEventListener('click', startNewChat);
 el.addAgent.addEventListener('click', () => showChooser('add'));
 el.panelClose.addEventListener('click', () => { closePanel(); main.input.focus(); });
+if (el.tabSession) el.tabSession.addEventListener('click', () => setSidecarTab('session'));
+if (el.tabPreview) el.tabPreview.addEventListener('click', () => setSidecarTab('preview'));
+if (el.tabToolbelt) el.tabToolbelt.addEventListener('click', () => setSidecarTab('toolbelt'));
+if (el.sidecarExpandBtn) el.sidecarExpandBtn.addEventListener('click', toggleSidecarExpand);
+if (el.previewReload) el.previewReload.addEventListener('click', () => { if (el.previewIframe && currentPreviewUrl) el.previewIframe.src = currentPreviewUrl; });
+if (el.previewExternal) el.previewExternal.addEventListener('click', () => { if (currentPreviewUrl) window.open(currentPreviewUrl, '_blank'); });
+if (el.previewGlanceTm58) el.previewGlanceTm58.addEventListener('click', () => glanceNotionFromText('TM-58'));
+if (el.previewGlanceTm60) el.previewGlanceTm60.addEventListener('click', () => glanceNotionFromText('TM-59'));
+
+if (el.navOrgBtn) {
+  el.navOrgBtn.addEventListener('click', () => {
+    if (isOrgControlOpen) closeOrgControl();
+    else openOrgControl('memory');
+  });
+}
+if (el.orgCloseBtn) el.orgCloseBtn.addEventListener('click', closeOrgControl);
+if (el.orgTabMemory) el.orgTabMemory.addEventListener('click', () => setOrgTab('memory'));
+if (el.orgTabPersonas) el.orgTabPersonas.addEventListener('click', () => setOrgTab('personas'));
+if (el.orgTabMcps) el.orgTabMcps.addEventListener('click', () => setOrgTab('mcps'));
+if (el.orgTabSkills) el.orgTabSkills.addEventListener('click', () => setOrgTab('skills'));
+if (el.orgTabBuilder) el.orgTabBuilder.addEventListener('click', () => setOrgTab('builder'));
 
 api.onAgentOutput(onOutput);
 api.onAgentStep(onStep);

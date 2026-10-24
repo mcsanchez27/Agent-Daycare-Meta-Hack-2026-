@@ -193,7 +193,10 @@
   // another chat: the prompt ends with that chat's answer.
   // chatTitles: the titles of Matt's other chats, so an agent can ask one with #.
   // since: resume the member's vendor session, sending only messages after this id.
-  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null } = {}) {
+  // centralBrain: Mountain Man Studios operating doctrine (TM-60 Batch 4).
+  // personaChip: dynamic persona instructions resolved from disk.
+  // brainUpdate: notification notice for resumed sessions if brain files changed.
+  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, brainUpdate = null } = {}) {
     const members = thread.members || [];
     const me = members.find(m => m.id === memberId);
     const names = nameMap(thread);
@@ -211,10 +214,15 @@
     const here = members.filter(m => !m.left);
     // Roles (TM-59): each agent knows its own brief and who does what.
     const roleOf = (m) => (m.role && ROLES[m.role] ? ROLES[m.role] : null);
+    const effectivePersona = (personaChip || me.brainText || '').trim();
+    const brain = effectivePersona ? `Your assigned persona directives:\n${effectivePersona} ` : '';
+    const central = centralBrain ? `Central Brain directives:\n${centralBrain.trim()} ` : '';
     const intro = (here.length === 1
       ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
       : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring another agent in, write @Name in your reply; only do that when you need it to act, since every @ launches it (not to thank or agree). `) +
-      (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '');
+      (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '') +
+      (central ? central : '') +
+      (brain ? brain : '');
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
       (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
@@ -250,7 +258,7 @@
       used += line.length;
     }
 
-    const parts = since === null ? [header] : [];
+    const parts = since === null ? [header] : (brainUpdate ? [`[Notice: Central Brain or Persona Chip updated on disk:\n${brainUpdate.trim()}]`] : []);
     if (memory && since === null) parts.push(memory);
     if (history.length) parts.push((since === null ? 'Recent conversation:\n' : 'New in this chat since your last reply:\n') + history.join('\n\n'));
     if (answers && answers.length === 1) {
@@ -314,7 +322,7 @@
     const memberMaps = [a, b].map(t => {
       const map = {};
       for (const m of t.members) {
-        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null },{ vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null, brain: m.brain || null, brainText: m.brainText || null, tools: m.tools || null },{ vendorNames: { ...vendorNames, [m.vendor]: m.name } });
         if (m.left) fresh.left = true;
         members.push(fresh);
         map[m.id] = fresh.id;
