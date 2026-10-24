@@ -46,7 +46,16 @@ const el = {
   panel: $('thread-panel'),
   panelLabel: $('panel-label'),
   panelClose: $('panel-close'),
-  plan: $('plan')
+  plan: $('plan'),
+  sidecar: $('sidecar'),
+  sidecarContent: $('sidecar-content'),
+  chatHeaderTitle: $('chat-header-title'),
+  sidecarFolder: $('sidecar-folder'),
+  sidecarModels: $('sidecar-models'),
+  contextGaugeLabel: $('context-gauge-label'),
+  contextGaugeVal: $('context-gauge-val'),
+  contextBar: $('context-bar'),
+  sidecarPlanWrap: $('sidecar-plan-wrap')
 };
 
 // The two places messages show: the main chat, and the thread panel beside
@@ -232,10 +241,13 @@ async function openChat(id) {
 function showChat(id) {
   currentId = id;
   closePanel();
+  const c = current();
+  if (el.chatHeaderTitle) el.chatHeaderTitle.textContent = c ? c.title : 'Chat';
   // Each chat's agents work in a folder of their own (TM-59).
   if (workingDir) el.folder.textContent = `Working folder: ${workingDir}\\${id}`;
   renderChatList();
   renderMembers();
+  renderSidecar();
   renderView(main);
   updatePlaceholder(main);
   updateSendButtons();
@@ -247,6 +259,7 @@ function openPanel(rootId) {
   const root = current().thread.messages.find(m => m.id === rootId);
   if (!root) return;
   panel.threadOf = rootId;
+  if (el.sidecarContent) el.sidecarContent.hidden = true;
   el.panel.hidden = false;
   el.panelLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : nameOf(root.from) + "'s"} message`;
   renderView(panel);
@@ -261,6 +274,8 @@ function closePanel() {
   panel.threadOf = null;
   panel.list.replaceChildren();
   el.panel.hidden = true;
+  if (el.sidecarContent) el.sidecarContent.hidden = false;
+  if (currentId) renderSidecar();
 }
 
 // Whether a message belongs in a view. The panel shows the thread's first message too.
@@ -290,6 +305,10 @@ function renderChatList() {
     item.type = 'button';
     item.className = 'chat-item' + (chat.id === currentId && el.chooser.hidden ? ' active' : '');
     item.title = chat.title;
+
+    const headerRow = document.createElement('div');
+    headerRow.className = 'chat-header-row';
+
     const title = document.createElement('span');
     title.className = 'chat-title';
     title.textContent = chat.title;
@@ -298,6 +317,21 @@ function renderChatList() {
     const busy = Object.values(pending).filter(p => p.chatId === chat.id).length;
     when.textContent = busy ? 'working…' : dayLabel(chat.updatedAt);
     if (busy) item.classList.add('busy');
+    headerRow.append(title, when);
+
+    const agentsRow = document.createElement('div');
+    agentsRow.className = 'chat-agents';
+    if (chat.thread && chat.thread.members) {
+      for (const m of chat.thread.members) {
+        if (m.left) continue;
+        const dot = document.createElement('span');
+        dot.className = 'chat-agent-dot';
+        dot.style.setProperty('--agent-color', vendors[m.vendor] ? vendors[m.vendor].color : '#888');
+        dot.title = m.name;
+        agentsRow.appendChild(dot);
+      }
+    }
+
     const rename = document.createElement('span');
     rename.className = 'chat-rename';
     rename.textContent = '✎';
@@ -308,7 +342,7 @@ function renderChatList() {
     merge.textContent = '⇆';
     merge.title = 'Merge with another chat (makes a new chat; both stay)';
     merge.addEventListener('click', (e) => { e.stopPropagation(); showChooser('merge', chat.id); });
-    item.append(title, when, rename, merge);
+    item.append(headerRow, agentsRow, rename, merge);
     // The first click opens the chat and redraws this list, so a double-click
     // never lands on one element: the second click's count says it instead.
     item.addEventListener('click', (e) => (e.detail >= 2 ? editTitle(chat, item) : openChat(chat.id)));
@@ -390,6 +424,110 @@ function renderMembers() {
     }
     el.members.appendChild(chip);
   }
+  renderSidecar();
+}
+
+// Sidecar (TM-60): Right rail displaying live session telemetry, context gauges,
+// active models, and workspace folder.
+function renderSidecar() {
+  if (!el.sidecar) return;
+  const c = current();
+  if (!c) {
+    if (el.sidecarModels) el.sidecarModels.replaceChildren();
+    if (el.contextGaugeVal) el.contextGaugeVal.textContent = '0 tokens';
+    if (el.contextBar) el.contextBar.style.width = '0%';
+    if (el.sidecarFolder) el.sidecarFolder.textContent = '—';
+    if (el.sidecarPlanWrap) el.sidecarPlanWrap.replaceChildren();
+    return;
+  }
+
+  // Workspace folder
+  if (el.sidecarFolder) {
+    const fPath = workingDir ? `${workingDir}\\${c.id}` : '—';
+    el.sidecarFolder.textContent = fPath;
+    el.sidecarFolder.title = fPath;
+  }
+
+  // Context gauge and tokens
+  let totalTokens = 0;
+  let maxWindow = 0;
+  for (const m of c.thread.members) {
+    if (m.left) continue;
+    if (m.usage && m.usage.inputTokens) {
+      totalTokens += m.usage.inputTokens;
+      if (m.usage.contextWindow && m.usage.contextWindow > maxWindow) {
+        maxWindow = m.usage.contextWindow;
+      }
+    }
+  }
+
+  if (el.contextGaugeVal && el.contextBar) {
+    if (maxWindow > 0) {
+      const pct = Math.min(100, (100 * totalTokens) / maxWindow);
+      el.contextGaugeVal.textContent = `${tokens(totalTokens)} / ${tokens(maxWindow)}`;
+      el.contextBar.style.width = `${pct.toFixed(1)}%`;
+      el.contextBar.title = `${totalTokens.toLocaleString()} of ${maxWindow.toLocaleString()} tokens (${pct.toFixed(1)}%)`;
+    } else if (totalTokens > 0) {
+      el.contextGaugeVal.textContent = `${tokens(totalTokens)} tokens`;
+      el.contextBar.style.width = '25%';
+      el.contextBar.title = `${totalTokens.toLocaleString()} tokens read in last responses`;
+    } else {
+      el.contextGaugeVal.textContent = '0 tokens';
+      el.contextBar.style.width = '0%';
+      el.contextBar.title = 'No token usage recorded yet';
+    }
+  }
+
+  // Claude plan info
+  if (el.sidecarPlanWrap) {
+    el.sidecarPlanWrap.replaceChildren();
+    const p = plans.claude;
+    if (p) {
+      const pct = (w) => (w ? `${Math.round(w.used * 100)}%` : '?');
+      const planDiv = document.createElement('div');
+      planDiv.className = 'sidecar-plan' + (p.status && p.status !== 'allowed' || (p.fiveHour && p.fiveHour.used >= 0.8) ? ' warn' : '');
+      planDiv.textContent = `Claude plan: 5h ${pct(p.fiveHour)} · 7d ${pct(p.sevenDay)}`;
+      el.sidecarPlanWrap.appendChild(planDiv);
+    }
+  }
+
+  // Active models
+  if (el.sidecarModels) {
+    el.sidecarModels.replaceChildren();
+    for (const m of c.thread.members) {
+      if (m.left) continue;
+      const working = Boolean(pending[runKeyOf(c.id, m.id)]);
+      const item = document.createElement('div');
+      item.className = 'sidecar-model-item' + (working ? ' working' : '');
+
+      const left = document.createElement('div');
+      left.className = 'sidecar-model-left';
+
+      const dot = document.createElement('span');
+      dot.className = 'sidecar-model-dot';
+      dot.style.setProperty('--agent-color', vendors[m.vendor] ? vendors[m.vendor].color : '#888');
+
+      const name = document.createElement('span');
+      name.className = 'sidecar-model-name';
+      name.textContent = m.name;
+
+      left.append(dot, name);
+
+      if (m.role && ROLES[m.role]) {
+        const role = document.createElement('span');
+        role.className = 'sidecar-model-role';
+        role.textContent = ROLES[m.role].label;
+        left.appendChild(role);
+      }
+
+      const status = document.createElement('span');
+      status.className = 'sidecar-model-status';
+      status.textContent = working ? 'working…' : modelText(m);
+
+      item.append(left, status);
+      el.sidecarModels.appendChild(item);
+    }
+  }
 }
 
 // 66501 -> "67k", 1000000 -> "1M".
@@ -402,13 +540,15 @@ function tokens(n) {
 function renderPlan() {
   const p = plans.claude;
   el.plan.hidden = !p;
-  if (!p) return;
-  const pct = (w) => (w ? `${Math.round(w.used * 100)}%` : '?');
-  const when = (w) => (w && w.resetsAt ? new Date(w.resetsAt * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'unknown');
-  el.plan.textContent = `Claude plan · 5h ${pct(p.fiveHour)} · 7d ${pct(p.sevenDay)}`;
-  el.plan.title = `5-hour window resets ${when(p.fiveHour)}; 7-day window resets ${when(p.sevenDay)}.` +
-    (p.status && p.status !== 'allowed' ? `\nStatus: ${p.status}.` : '') + `\nAs of ${new Date(p.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
-  el.plan.classList.toggle('warn', p.status !== 'allowed' || (p.fiveHour && p.fiveHour.used >= 0.8));
+  if (p) {
+    const pct = (w) => (w ? `${Math.round(w.used * 100)}%` : '?');
+    const when = (w) => (w && w.resetsAt ? new Date(w.resetsAt * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'unknown');
+    el.plan.textContent = `Claude plan · 5h ${pct(p.fiveHour)} · 7d ${pct(p.sevenDay)}`;
+    el.plan.title = `5-hour window resets ${when(p.fiveHour)}; 7-day window resets ${when(p.sevenDay)}.` +
+      (p.status && p.status !== 'allowed' ? `\nStatus: ${p.status}.` : '') + `\nAs of ${new Date(p.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    el.plan.classList.toggle('warn', p.status !== 'allowed' || (p.fiveHour && p.fiveHour.used >= 0.8));
+  }
+  renderSidecar();
 }
 
 // Adds a message to a chat (open or not), saves it, and draws it wherever it shows.
@@ -444,11 +584,16 @@ function showChooser(mode = 'new', vendor = null) {
   closeMentions(main);
   renderChatList();
   el.chooser.replaceChildren();
+
+  const card = document.createElement('div');
+  card.className = 'chooser-card';
+  el.chooser.appendChild(card);
+
   const h = document.createElement('h2');
-  el.chooser.appendChild(h);
+  card.appendChild(h);
   const options = document.createElement('div');
   options.className = 'options';
-  el.chooser.appendChild(options);
+  card.appendChild(options);
   const option = (label, sub, color, onClick) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -482,7 +627,7 @@ function showChooser(mode = 'new', vendor = null) {
     const note = document.createElement('p');
     note.className = 'chooser-note';
     note.textContent = 'This makes a new chat with both chats\' agents and messages. Both chats stay as they are.';
-    el.chooser.insertBefore(note, options);
+    card.insertBefore(note, options);
     for (const c of [...chats.values()].filter(c => c.id !== first.id).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))) {
       option(c.title, dayLabel(c.updatedAt), null, () => mergeChats(first, c));
     }
@@ -523,7 +668,7 @@ function showChooser(mode = 'new', vendor = null) {
       const note = document.createElement('p');
       note.className = 'chooser-note';
       note.textContent = "Couldn't get Gemini's model list (agy models), so only its default is offered.";
-      el.chooser.appendChild(note);
+      card.appendChild(note);
     }
     if (vendor === 'codex') {
       // Codex can't list its models, so its model is typed.
@@ -542,7 +687,7 @@ function showChooser(mode = 'new', vendor = null) {
         if (MODEL_TEXT.test(input.value.trim())) pick('codex', input.value.trim(), input.value.trim());
       });
       row.append(input, use);
-      el.chooser.appendChild(row);
+      card.appendChild(row);
     }
   }
   const nav = document.createElement('div');
@@ -562,7 +707,12 @@ function showChooser(mode = 'new', vendor = null) {
     cancel.addEventListener('click', () => openChat(returnTo.id));
     nav.appendChild(cancel);
   }
-  el.chooser.appendChild(nav);
+  card.appendChild(nav);
+  el.chooser.onclick = (e) => {
+    if (e.target === el.chooser && returnTo) {
+      openChat(returnTo.id);
+    }
+  };
 }
 
 // Two chats into a new group chat (TM-54 Batch 6). Both originals stay.

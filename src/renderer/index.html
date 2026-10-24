@@ -8,15 +8,31 @@
 </head>
 <body>
   <aside class="sidebar">
-    <div class="brand">Agent Daycare</div>
+    <div class="brand">
+      <span class="brand-sparkle">✨</span>
+      <span class="brand-name">Agent Daycare</span>
+    </div>
     <div class="plan" id="plan" hidden></div>
     <button type="button" class="new-chat" id="new-chat">+ New chat</button>
+    <div class="sidebar-section-label">Recent Chats</div>
     <nav class="chat-list" id="chat-list" aria-label="Chats"></nav>
+    <div class="sidebar-footer">
+      <div class="user-badge">
+        <span class="user-avatar">M</span>
+        <div class="user-info">
+          <span class="user-name">Matt</span>
+          <span class="user-role">Operator</span>
+        </div>
+      </div>
+    </div>
   </aside>
 
   <section class="chat">
     <header class="top">
-      <div class="members" id="members" aria-label="Agents in this chat"></div>
+      <div class="chat-header-info">
+        <span class="chat-header-title" id="chat-header-title">Chat</span>
+        <div class="members" id="members" aria-label="Agents in this chat"></div>
+      </div>
       <button type="button" class="add-agent" id="add-agent" title="Add a new agent, or one from another chat">+ Add agent</button>
       <div class="folder" id="folder" title="Agents work in this folder">Working folder: …</div>
     </header>
@@ -30,26 +46,67 @@
     <form class="composer" id="composer" autocomplete="off">
       <div class="mentions" id="mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
       <div class="input-row">
-        <textarea id="message" rows="1" placeholder="Message Claude… (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
-        <button type="submit" id="send">Send</button>
+        <textarea id="message" rows="1" placeholder="Message your crew… (Enter to send, Shift+Enter for newline, @ or # for mentions)" aria-label="Message"></textarea>
+        <button type="submit" id="send" title="Send message">
+          <span class="send-arrow">↑</span>
+        </button>
       </div>
     </form>
   </section>
 
-  <!-- Threads open beside the main chat (TM-54 Batch 4). -->
-  <aside class="thread-panel" id="thread-panel" hidden aria-label="Thread">
-    <header class="panel-top">
-      <span class="panel-label" id="panel-label">Thread</span>
-      <button type="button" class="panel-close" id="panel-close" title="Close the thread">×</button>
-    </header>
-    <div class="thread" id="panel-thread" aria-live="polite"></div>
-    <form class="composer" id="panel-composer" autocomplete="off">
-      <div class="mentions" id="panel-mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
-      <div class="input-row">
-        <textarea id="panel-message" rows="1" aria-label="Reply in the thread"></textarea>
-        <button type="submit" id="panel-send">Send</button>
+  <!-- Right sidecar: Session Info (Context, Tokens, Models, Workspace) & Threads -->
+  <aside class="sidecar" id="sidecar" aria-label="Session Info">
+    <div class="sidecar-content" id="sidecar-content">
+      <div class="sidecar-header">
+        <span class="sidecar-title">Session Info</span>
       </div>
-    </form>
+      <div class="sidecar-section">
+        <div class="sidecar-section-title">Context & Usage</div>
+        <div id="sidecar-context" class="sidecar-context">
+          <div class="context-gauge-row">
+            <span class="context-gauge-label" id="context-gauge-label">Context Window</span>
+            <span class="context-gauge-val" id="context-gauge-val">0 tokens</span>
+          </div>
+          <div class="context-bar-wrap">
+            <div class="context-bar" id="context-bar" style="width: 0%;"></div>
+          </div>
+          <div class="sidecar-plan-wrap" id="sidecar-plan-wrap"></div>
+        </div>
+      </div>
+
+      <div class="sidecar-section">
+        <div class="sidecar-section-title">Active Models</div>
+        <div id="sidecar-models" class="sidecar-models"></div>
+      </div>
+
+      <div class="sidecar-section">
+        <div class="sidecar-section-title">Workspace</div>
+        <div class="sidecar-workspace" id="sidecar-workspace">
+          <div class="workspace-row">
+            <span class="workspace-label">Folder</span>
+            <span class="workspace-val" id="sidecar-folder">…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Threads open inside the sidecar when active (TM-54 Batch 4) -->
+    <div class="thread-panel" id="thread-panel" hidden aria-label="Thread">
+      <header class="panel-top">
+        <span class="panel-label" id="panel-label">Thread</span>
+        <button type="button" class="panel-close" id="panel-close" title="Close the thread">×</button>
+      </header>
+      <div class="thread" id="panel-thread" aria-live="polite"></div>
+      <form class="composer panel-composer-dock" id="panel-composer" autocomplete="off">
+        <div class="mentions" id="panel-mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
+        <div class="input-row">
+          <textarea id="panel-message" rows="1" placeholder="Reply in thread…" aria-label="Reply in the thread"></textarea>
+          <button type="submit" id="panel-send" title="Send reply">
+            <span class="send-arrow">↑</span>
+          </button>
+        </div>
+      </form>
+    </div>
   </aside>
 
   <script src="members.js"></script>
