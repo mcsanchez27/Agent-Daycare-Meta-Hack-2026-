@@ -108,3 +108,19 @@ test('all personas have corresponding brain files on disk and valid toolsets (TM
     assert.ok(Array.isArray(p.tools) && p.tools.length > 0, `${key} missing tools`);
   }
 });
+
+test('skills library and mcp catalog files exist on disk with valid structure (TM-60 Batch 5)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const skillsDir = path.join(__dirname, '..', 'skills');
+  assert.ok(fs.existsSync(skillsDir), 'skills directory must exist');
+  const skillFiles = fs.readdirSync(skillsDir).filter(f => f.endsWith('.md'));
+  assert.ok(skillFiles.length >= 4, `expected at least 4 skill playbooks, found ${skillFiles.length}`);
+
+  const mcpFile = path.join(__dirname, '..', 'mcp-servers.json');
+  assert.ok(fs.existsSync(mcpFile), 'mcp-servers.json must exist');
+  const mcps = JSON.parse(fs.readFileSync(mcpFile, 'utf8'));
+  assert.ok(Array.isArray(mcps) && mcps.length >= 4, 'mcp catalog must have servers');
+  assert.ok(mcps.some(s => s.name === 'StitchMCP'));
+  assert.ok(mcps.some(s => s.name === 'Notion MCP'));
+});

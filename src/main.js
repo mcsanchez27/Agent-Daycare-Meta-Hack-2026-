@@ -206,6 +206,112 @@ handle('brains:resolve', async ({ personaFile } = {}) => {
   return { central, persona };
 });
 
+handle('brains:save-central', async ({ text }) => {
+  const centralFile = path.join(brainsDir, 'central-brain.md');
+  await fs.promises.writeFile(centralFile, text, 'utf8');
+  const stat = await fs.promises.stat(centralFile);
+  logger.info('app', 'central brain updated', { mtime: stat.mtimeMs });
+  return { file: 'central-brain.md', text, mtime: stat.mtimeMs };
+});
+
+handle('brains:save-persona', async ({ file, text }) => {
+  const clean = path.basename(file);
+  if (!clean.endsWith('.md')) throw new Error('Persona file must be a .md file');
+  const personaFile = path.join(brainsDir, clean);
+  await fs.promises.writeFile(personaFile, text, 'utf8');
+  const stat = await fs.promises.stat(personaFile);
+  logger.info('app', 'persona chip updated', { file: clean, mtime: stat.mtimeMs });
+  return { file: clean, text, mtime: stat.mtimeMs };
+});
+
+handle('brains:create-persona', async ({ name, text }) => {
+  let slug = (name || 'custom-persona').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (!slug) slug = 'custom-persona';
+  let fileName = `${slug}.md`;
+  let counter = 1;
+  while (await fs.promises.access(path.join(brainsDir, fileName)).then(() => true).catch(() => false)) {
+    fileName = `${slug}-${++counter}.md`;
+  }
+  const fullPath = path.join(brainsDir, fileName);
+  const initialText = text || `# Role: ${name}\n\nCustom directives for ${name}.`;
+  await fs.promises.writeFile(fullPath, initialText, 'utf8');
+  const stat = await fs.promises.stat(fullPath);
+  logger.info('app', 'persona chip created', { file: fileName, mtime: stat.mtimeMs });
+  return { file: fileName, text: initialText, mtime: stat.mtimeMs };
+});
+
+const skillsDir = path.join(__dirname, '..', 'skills');
+handle('skills:list', async () => {
+  try {
+    if (!await fs.promises.access(skillsDir).then(() => true).catch(() => false)) return [];
+    const files = await fs.promises.readdir(skillsDir);
+    const mdFiles = files.filter(f => f.endsWith('.md'));
+    const list = await Promise.all(mdFiles.map(async (file) => {
+      const text = await fs.promises.readFile(path.join(skillsDir, file), 'utf8');
+      const titleMatch = /^#\s*(.+)$/m.exec(text);
+      return { file, title: titleMatch ? titleMatch[1] : file, text };
+    }));
+    return list;
+  } catch (_) {
+    return [];
+  }
+});
+
+handle('skills:save', async ({ file, text }) => {
+  const clean = path.basename(file);
+  if (!clean.endsWith('.md')) throw new Error('Skill file must be a .md file');
+  const skillFile = path.join(skillsDir, clean);
+  await fs.promises.mkdir(skillsDir, { recursive: true });
+  await fs.promises.writeFile(skillFile, text, 'utf8');
+  return { file: clean, text };
+});
+
+handle('skills:create', async ({ name, text }) => {
+  let slug = (name || 'custom-skill').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (!slug) slug = 'custom-skill';
+  let fileName = `${slug}.md`;
+  let counter = 1;
+  await fs.promises.mkdir(skillsDir, { recursive: true });
+  while (await fs.promises.access(path.join(skillsDir, fileName)).then(() => true).catch(() => false)) {
+    fileName = `${slug}-${++counter}.md`;
+  }
+  const fullPath = path.join(skillsDir, fileName);
+  const initialText = text || `# ${name}\n\nSkill playbook and directives.`;
+  await fs.promises.writeFile(fullPath, initialText, 'utf8');
+  return { file: fileName, text: initialText };
+});
+
+const mcpFile = path.join(__dirname, '..', 'mcp-servers.json');
+handle('mcp:list', async () => {
+  try {
+    const raw = await fs.promises.readFile(mcpFile, 'utf8');
+    return JSON.parse(raw);
+  } catch (_) {
+    return [];
+  }
+});
+
+handle('mcp:save', async ({ server }) => {
+  try {
+    let list = [];
+    try {
+      const raw = await fs.promises.readFile(mcpFile, 'utf8');
+      list = JSON.parse(raw);
+    } catch (_) {}
+    const idx = list.findIndex(s => s.id === server.id || s.name === server.name);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...server };
+    } else {
+      list.push({ ...server, id: server.id || server.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') });
+    }
+    await fs.promises.writeFile(mcpFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
+    return list;
+  } catch (err) {
+    logger.warn('app', 'failed to save mcp config', { error: err.message });
+    throw err;
+  }
+});
+
 // Saved chats (TM-53 Batch 2)
 handle('chats:list', async () => {
   const r = await chats.list(chatsDir);

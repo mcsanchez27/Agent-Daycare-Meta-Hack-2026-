@@ -77,7 +77,16 @@ const el = {
   notionTasks: $('notion-tasks'),
   notionLink: $('notion-link'),
   previewGlanceTm58: $('preview-glance-tm58'),
-  previewGlanceTm60: $('preview-glance-tm60')
+  previewGlanceTm60: $('preview-glance-tm60'),
+  navOrgBtn: $('nav-org-btn'),
+  orgControl: $('org-control'),
+  orgCloseBtn: $('org-close-btn'),
+  orgBody: $('org-body'),
+  orgTabMemory: $('org-tab-memory'),
+  orgTabPersonas: $('org-tab-personas'),
+  orgTabMcps: $('org-tab-mcps'),
+  orgTabSkills: $('org-tab-skills'),
+  orgTabBuilder: $('org-tab-builder')
 };
 
 // The two places messages show: the main chat, and the thread panel beside
@@ -170,6 +179,7 @@ function newChatId() {
 // A new chat starts by picking its agent: vendor, then model (TM-54). It is
 // only saved once something is said in it, so empty chats don't pile up.
 function startNewChat() {
+  closeOrgControl();
   const c = current();
   if (c && c.thread && c.thread.messages.length === 0) chats.delete(c.id);
   showChooser('new');
@@ -274,6 +284,7 @@ async function openChat(id) {
 }
 
 function showChat(id) {
+  closeOrgControl();
   currentId = id;
   closePanel();
   const c = current();
@@ -831,6 +842,7 @@ function post(chatId, message) {
 // agent from another chat). vendor: the vendor picked so far, if any.
 
 function showChooser(mode = 'new', vendor = null) {
+  closeOrgControl();
   el.chooser.hidden = false;
   el.chooser.dataset.mode = mode;
   el.chooser.dataset.vendor = vendor || '';
@@ -1864,6 +1876,639 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
   updateSendButtons();
 }
 
+// ---- Organization Control Deck (TM-60 Batch 5) -----------------------------
+
+let isOrgControlOpen = false;
+let activeOrgTab = 'memory'; // 'memory' | 'personas' | 'mcps' | 'skills' | 'builder'
+
+function openOrgControl(tab = 'memory') {
+  isOrgControlOpen = true;
+  activeOrgTab = tab;
+  if (el.orgControl) el.orgControl.hidden = false;
+  if (el.navOrgBtn) el.navOrgBtn.classList.add('active');
+  hideChooser();
+  renderOrgDeck();
+}
+
+function closeOrgControl() {
+  isOrgControlOpen = false;
+  if (el.orgControl) el.orgControl.hidden = true;
+  if (el.navOrgBtn) el.navOrgBtn.classList.remove('active');
+}
+
+function setOrgTab(tab) {
+  activeOrgTab = tab;
+  renderOrgDeck();
+}
+
+function getChipDeploymentStats() {
+  const stats = {};
+  for (const [cId, chat] of chats) {
+    if (!chat || !chat.thread || !chat.thread.members) continue;
+    for (const m of chat.thread.members) {
+      if (m.left) continue;
+      const b = m.brain || 'unassigned';
+      if (!stats[b]) stats[b] = [];
+      stats[b].push({ chatId: cId, chatTitle: chat.title || 'Untitled', memberName: m.name, vendor: m.vendor });
+    }
+  }
+  return stats;
+}
+
+async function renderOrgDeck() {
+  if (!el.orgBody) return;
+  el.orgBody.replaceChildren();
+
+  const tabBtns = [el.orgTabMemory, el.orgTabPersonas, el.orgTabMcps, el.orgTabSkills, el.orgTabBuilder];
+  tabBtns.forEach(btn => {
+    if (btn) btn.classList.toggle('active', btn.dataset.tab === activeOrgTab);
+  });
+
+  const panel = document.createElement('div');
+  panel.className = 'org-panel';
+  el.orgBody.appendChild(panel);
+
+  if (activeOrgTab === 'memory') {
+    await renderOrgMemory(panel);
+  } else if (activeOrgTab === 'personas') {
+    await renderOrgPersonas(panel);
+  } else if (activeOrgTab === 'mcps') {
+    await renderOrgMcps(panel);
+  } else if (activeOrgTab === 'skills') {
+    await renderOrgSkills(panel);
+  } else if (activeOrgTab === 'builder') {
+    await renderOrgBuilder(panel);
+  }
+}
+
+async function renderOrgMemory(panel) {
+  const card = document.createElement('div');
+  card.className = 'org-section-card';
+
+  const head = document.createElement('div');
+  head.className = 'org-card-head';
+  const title = document.createElement('div');
+  title.className = 'org-card-title';
+  title.textContent = '🧠 Central Brain (MMS Operating Doctrine)';
+  const badge = document.createElement('span');
+  badge.className = 'org-card-badge';
+  badge.textContent = '● Active across all agents · Synced';
+  head.append(title, badge);
+
+  const desc = document.createElement('p');
+  desc.className = 'org-item-desc';
+  desc.textContent = 'Foundational institutional memory, workspace boundaries, engine labor division, and collaboration rules. Automatically inherited by every teammate across all chats. Save to hot-reload directly into all active sessions.';
+
+  const editorWrap = document.createElement('div');
+  editorWrap.className = 'org-editor-wrap';
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'org-textarea';
+  textarea.rows = 15;
+
+  let centralData = null;
+  try {
+    centralData = await api.getCentralBrain();
+    if (centralData) textarea.value = centralData.text;
+  } catch (_) {}
+
+  const actions = document.createElement('div');
+  actions.className = 'org-editor-actions';
+
+  const meta = document.createElement('div');
+  meta.className = 'org-meta-info';
+  meta.textContent = centralData ? `File: brains/${centralData.file} · Synced: ${new Date(centralData.mtime).toLocaleTimeString()}` : 'File: brains/central-brain.md';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'org-save-btn';
+  saveBtn.textContent = '💾 Save & Push to All Active Agents';
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      const res = await api.saveCentralBrain(textarea.value);
+      saveBtn.textContent = '✓ Pushed to All Agents!';
+      meta.textContent = `File: brains/${res.file} · Pushed: ${new Date(res.mtime).toLocaleTimeString()}`;
+      setTimeout(() => {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '💾 Save & Push to All Active Agents';
+      }, 2000);
+    } catch (_) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Error saving';
+    }
+  });
+
+  actions.append(meta, saveBtn);
+  editorWrap.append(textarea, actions);
+  card.append(head, desc, editorWrap);
+  panel.appendChild(card);
+}
+
+async function renderOrgPersonas(panel) {
+  const stats = getChipDeploymentStats();
+
+  const topCard = document.createElement('div');
+  topCard.className = 'org-section-card';
+  const topHead = document.createElement('div');
+  topHead.className = 'org-card-head';
+  const topTitle = document.createElement('div');
+  topTitle.className = 'org-card-title';
+  topTitle.textContent = '💾 Specialized Persona Chips (Operational Roles)';
+  const topBadge = document.createElement('span');
+  topBadge.className = 'org-card-badge';
+  topBadge.textContent = 'Dynamic Disk Hot-Reloading';
+  topHead.append(topTitle, topBadge);
+
+  const topDesc = document.createElement('p');
+  topDesc.className = 'org-item-desc';
+  topDesc.textContent = 'Specialized persona directives layered on top of the Central Brain. Track deployment across active chats and edit chip directives directly on disk.';
+  topCard.append(topHead, topDesc);
+  panel.appendChild(topCard);
+
+  // Chip creation card
+  const createCard = document.createElement('div');
+  createCard.className = 'org-section-card';
+  const createTitle = document.createElement('div');
+  createTitle.className = 'org-card-title';
+  createTitle.textContent = '➕ Forge New Persona Chip';
+  const formRow = document.createElement('div');
+  formRow.className = 'org-form-row';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'org-input';
+  nameInput.placeholder = 'Chip Name (e.g. Database Architect, Fuzzing Specialist)';
+  const createBtn = document.createElement('button');
+  createBtn.type = 'button';
+  createBtn.className = 'org-action-btn primary';
+  createBtn.textContent = 'Forge Chip';
+  formRow.append(nameInput, createBtn);
+  createCard.append(createTitle, formRow);
+
+  createBtn.addEventListener('click', async () => {
+    const val = nameInput.value.trim();
+    if (!val) return;
+    createBtn.disabled = true;
+    try {
+      await api.createPersonaBrain(val);
+      nameInput.value = '';
+      renderOrgDeck();
+    } catch (_) {
+      createBtn.disabled = false;
+    }
+  });
+  panel.appendChild(createCard);
+
+  // List chips in grid
+  const grid = document.createElement('div');
+  grid.className = 'org-grid-2';
+
+  let brains = [];
+  try {
+    brains = await api.listBrains();
+  } catch (_) {}
+
+  for (const b of brains) {
+    const chipCard = document.createElement('div');
+    chipCard.className = 'org-item-card';
+
+    const cHead = document.createElement('div');
+    cHead.className = 'org-item-head';
+    const cTitle = document.createElement('div');
+    cTitle.className = 'org-item-title';
+    cTitle.textContent = b.title || b.file;
+
+    const deployed = stats[b.file] || [];
+    const invBadge = document.createElement('span');
+    invBadge.className = 'org-inventory-badge';
+    invBadge.textContent = deployed.length ? `● ${deployed.length} active agent${deployed.length > 1 ? 's' : ''}` : '○ 0 deployed';
+    cHead.append(cTitle, invBadge);
+
+    const cDesc = document.createElement('div');
+    cDesc.className = 'org-item-desc';
+    if (deployed.length) {
+      cDesc.textContent = `Deployed in: ${deployed.map(d => `${d.memberName} ("${d.chatTitle}")`).join(', ')}`;
+    } else {
+      cDesc.textContent = `File: brains/${b.file} · Ready to equip on any teammate.`;
+    }
+
+    const editorBox = document.createElement('textarea');
+    editorBox.className = 'org-textarea';
+    editorBox.style.minHeight = '140px';
+    editorBox.value = b.text;
+    editorBox.hidden = true;
+
+    const actions = document.createElement('div');
+    actions.className = 'org-item-actions';
+    const toggleEditBtn = document.createElement('button');
+    toggleEditBtn.type = 'button';
+    toggleEditBtn.className = 'org-action-btn';
+    toggleEditBtn.textContent = 'Edit Directives';
+
+    const saveChipBtn = document.createElement('button');
+    saveChipBtn.type = 'button';
+    saveChipBtn.className = 'org-action-btn primary';
+    saveChipBtn.textContent = 'Save & Push Down';
+    saveChipBtn.hidden = true;
+
+    toggleEditBtn.addEventListener('click', () => {
+      const isEditing = !editorBox.hidden;
+      editorBox.hidden = isEditing;
+      saveChipBtn.hidden = isEditing;
+      toggleEditBtn.textContent = isEditing ? 'Edit Directives' : 'Collapse';
+    });
+
+    saveChipBtn.addEventListener('click', async () => {
+      saveChipBtn.disabled = true;
+      saveChipBtn.textContent = 'Saving…';
+      try {
+        await api.savePersonaBrain(b.file, editorBox.value);
+        saveChipBtn.textContent = '✓ Saved!';
+        setTimeout(() => {
+          saveChipBtn.disabled = false;
+          saveChipBtn.textContent = 'Save & Push Down';
+        }, 1500);
+      } catch (_) {
+        saveChipBtn.disabled = false;
+        saveChipBtn.textContent = 'Error';
+      }
+    });
+
+    actions.append(toggleEditBtn, saveChipBtn);
+    chipCard.append(cHead, cDesc, editorBox, actions);
+    grid.appendChild(chipCard);
+  }
+  panel.appendChild(grid);
+}
+
+async function renderOrgMcps(panel) {
+  const topCard = document.createElement('div');
+  topCard.className = 'org-section-card';
+  const topHead = document.createElement('div');
+  topHead.className = 'org-card-head';
+  const topTitle = document.createElement('div');
+  topTitle.className = 'org-card-title';
+  topTitle.textContent = '🔌 MCP Directory & Integration Registry';
+  const topBadge = document.createElement('span');
+  topBadge.className = 'org-card-badge';
+  topBadge.textContent = 'Connected Tools';
+  topHead.append(topTitle, topBadge);
+
+  const topDesc = document.createElement('p');
+  topDesc.className = 'org-item-desc';
+  topDesc.textContent = 'Model Context Protocol (MCP) servers connected to Mountain Man Studios teammates. Equip these capabilities on custom agents in the Agent Builder.';
+  topCard.append(topHead, topDesc);
+  panel.appendChild(topCard);
+
+  // Add MCP Server Card
+  const addCard = document.createElement('div');
+  addCard.className = 'org-section-card';
+  const addTitle = document.createElement('div');
+  addTitle.className = 'org-card-title';
+  addTitle.textContent = '➕ Add MCP Server';
+  const formRow = document.createElement('div');
+  formRow.className = 'org-form-row';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'org-input';
+  nameInput.placeholder = 'Server Name (e.g. SQLite MCP, Slack MCP)';
+  const cmdInput = document.createElement('input');
+  cmdInput.className = 'org-input';
+  cmdInput.placeholder = 'Command (e.g. npx -y @modelcontextprotocol/server-sqlite)';
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'org-action-btn primary';
+  addBtn.textContent = 'Register Server';
+  formRow.append(nameInput, cmdInput, addBtn);
+  addCard.append(addTitle, formRow);
+
+  addBtn.addEventListener('click', async () => {
+    const sName = nameInput.value.trim();
+    const sCmd = cmdInput.value.trim();
+    if (!sName || !sCmd) return;
+    addBtn.disabled = true;
+    try {
+      await api.saveMcp({ name: sName, command: sCmd, status: 'connected', description: 'User-configured MCP integration', tools: ['custom_query'] });
+      nameInput.value = '';
+      cmdInput.value = '';
+      renderOrgDeck();
+    } catch (_) {
+      addBtn.disabled = false;
+    }
+  });
+  panel.appendChild(addCard);
+
+  // List MCP servers
+  const grid = document.createElement('div');
+  grid.className = 'org-grid-2';
+
+  let mcps = [];
+  try {
+    mcps = await api.listMcps();
+  } catch (_) {}
+
+  for (const m of mcps) {
+    const mCard = document.createElement('div');
+    mCard.className = 'org-item-card';
+
+    const mHead = document.createElement('div');
+    mHead.className = 'org-item-head';
+    const mTitle = document.createElement('div');
+    mTitle.className = 'org-item-title';
+    mTitle.textContent = m.name;
+    const mStatus = document.createElement('span');
+    mStatus.className = 'org-card-badge';
+    mStatus.textContent = '● Connected';
+    mHead.append(mTitle, mStatus);
+
+    const mDesc = document.createElement('div');
+    mDesc.className = 'org-item-desc';
+    mDesc.textContent = m.description || `Command: ${m.command}`;
+
+    const toolsDiv = document.createElement('div');
+    toolsDiv.className = 'org-meta-info';
+    toolsDiv.textContent = `Tools: ${(m.tools || []).join(', ')}`;
+
+    mCard.append(mHead, mDesc, toolsDiv);
+    grid.appendChild(mCard);
+  }
+  panel.appendChild(grid);
+}
+
+async function renderOrgSkills(panel) {
+  const topCard = document.createElement('div');
+  topCard.className = 'org-section-card';
+  const topHead = document.createElement('div');
+  topHead.className = 'org-card-head';
+  const topTitle = document.createElement('div');
+  topTitle.className = 'org-card-title';
+  topTitle.textContent = '⚡ Operational Skills & Playbooks Library';
+  const topBadge = document.createElement('span');
+  topBadge.className = 'org-card-badge';
+  topBadge.textContent = 'Institutional Skills';
+  topHead.append(topTitle, topBadge);
+
+  const topDesc = document.createElement('p');
+  topDesc.className = 'org-item-desc';
+  topDesc.textContent = 'Operational playbooks and specialized skills catalog for Mountain Man Studios. Editable playbooks provide standard operating procedures for specialized workflows.';
+  topCard.append(topHead, topDesc);
+  panel.appendChild(topCard);
+
+  // Add Skill Card
+  const addCard = document.createElement('div');
+  addCard.className = 'org-section-card';
+  const addTitle = document.createElement('div');
+  addTitle.className = 'org-card-title';
+  addTitle.textContent = '➕ Add Institutional Skill';
+  const formRow = document.createElement('div');
+  formRow.className = 'org-form-row';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'org-input';
+  nameInput.placeholder = 'Skill Name (e.g. Database Migrations, API Design)';
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'org-action-btn primary';
+  addBtn.textContent = 'Create Skill';
+  formRow.append(nameInput, addBtn);
+  addCard.append(addTitle, formRow);
+
+  addBtn.addEventListener('click', async () => {
+    const sName = nameInput.value.trim();
+    if (!sName) return;
+    addBtn.disabled = true;
+    try {
+      await api.createSkill(sName);
+      nameInput.value = '';
+      renderOrgDeck();
+    } catch (_) {
+      addBtn.disabled = false;
+    }
+  });
+  panel.appendChild(addCard);
+
+  // List skills
+  const grid = document.createElement('div');
+  grid.className = 'org-grid-2';
+
+  let skills = [];
+  try {
+    skills = await api.listSkills();
+  } catch (_) {}
+
+  for (const s of skills) {
+    const sCard = document.createElement('div');
+    sCard.className = 'org-item-card';
+
+    const sHead = document.createElement('div');
+    sHead.className = 'org-item-head';
+    const sTitle = document.createElement('div');
+    sTitle.className = 'org-item-title';
+    sTitle.textContent = s.title || s.file;
+    sHead.append(sTitle);
+
+    const sDesc = document.createElement('div');
+    sDesc.className = 'org-item-desc';
+    sDesc.textContent = `Playbook file: skills/${s.file}`;
+
+    const editorBox = document.createElement('textarea');
+    editorBox.className = 'org-textarea';
+    editorBox.style.minHeight = '140px';
+    editorBox.value = s.text;
+    editorBox.hidden = true;
+
+    const actions = document.createElement('div');
+    actions.className = 'org-item-actions';
+    const toggleEditBtn = document.createElement('button');
+    toggleEditBtn.type = 'button';
+    toggleEditBtn.className = 'org-action-btn';
+    toggleEditBtn.textContent = 'Edit Playbook';
+
+    const saveSkillBtn = document.createElement('button');
+    saveSkillBtn.type = 'button';
+    saveSkillBtn.className = 'org-action-btn primary';
+    saveSkillBtn.textContent = 'Save Skill';
+    saveSkillBtn.hidden = true;
+
+    toggleEditBtn.addEventListener('click', () => {
+      const isEditing = !editorBox.hidden;
+      editorBox.hidden = isEditing;
+      saveSkillBtn.hidden = isEditing;
+      toggleEditBtn.textContent = isEditing ? 'Edit Playbook' : 'Collapse';
+    });
+
+    saveSkillBtn.addEventListener('click', async () => {
+      saveSkillBtn.disabled = true;
+      saveSkillBtn.textContent = 'Saving…';
+      try {
+        await api.saveSkill(s.file, editorBox.value);
+        saveSkillBtn.textContent = '✓ Saved!';
+        setTimeout(() => {
+          saveSkillBtn.disabled = false;
+          saveSkillBtn.textContent = 'Save Skill';
+        }, 1500);
+      } catch (_) {
+        saveSkillBtn.disabled = false;
+        saveSkillBtn.textContent = 'Error';
+      }
+    });
+
+    actions.append(toggleEditBtn, saveSkillBtn);
+    sCard.append(sHead, sDesc, editorBox, actions);
+    grid.appendChild(sCard);
+  }
+  panel.appendChild(grid);
+}
+
+async function renderOrgBuilder(panel) {
+  const card = document.createElement('div');
+  card.className = 'org-section-card';
+
+  const head = document.createElement('div');
+  head.className = 'org-card-head';
+  const title = document.createElement('div');
+  title.className = 'org-card-title';
+  title.textContent = '🛠️ Agent Builder Workbench';
+  const badge = document.createElement('span');
+  badge.className = 'org-card-badge';
+  badge.textContent = 'Fabrication Bench';
+  head.append(title, badge);
+
+  const desc = document.createElement('p');
+  desc.className = 'org-item-desc';
+  desc.textContent = 'Forge a specialized teammate from the ground up: choose engine, attach Persona Chip (with Central Brain inherited automatically), equip MCP capabilities and skills, and deploy into your missions.';
+  card.append(head, desc);
+
+  const form = document.createElement('div');
+  form.className = 'builder-form';
+
+  // Agent Name
+  const nameField = document.createElement('div');
+  nameField.className = 'builder-field';
+  const nameLabel = document.createElement('label');
+  nameLabel.className = 'builder-label';
+  nameLabel.textContent = 'Agent Name';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'builder-input';
+  nameInput.placeholder = 'e.g. Agent Smith, Sentinel, Lead Architect';
+  nameInput.value = 'Custom Teammate';
+  nameField.append(nameLabel, nameInput);
+
+  // Engine Select
+  const engineField = document.createElement('div');
+  engineField.className = 'builder-field';
+  const engineLabel = document.createElement('label');
+  engineLabel.className = 'builder-label';
+  engineLabel.textContent = 'CLI Engine (Vendor)';
+  const engineSelect = document.createElement('select');
+  engineSelect.className = 'builder-select';
+  for (const v of VENDORS) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = vendorName(v);
+    engineSelect.appendChild(opt);
+  }
+  engineField.append(engineLabel, engineSelect);
+
+  // Persona Chip Select
+  const chipField = document.createElement('div');
+  chipField.className = 'builder-field';
+  const chipLabel = document.createElement('label');
+  chipLabel.className = 'builder-label';
+  chipLabel.textContent = 'Assigned Persona Chip (Central Brain inherited automatically)';
+  const chipSelect = document.createElement('select');
+  chipSelect.className = 'builder-select';
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = 'Standard Teammate (Central Brain only)';
+  chipSelect.appendChild(noneOpt);
+
+  let loadedBrains = [];
+  try {
+    loadedBrains = await api.listBrains();
+    for (const b of loadedBrains) {
+      const opt = document.createElement('option');
+      opt.value = b.file;
+      opt.textContent = `${b.title} (${b.file})`;
+      chipSelect.appendChild(opt);
+    }
+  } catch (_) {}
+  chipField.append(chipLabel, chipSelect);
+
+  // Enabled Tools & MCPs
+  const toolsField = document.createElement('div');
+  toolsField.className = 'builder-field';
+  const toolsLabel = document.createElement('label');
+  toolsLabel.className = 'builder-label';
+  toolsLabel.textContent = 'Enabled Capabilities & MCP Integrations';
+  const toolsGrid = document.createElement('div');
+  toolsGrid.className = 'builder-tools-grid';
+
+  const toolCheckboxes = {};
+  for (const [tId, tool] of Object.entries(TOOLS)) {
+    const toolItem = document.createElement('label');
+    toolItem.className = 'builder-tool-item';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.value = tId;
+    chk.checked = (tId === 'bash' || tId === 'write');
+    toolCheckboxes[tId] = chk;
+    const tText = document.createElement('span');
+    tText.textContent = tool.label;
+    toolItem.append(chk, tText);
+    toolsGrid.appendChild(toolItem);
+  }
+  toolsField.append(toolsLabel, toolsGrid);
+
+  // Action buttons
+  const actionRow = document.createElement('div');
+  actionRow.style.display = 'flex';
+  actionRow.style.gap = '.8rem';
+  actionRow.style.marginTop = '.6rem';
+
+  const deployNewBtn = document.createElement('button');
+  deployNewBtn.type = 'button';
+  deployNewBtn.className = 'org-save-btn';
+  deployNewBtn.textContent = '🚀 Deploy into New Mission Chat';
+
+  const deployCurrentBtn = document.createElement('button');
+  deployCurrentBtn.type = 'button';
+  deployCurrentBtn.className = 'org-action-btn primary';
+  deployCurrentBtn.style.padding = '.5rem 1rem';
+  deployCurrentBtn.textContent = '👥 Summon into Current Chat';
+
+  function getBuilderConfig() {
+    const aName = nameInput.value.trim() || 'Custom Agent';
+    const aVendor = engineSelect.value;
+    const bFile = chipSelect.value;
+    let bText = '';
+    const match = (loadedBrains || []).find(b => b.file === bFile);
+    if (match) bText = match.text;
+    const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
+    return { name: aName, vendor: aVendor, brain: bFile, brainText: bText, tools: selectedTools };
+  }
+
+  deployNewBtn.addEventListener('click', () => {
+    const cfg = getBuilderConfig();
+    closeOrgControl();
+    createCustomChat({ vendor: cfg.vendor, name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+  });
+
+  deployCurrentBtn.addEventListener('click', () => {
+    const cfg = getBuilderConfig();
+    closeOrgControl();
+    if (currentId) {
+      join(currentId, cfg.vendor, { name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+      showChat(currentId);
+    } else {
+      createCustomChat({ vendor: cfg.vendor, name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+    }
+  });
+
+  actionRow.append(deployNewBtn, deployCurrentBtn);
+  form.append(nameField, engineField, chipField, toolsField, actionRow);
+  card.appendChild(form);
+  panel.appendChild(card);
+}
+
 // ---- Start-up -----------------------------------------------------------------
 
 wireComposer(main);
@@ -1879,6 +2524,19 @@ if (el.previewReload) el.previewReload.addEventListener('click', () => { if (el.
 if (el.previewExternal) el.previewExternal.addEventListener('click', () => { if (currentPreviewUrl) window.open(currentPreviewUrl, '_blank'); });
 if (el.previewGlanceTm58) el.previewGlanceTm58.addEventListener('click', () => glanceNotionFromText('TM-58'));
 if (el.previewGlanceTm60) el.previewGlanceTm60.addEventListener('click', () => glanceNotionFromText('TM-60'));
+
+if (el.navOrgBtn) {
+  el.navOrgBtn.addEventListener('click', () => {
+    if (isOrgControlOpen) closeOrgControl();
+    else openOrgControl('memory');
+  });
+}
+if (el.orgCloseBtn) el.orgCloseBtn.addEventListener('click', closeOrgControl);
+if (el.orgTabMemory) el.orgTabMemory.addEventListener('click', () => setOrgTab('memory'));
+if (el.orgTabPersonas) el.orgTabPersonas.addEventListener('click', () => setOrgTab('personas'));
+if (el.orgTabMcps) el.orgTabMcps.addEventListener('click', () => setOrgTab('mcps'));
+if (el.orgTabSkills) el.orgTabSkills.addEventListener('click', () => setOrgTab('skills'));
+if (el.orgTabBuilder) el.orgTabBuilder.addEventListener('click', () => setOrgTab('builder'));
 
 api.onAgentOutput(onOutput);
 api.onAgentStep(onStep);

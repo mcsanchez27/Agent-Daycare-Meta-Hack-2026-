@@ -137,6 +137,41 @@ test('resolveBrains invokes brains:resolve with options', () => {
   assert.deepEqual(invocations[0], { channel: 'brains:resolve', data: { personaFile: 'agent-smith.md' } });
 });
 
+test('saveCentralBrain invokes brains:save-central', () => {
+  invocations.length = 0;
+  const res = global.api.saveCentralBrain('new text');
+  assert.equal(res, 'result-brains:save-central');
+  assert.deepEqual(invocations[0], { channel: 'brains:save-central', data: { text: 'new text' } });
+});
+
+test('savePersonaBrain invokes brains:save-persona', () => {
+  invocations.length = 0;
+  const res = global.api.savePersonaBrain('agent-smith.md', 'new text');
+  assert.equal(res, 'result-brains:save-persona');
+  assert.deepEqual(invocations[0], { channel: 'brains:save-persona', data: { file: 'agent-smith.md', text: 'new text' } });
+});
+
+test('createPersonaBrain invokes brains:create-persona', () => {
+  invocations.length = 0;
+  const res = global.api.createPersonaBrain('Neo', 'directives');
+  assert.equal(res, 'result-brains:create-persona');
+  assert.deepEqual(invocations[0], { channel: 'brains:create-persona', data: { name: 'Neo', text: 'directives' } });
+});
+
+test('skills and mcp methods invoke corresponding channels', () => {
+  invocations.length = 0;
+  global.api.listSkills();
+  global.api.saveSkill('audit.md', 'text');
+  global.api.createSkill('Audit', 'text');
+  global.api.listMcps();
+  global.api.saveMcp({ name: 'custom' });
+  assert.equal(invocations[0].channel, 'skills:list');
+  assert.equal(invocations[1].channel, 'skills:save');
+  assert.equal(invocations[2].channel, 'skills:create');
+  assert.equal(invocations[3].channel, 'mcp:list');
+  assert.equal(invocations[4].channel, 'mcp:save');
+});
+
 // IPC Sends
 test('log sends log:write', () => {
   sends.length = 0;

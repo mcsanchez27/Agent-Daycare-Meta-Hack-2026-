@@ -6,6 +6,14 @@
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
+## Organization Control Center (TM-60 Batch 5)
+- **Dedicated Hub (`🏛️ Org Control`):** First-class view in the sidebar toggling the main workspace into the Mountain Man Studios Command Center.
+- **Master Memory Editor:** Direct in-app markdown editor for `brains/central-brain.md` with instant "Save & Push to All Active Agents" disk hot-reloading.
+- **Persona Chips & Deployment Inventory:** Live tracking of all persona chips on disk (`brains/*.md`), showing active deployment counts across chats (e.g. `Agent Smith: Active in 2 chats`), in-app direct editor, and inline "+ Forge New Persona Chip" creator.
+- **MCP Directory:** Integration registry (`mcp-servers.json`) cataloging StitchMCP, Notion MCP, GitHub MCP, Playwright MCP, and CLI Terminal, with live tool manifests and "+ Add MCP Server" registration.
+- **Skills Library:** Repository of operational playbooks (`skills/*.md`: Security Auditing, Stitch Prototyping, Headless Testing, Notion Sync, Market Scouting), direct editor, and "+ Add Skill" creator.
+- **Agent Builder Studio Workbench:** Full fabrication bench embedded inside Org Control to forge teammates with engine, persona chip, toolbelt capabilities, and deploy directly into new mission chats or summon into the current team.
+
 ## Central Brain & Dynamic Persona Chips (TM-60 Batch 4)
 - **Central Brain (`brains/central-brain.md`):** Institutional memory, Mountain Man Studios operating doctrine, workspace boundaries, and `@` / `#` cross-chat collaboration rules. Inherited automatically by *all* agents across all chats.
 - **Persona Chips (`brains/<chip>.md`):** Specialized persona chips (Agent Smith, Morpheus, Grok Scout, Lead Architect, Fullstack Engineer, Stitch Prototyper) layered on top of the Central Brain.

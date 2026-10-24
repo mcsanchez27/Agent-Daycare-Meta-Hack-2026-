@@ -9,9 +9,14 @@
 <body>
   <aside class="sidebar">
     <div class="brand">
-      <span class="brand-sparkle">âœ¨</span>
+      <span class="brand-sparkle">✨</span>
       <span class="brand-name">Agent Daycare</span>
     </div>
+    <button type="button" class="nav-org-btn" id="nav-org-btn" title="Organization Control & MMS Hub">
+      <span class="nav-org-icon">🏛️</span>
+      <span class="nav-org-label">Org Control</span>
+      <span class="nav-org-badge">HQ</span>
+    </button>
     <div class="plan" id="plan" hidden></div>
     <button type="button" class="new-chat" id="new-chat">+ New chat</button>
     <div class="sidebar-section-label">Recent Chats</div>
@@ -38,6 +43,25 @@
     </header>
 
     <section class="chooser" id="chooser" hidden aria-label="Pick an agent for the new chat"></section>
+
+    <!-- Organization Control Deck (TM-60 Batch 5) -->
+    <section class="org-control" id="org-control" hidden aria-label="Organization Control Center">
+      <header class="org-header">
+        <div class="org-title-wrap">
+          <div class="org-title"><span class="org-icon">🏛️</span> Org Control</div>
+          <div class="org-subtitle">Mountain Man Studios Ecosystem · Master Memory, Persona Chips, MCPs & Skills</div>
+        </div>
+        <div class="org-tabs">
+          <button type="button" class="org-tab active" id="org-tab-memory" data-tab="memory">🧠 Master Memory</button>
+          <button type="button" class="org-tab" id="org-tab-personas" data-tab="personas">💾 Persona Chips</button>
+          <button type="button" class="org-tab" id="org-tab-mcps" data-tab="mcps">🔌 MCP Directory</button>
+          <button type="button" class="org-tab" id="org-tab-skills" data-tab="skills">⚡ Skills Library</button>
+          <button type="button" class="org-tab" id="org-tab-builder" data-tab="builder">🛠️ Agent Builder</button>
+        </div>
+        <button type="button" class="org-close-btn" id="org-close-btn" title="Back to Chat">✕</button>
+      </header>
+      <div class="org-body" id="org-body"></div>
+    </section>
 
     <main class="thread" id="thread" aria-live="polite">
       <p class="empty" id="empty">Say hi.</p>
