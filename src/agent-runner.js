@@ -315,7 +315,7 @@ class AgentRunner {
   // runKey (`<chatId>/<memberId>`, TM-54) names the run: events carry it, and
   // Stop and the timeout act on it alone, so two members of one vendor can
   // answer at once. model is the vendor's model id, or null for its default.
-  run({ runKey, vendor, model = null, sessionId = null, prompt = '', files = null }) {
+  run({ runKey, vendor, model = null, sessionId = null, prompt = '', files = null, mcp = null }) {
     const agent = this.agents[vendor];
     if (!agent) throw new Error(`Agent ${vendor} not found`);
     const p = String(prompt || '').trim();
@@ -339,7 +339,7 @@ class AgentRunner {
 
     const exe = this._getExecutable(agent);
     const workingDir = this.chatFolder(runKey);
-    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId);
+    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId, mcp);
     if (promptFile !== null) fs.writeFileSync(path.join(workingDir, PROMPT_FILE), promptFile);
     for (const [name, text] of Object.entries(files || {})) {
       if (FOLDER_FILES.includes(name) && typeof text === 'string') fs.writeFileSync(path.join(workingDir, name), text);
@@ -402,14 +402,18 @@ class AgentRunner {
   // Output (TM-55): each CLI's JSON, read by parseEvent, so the reply's
   // session can be resumed. sessionId resumes that session; codex's resume
   // takes no --sandbox, so the same setting goes in as -c.
-  _buildAgentArgs(vendor, p, model = null, sessionId = null) {
+  // mcp (TM-60 Batch 3): Claude's MCP servers for this launch, as the JSON
+  // its --mcp-config takes ({ mcpServers }); passed as a string, not a file,
+  // so no key lands in the chat folder. Only Claude takes servers per launch.
+  _buildAgentArgs(vendor, p, model = null, sessionId = null, mcp = null) {
     const m = model ? ['-m', model] : [];
+    const mcpArgs = vendor === 'claude' && mcp && mcp.mcpServers && Object.keys(mcp.mcpServers).length ? ['--mcp-config', JSON.stringify(mcp)] : [];
     if (vendor === 'codex' && sessionId) return { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...m, sessionId, '-'], stdin: p };
     if (vendor === 'codex') return { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...m, '-'], stdin: p };
     const flag = model ? ['--model', model] : [];
     // Lean Claude (TM-59): Matt's own plugins, hooks and MCP servers stay out
     // (about 66k tokens a launch down to 37k). Its login is unaffected.
-    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', ...mcpArgs, '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
     // grok (TM-60): one turn from a prompt file in the chat folder (see run):
     // its npm shim goes through cmd.exe, which a prompt on the command line
     // would not survive. Output is Claude-shaped streaming JSON. Tools are

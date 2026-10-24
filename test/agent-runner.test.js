@@ -408,3 +408,15 @@ test('folder files (TM-60): only CLAUDE.md, AGENTS.md and GEMINI.md are written,
   assert.deepEqual(fs.readdirSync(path.join(dir, 'c1')), ['CLAUDE.md']);
   assert.ok(!fs.existsSync(path.join(dir, 'up.md')));
 });
+
+test('Claude gets its MCP servers per launch as a --mcp-config string; others never (TM-60 Batch 3)', () => {
+  const { runner } = makeRunner();
+  const mcp = { mcpServers: { pdf: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-pdf', '--stdio'] } } };
+  const claude = runner._buildAgentArgs('claude', 'hi', null, null, mcp).args;
+  const i = claude.indexOf('--mcp-config');
+  assert.ok(i > 0 && claude[i - 1] === '--strict-mcp-config', 'right after --strict-mcp-config');
+  assert.deepEqual(JSON.parse(claude[i + 1]), mcp);
+  assert.ok(!runner._buildAgentArgs('claude', 'hi', null, null, { mcpServers: {} }).args.includes('--mcp-config'), 'no servers, no flag');
+  assert.ok(!runner._buildAgentArgs('codex', 'hi', null, null, mcp).args.join(' ').includes('mcp'));
+  assert.ok(!runner._buildAgentArgs('antigravity', 'hi', null, null, mcp).args.join(' ').includes('mcp'));
+});

@@ -17,8 +17,8 @@
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
-const { VENDORS, ROLES, CREW, PERSONAS, TOOLS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
-const { folderFile, personaIdOf, skillsFor, folderText, describeAssignment, textSig } = window.ChatOrg;
+const { VENDORS, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
+const { folderFile, personaIdOf, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine } = window.ChatOrg;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -651,6 +651,25 @@ function renderToolbelt() {
   cbStatus.textContent = '● Active across all agents · Synced from brains/central-brain.md';
   centralBanner.append(cbTitle, cbStatus);
   el.toolbeltList.appendChild(centralBanner);
+  // What each CLI has as MCP servers, read live (TM-60 Batch 3).
+  const lib = document.getElementById('toolbelt-library');
+  if (lib) {
+    lib.textContent = 'Reading…';
+    api.listCliMcps().then((cli) => {
+      lib.replaceChildren();
+      for (const v of ['antigravity', 'codex', 'grok']) {
+        const row = document.createElement('div');
+        row.className = 'library-item';
+        const names = ((cli || {})[v] || []).filter(x => x.enabled).map(x => x.name);
+        row.textContent = `${vendorName(v)}: ${names.length ? names.join(', ') : 'none (or the CLI did not answer)'}`;
+        lib.appendChild(row);
+      }
+      const claude = document.createElement('div');
+      claude.className = 'library-item';
+      claude.textContent = 'Claude: the servers given to it in the MCP Directory, passed at each launch.';
+      lib.appendChild(claude);
+    }).catch(() => { lib.textContent = 'Could not read the CLIs.'; });
+  }
 
   for (const m of c.thread.members) {
     if (m.left) continue;
@@ -696,20 +715,25 @@ function renderToolbelt() {
       skillsName.textContent = `⚡ Skills: ${names.length ? `${names.join(', ')} (${how})` : 'none'}`;
     }).catch(() => { skillsName.textContent = '⚡ Skills: unknown'; });
 
-    const memberTools = Array.isArray(m.tools) && m.tools.length ? m.tools : ['bash', 'write'];
-    for (const tId of memberTools) {
-      const toolDef = TOOLS[tId] || { id: tId, label: tId, brief: 'Agent capability' };
-      const capItem = document.createElement('div');
-      capItem.className = 'toolbelt-cap-item';
-      const capName = document.createElement('span');
-      capName.className = 'toolbelt-cap-name';
-      capName.textContent = toolDef.label;
-      const capStatus = document.createElement('span');
-      capStatus.className = 'toolbelt-cap-status';
-      capStatus.textContent = 'declared';
-      capItem.append(capName, capStatus);
-      caps.appendChild(capItem);
-    }
+    // The MCP servers this member gets (TM-60 Batch 3): for Claude, passed at
+    // launch; for the others, only those its CLI actually has count.
+    const mcpItem = document.createElement('div');
+    mcpItem.className = 'toolbelt-cap-item';
+    const mcpName = document.createElement('span');
+    mcpName.className = 'toolbelt-cap-name';
+    mcpName.textContent = '🔌 MCP: …';
+    mcpItem.appendChild(mcpName);
+    caps.appendChild(mcpItem);
+    Promise.all([api.getOrg(), api.listMcps(), m.vendor === 'claude' ? null : api.listCliMcps()]).then(([org, servers, cli]) => {
+      const mine = mcpFor({ vendor: m.vendor, persona: personaIdOf(m), own: m.mcp }, servers || [], (org && org.mcp) || {});
+      if (m.vendor === 'claude') {
+        mcpName.textContent = `🔌 MCP: ${mine.length ? `${mine.map(s => s.name).join(', ')} (passed at launch)` : 'none'}`;
+      } else {
+        const has = new Set(((cli || {})[m.vendor] || []).filter(s => s.enabled).map(s => s.name.toLowerCase()));
+        const parts = mine.map(s => `${s.name}${has.has(s.name.toLowerCase()) || has.has(s.id) ? '' : ' (not in its CLI yet)'}`);
+        mcpName.textContent = `🔌 MCP: ${parts.length ? parts.join(', ') : 'none assigned'} · its CLI has ${has.size}`;
+      }
+    }).catch(() => { mcpName.textContent = '🔌 MCP: unknown'; });
 
     card.append(head, caps);
     el.toolbeltList.appendChild(card);
@@ -928,11 +952,11 @@ function showChooser(mode = 'new', vendor = null) {
           if (match) brainText = match.text;
         } catch (_) {}
         if (prevMode === 'add') {
-          join(currentId, p.vendor, { name: p.name, role: p.role, brain: p.brainFile, brainText, tools: p.tools });
+          join(currentId, p.vendor, { name: p.name, role: p.role, brain: p.brainFile, brainText });
           hideChooser();
           showChat(currentId);
         } else {
-          createCustomChat({ vendor: p.vendor, name: p.name, role: p.role, brain: p.brainFile, brainText, tools: p.tools });
+          createCustomChat({ vendor: p.vendor, name: p.name, role: p.role, brain: p.brainFile, brainText });
         }
       });
     }
@@ -1006,24 +1030,28 @@ function showChooser(mode = 'new', vendor = null) {
     toolsField.className = 'builder-field';
     const toolsLabel = document.createElement('label');
     toolsLabel.className = 'builder-label';
-    toolsLabel.textContent = "Capabilities (a label on the agent; it doesn't change what its CLI can do)";
+    toolsLabel.textContent = 'MCP servers (from the directory; real for a Claude agent at launch, a label for the other engines until their CLI has the server)';
     const toolsGrid = document.createElement('div');
     toolsGrid.className = 'builder-tools-grid';
 
     const toolCheckboxes = {};
-    for (const [tId, tool] of Object.entries(TOOLS)) {
-      const toolItem = document.createElement('label');
-      toolItem.className = 'builder-tool-item';
-      const chk = document.createElement('input');
-      chk.type = 'checkbox';
-      chk.value = tId;
-      chk.checked = (tId === 'bash' || tId === 'write');
-      toolCheckboxes[tId] = chk;
-      const tText = document.createElement('span');
-      tText.textContent = tool.label;
-      toolItem.append(chk, tText);
-      toolsGrid.appendChild(toolItem);
-    }
+    // MCP servers from the directory (TM-60 Batch 3): real for a Claude agent
+    // at launch; for the other engines a label until their CLI has the server.
+    api.listMcps().then((servers) => {
+      for (const s of servers || []) {
+        const toolItem = document.createElement('label');
+        toolItem.className = 'builder-tool-item';
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.value = s.id;
+        toolCheckboxes[s.id] = chk;
+        const tText = document.createElement('span');
+        tText.textContent = s.name;
+        toolItem.append(chk, tText);
+        toolsGrid.appendChild(toolItem);
+      }
+      if (!(servers || []).length) toolsGrid.textContent = 'No servers in the MCP Directory yet (Org Control → MCP Directory).';
+    }).catch(() => {});
     toolsField.append(toolsLabel, toolsGrid);
 
     // Submit button
@@ -1045,11 +1073,11 @@ function showChooser(mode = 'new', vendor = null) {
       const bText = match ? match.text : null;
       const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
       if (prevMode === 'add') {
-        join(currentId, aVendor, { name: aName, brain: bFile, brainText: bText, tools: selectedTools });
+        join(currentId, aVendor, { name: aName, brain: bFile, brainText: bText, mcp: selectedTools });
         hideChooser();
         showChat(currentId);
       } else {
-        createCustomChat({ vendor: aVendor, name: aName, brain: bFile, brainText: bText, tools: selectedTools });
+        createCustomChat({ vendor: aVendor, name: aName, brain: bFile, brainText: bText, mcp: selectedTools });
       }
     });
   } else {
@@ -1740,6 +1768,19 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   } catch (err) {
     api.log('warn', 'skills resolution failed', { error: err.message });
   }
+  // MCP servers (TM-60 Batch 3): what the directory gives this member (all,
+  // its engine, its persona, or picked in the Builder). Only Claude takes
+  // them per launch; the other CLIs use their own lists.
+  let mcp = null;
+  if (member.vendor === 'claude') {
+    try {
+      const [org, servers] = await Promise.all([api.getOrg(), api.listMcps()]);
+      const mine = mcpFor({ vendor: member.vendor, persona: personaIdOf(member), own: member.mcp }, servers || [], (org && org.mcp) || {});
+      if (mine.length) mcp = claudeMcpConfig(mine);
+    } catch (err) {
+      api.log('warn', 'mcp resolution failed', { error: err.message });
+    }
+  }
   if (pending[runKey] !== p) return; // stopped or replaced while the brains were read
   // What rides in this agent's prompt header (the folder file carries the
   // rest). A resumed session only saw the header once, so when this text
@@ -1758,7 +1799,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
     brainUpdate
   });
 
-  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: p.sessionId, prompt, files }).then((started) => {
+  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: p.sessionId, prompt, files, mcp }).then((started) => {
     if (started === false) finishReply(runKey, null, 'it could not be started');
   }).catch((err) => finishReply(runKey, null, err.message));
 }
@@ -2133,6 +2174,14 @@ async function renderOrgPersonas(panel) {
   panel.appendChild(grid);
 }
 
+// Secrets in a command line ("--header X-Goog-Api-Key: …") are hidden on screen.
+function maskSecrets(text) {
+  return String(text || '').replace(/((?:key|token|secret|password)\s*[:=]\s*)\S+/gi, '$1••••');
+}
+
+// MCP Directory (TM-60 Batch 3): the servers Daycare knows, who gets them,
+// and what each CLI already has. Only a Claude agent takes its servers at
+// launch; Gemini, Codex and Grok keep their own lists.
 async function renderOrgMcps(panel) {
   const topCard = document.createElement('div');
   topCard.className = 'org-section-card';
@@ -2140,88 +2189,150 @@ async function renderOrgMcps(panel) {
   topHead.className = 'org-card-head';
   const topTitle = document.createElement('div');
   topTitle.className = 'org-card-title';
-  topTitle.textContent = '🔌 MCP Directory & Integration Registry';
+  topTitle.textContent = '🔌 MCP Directory';
   const topBadge = document.createElement('span');
   topBadge.className = 'org-card-badge';
-  topBadge.textContent = 'Reference list';
+  topBadge.textContent = 'Claude: per launch · others: show what they have';
   topHead.append(topTitle, topBadge);
-
   const topDesc = document.createElement('p');
   topDesc.className = 'org-item-desc';
-  topDesc.textContent = "A list of MCP servers for reference (mcp-servers.json). It doesn't connect anything: each agent uses the MCP servers set up in its own CLI (claude mcp, codex mcp, agy mcp).";
+  topDesc.textContent = "Servers Daycare knows, kept in mcp-servers.json beside config.json (never in git, since entries can carry keys). Give one to all agents, engines or personas. A Claude agent receives its servers when it launches. Gemini, Codex and Grok keep their own lists, so each card shows which of them already has the server; adding it to those CLIs is still done in the CLI (agy mcp add, codex mcp add, grok mcp add).";
   topCard.append(topHead, topDesc);
   panel.appendChild(topCard);
 
-  // Add MCP Server Card
+  let servers = [];
+  let org = { mcp: {} };
+  let cli = {};
+  try {
+    [servers, org, cli] = await Promise.all([api.listMcps(), api.getOrg(), api.listCliMcps()]);
+    org = org || { mcp: {} };
+    cli = cli || {};
+  } catch (err) {
+    api.log('warn', 'mcp directory could not load', { error: err.message });
+  }
+  const cliHas = (vendor, s) => ((cli[vendor] || []).some(x => x.enabled && (x.name.toLowerCase() === s.name.toLowerCase() || x.name.toLowerCase() === s.id)));
+
+  // Add a server by hand.
   const addCard = document.createElement('div');
   addCard.className = 'org-section-card';
   const addTitle = document.createElement('div');
   addTitle.className = 'org-card-title';
-  addTitle.textContent = '➕ Add MCP Server';
+  addTitle.textContent = '➕ Add a server';
   const formRow = document.createElement('div');
   formRow.className = 'org-form-row';
   const nameInput = document.createElement('input');
   nameInput.className = 'org-input';
-  nameInput.placeholder = 'Server Name (e.g. SQLite MCP, Slack MCP)';
+  nameInput.placeholder = 'Name (e.g. SQLite)';
   const cmdInput = document.createElement('input');
   cmdInput.className = 'org-input';
-  cmdInput.placeholder = 'Command (e.g. npx -y @modelcontextprotocol/server-sqlite)';
+  cmdInput.placeholder = 'Command line (npx -y @modelcontextprotocol/server-sqlite) or an https:// URL';
   const addBtn = document.createElement('button');
   addBtn.type = 'button';
   addBtn.className = 'org-action-btn primary';
-  addBtn.textContent = 'Register Server';
+  addBtn.textContent = 'Add';
   formRow.append(nameInput, cmdInput, addBtn);
-  addCard.append(addTitle, formRow);
-
+  const addNote = document.createElement('div');
+  addNote.className = 'org-meta-info';
+  addNote.textContent = 'Keys go in the command line as the CLI would take them; they are hidden on screen.';
+  addCard.append(addTitle, formRow, addNote);
   addBtn.addEventListener('click', async () => {
-    const sName = nameInput.value.trim();
-    const sCmd = cmdInput.value.trim();
-    if (!sName || !sCmd) return;
+    const name = nameInput.value.trim();
+    const line = cmdInput.value.trim();
+    if (!name || !line) return;
     addBtn.disabled = true;
     try {
-      await api.saveMcp({ name: sName, command: sCmd, status: 'listed', description: 'Added from Org Control', tools: [] });
-      nameInput.value = '';
-      cmdInput.value = '';
+      const server = /^https?:\/\//i.test(line) ? { name, url: line } : { name, ...parseCommandLine(line) };
+      await api.saveMcp(server);
       renderOrgDeck();
-    } catch (_) {
+    } catch (err) {
+      addNote.textContent = `Could not add: ${err.message}`;
       addBtn.disabled = false;
     }
   });
   panel.appendChild(addCard);
 
-  // List MCP servers
+  // Import from Gemini: its list shows full command lines.
+  const known = new Set(servers.map(s => s.name.toLowerCase()));
+  const importable = (cli.antigravity || []).filter(x => x.enabled && !known.has(x.name.toLowerCase()));
+  if (importable.length) {
+    const impCard = document.createElement('div');
+    impCard.className = 'org-section-card';
+    const impTitle = document.createElement('div');
+    impTitle.className = 'org-card-title';
+    impTitle.textContent = `📥 In Gemini's CLI but not here (${importable.length})`;
+    const impRow = document.createElement('div');
+    impRow.className = 'org-item-actions wrap';
+    for (const x of importable) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'org-action-btn';
+      b.textContent = `Import ${x.name}`;
+      b.title = maskSecrets(x.command);
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try {
+          const server = x.type === 'http' ? { name: x.name, url: x.command } : { name: x.name, ...parseCommandLine(x.command), description: 'Imported from Gemini (agy mcp list)' };
+          await api.saveMcp(server);
+          renderOrgDeck();
+        } catch (_) { b.disabled = false; }
+      });
+      impRow.appendChild(b);
+    }
+    impCard.append(impTitle, impRow);
+    panel.appendChild(impCard);
+  }
+
   const grid = document.createElement('div');
   grid.className = 'org-grid-2';
-
-  let mcps = [];
-  try {
-    mcps = await api.listMcps();
-  } catch (_) {}
-
-  for (const m of mcps) {
-    const mCard = document.createElement('div');
-    mCard.className = 'org-item-card';
-
-    const mHead = document.createElement('div');
-    mHead.className = 'org-item-head';
-    const mTitle = document.createElement('div');
-    mTitle.className = 'org-item-title';
-    mTitle.textContent = m.name;
-    const mStatus = document.createElement('span');
-    mStatus.className = 'org-card-badge';
-    mStatus.textContent = 'listed';
-    mHead.append(mTitle, mStatus);
-
-    const mDesc = document.createElement('div');
-    mDesc.className = 'org-item-desc';
-    mDesc.textContent = m.description || `Command: ${m.command}`;
-
-    const toolsDiv = document.createElement('div');
-    toolsDiv.className = 'org-meta-info';
-    toolsDiv.textContent = `Tools: ${(m.tools || []).join(', ')}`;
-
-    mCard.append(mHead, mDesc, toolsDiv);
-    grid.appendChild(mCard);
+  for (const s of servers) {
+    const card = document.createElement('div');
+    card.className = 'org-item-card';
+    const head = document.createElement('div');
+    head.className = 'org-item-head';
+    const title = document.createElement('div');
+    title.className = 'org-item-title';
+    title.textContent = s.name;
+    const live = document.createElement('span');
+    live.className = 'org-inventory-badge';
+    const haves = ['antigravity', 'codex', 'grok'].filter(v => cliHas(v, s)).map(v => vendorName(v));
+    live.textContent = haves.length ? `in ${haves.join(', ')}` : 'in no CLI yet';
+    live.title = 'Which of Gemini, Codex and Grok list this server (read live). Claude gets it at launch.';
+    head.append(title, live);
+    const desc = document.createElement('div');
+    desc.className = 'org-item-desc';
+    const given = (a) => `${s.description ? s.description + ' · ' : ''}given to: ${describeAssignment(a, vendorNames())}`;
+    desc.textContent = given((org.mcp || {})[s.id]);
+    const cmd = document.createElement('div');
+    cmd.className = 'org-meta-info';
+    cmd.textContent = s.url ? s.url : maskSecrets([s.command, ...(s.args || [])].join(' '));
+    const assign = assignmentRow((org.mcp || {})[s.id], async (a) => {
+      org.mcp = { ...(org.mcp || {}), [s.id]: a };
+      try {
+        org = await api.saveOrg(org);
+        desc.textContent = given((org.mcp || {})[s.id]);
+      } catch (err) {
+        desc.textContent = `Could not save: ${err.message}`;
+      }
+    });
+    const actions = document.createElement('div');
+    actions.className = 'org-item-actions';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'org-action-btn';
+    remove.textContent = 'Remove from directory';
+    remove.addEventListener('click', async () => {
+      remove.disabled = true;
+      try { await api.removeMcp(s.id); renderOrgDeck(); } catch (_) { remove.disabled = false; }
+    });
+    actions.appendChild(remove);
+    card.append(head, desc, cmd, assign, actions);
+    grid.appendChild(card);
+  }
+  if (!servers.length) {
+    const empty = document.createElement('p');
+    empty.className = 'org-item-desc';
+    empty.textContent = 'No servers yet. Add one above, or import from Gemini.';
+    grid.appendChild(empty);
   }
   panel.appendChild(grid);
 }
@@ -2481,24 +2592,27 @@ async function renderOrgBuilder(panel) {
   toolsField.className = 'builder-field';
   const toolsLabel = document.createElement('label');
   toolsLabel.className = 'builder-label';
-  toolsLabel.textContent = "Capabilities (a label on the agent; it doesn't change what its CLI can do)";
+  toolsLabel.textContent = 'MCP servers (from the directory; real for a Claude agent at launch, a label for the other engines until their CLI has the server)';
   const toolsGrid = document.createElement('div');
   toolsGrid.className = 'builder-tools-grid';
 
   const toolCheckboxes = {};
-  for (const [tId, tool] of Object.entries(TOOLS)) {
-    const toolItem = document.createElement('label');
-    toolItem.className = 'builder-tool-item';
-    const chk = document.createElement('input');
-    chk.type = 'checkbox';
-    chk.value = tId;
-    chk.checked = (tId === 'bash' || tId === 'write');
-    toolCheckboxes[tId] = chk;
-    const tText = document.createElement('span');
-    tText.textContent = tool.label;
-    toolItem.append(chk, tText);
-    toolsGrid.appendChild(toolItem);
-  }
+  // MCP servers from the directory (TM-60 Batch 3); see the chooser's builder.
+  api.listMcps().then((servers) => {
+    for (const s of servers || []) {
+      const toolItem = document.createElement('label');
+      toolItem.className = 'builder-tool-item';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.value = s.id;
+      toolCheckboxes[s.id] = chk;
+      const tText = document.createElement('span');
+      tText.textContent = s.name;
+      toolItem.append(chk, tText);
+      toolsGrid.appendChild(toolItem);
+    }
+    if (!(servers || []).length) toolsGrid.textContent = 'No servers in the MCP Directory yet.';
+  }).catch(() => {});
   toolsField.append(toolsLabel, toolsGrid);
 
   // Action buttons
@@ -2526,23 +2640,23 @@ async function renderOrgBuilder(panel) {
     const match = (loadedBrains || []).find(b => b.file === bFile);
     if (match) bText = match.text;
     const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
-    return { name: aName, vendor: aVendor, brain: bFile, brainText: bText, tools: selectedTools };
+    return { name: aName, vendor: aVendor, brain: bFile, brainText: bText, mcp: selectedTools };
   }
 
   deployNewBtn.addEventListener('click', () => {
     const cfg = getBuilderConfig();
     closeOrgControl();
-    createCustomChat({ vendor: cfg.vendor, name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+    createCustomChat({ vendor: cfg.vendor, name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, mcp: cfg.mcp });
   });
 
   deployCurrentBtn.addEventListener('click', () => {
     const cfg = getBuilderConfig();
     closeOrgControl();
     if (currentId) {
-      join(currentId, cfg.vendor, { name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+      join(currentId, cfg.vendor, { name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, mcp: cfg.mcp });
       showChat(currentId);
     } else {
-      createCustomChat({ vendor: cfg.vendor, name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, tools: cfg.tools });
+      createCustomChat({ vendor: cfg.vendor, name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, mcp: cfg.mcp });
     }
   });
 

@@ -1641,3 +1641,8 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
 .assign-box.persona { border-style: dashed; }
 .assign-box.muted { opacity: .45; }
 .assign-box input { margin: 0; }
+
+/* MCP Directory (TM-60 Batch 3) */
+.org-inventory-badge[title] { cursor: help; }
+.toolbelt-library .library-item { overflow-wrap: anywhere; }
+.org-item-actions.wrap { flex-wrap: wrap; }

@@ -9,3 +9,4 @@ chats/
 .env
 .env.local
 org.json
+mcp-servers.json

@@ -60,6 +60,32 @@
     return text || 'no one yet';
   }
 
+  // MCP servers (TM-60 Batch 3). servers: [{ id, name, command, args, env, url }]
+  // from the directory; assignments like skills; own: ids picked for this
+  // member in the Builder. Returns the servers this member gets.
+  function mcpFor(target, servers, assignments) {
+    const own = new Set(target.own || []);
+    return (servers || []).filter(s => own.has(s.id) || applies((assignments || {})[s.id], target));
+  }
+
+  // Claude's --mcp-config JSON for these servers: stdio by command, or http by url.
+  function claudeMcpConfig(servers) {
+    const mcpServers = {};
+    for (const s of servers || []) {
+      if (s.url) mcpServers[s.id] = { type: 'http', url: s.url, ...(s.headers && Object.keys(s.headers).length ? { headers: s.headers } : {}) };
+      else if (s.command) mcpServers[s.id] = { command: s.command, args: s.args || [], ...(s.env && Object.keys(s.env).length ? { env: s.env } : {}) };
+    }
+    return { mcpServers };
+  }
+
+  // "npx -y some-server --flag \"two words\"" -> { command, args }, quotes honoured.
+  function parseCommandLine(text) {
+    const parts = [];
+    const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+    for (let m; (m = re.exec(String(text || '')));) parts.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+    return { command: parts[0] || '', args: parts.slice(1) };
+  }
+
   // A short signature of a text, so a resumed session can tell whether the
   // brain text it was given has changed since. Not a security hash.
   function textSig(text) {
@@ -68,5 +94,5 @@
     return `${text.length}:${h.toString(16)}`;
   }
 
-  return { FOLDER_FILES, folderFile, personaIdOf, applies, skillsFor, folderText, describeAssignment, textSig };
+  return { FOLDER_FILES, folderFile, personaIdOf, applies, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine };
 });

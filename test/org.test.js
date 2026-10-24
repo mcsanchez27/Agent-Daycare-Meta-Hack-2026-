@@ -59,3 +59,24 @@ test('textSig changes with the text and is stable', () => {
   assert.notEqual(textSig('a'), textSig('aa'));
   assert.match(textSig('hello'), /^5:[0-9a-f]+$/);
 });
+
+test('MCP servers reach a member by assignment or its own pick; Claude gets a --mcp-config (TM-60 Batch 3)', () => {
+  const { mcpFor, claudeMcpConfig, parseCommandLine } = require('../src/renderer/org');
+  const servers = [
+    { id: 'pdf', name: 'PDF', command: 'npx', args: ['-y', '@modelcontextprotocol/server-pdf', '--stdio'] },
+    { id: 'stitch', name: 'Stitch', url: 'https://stitch.googleapis.com/mcp', headers: { 'X-Goog-Api-Key': 'k' } },
+    { id: 'gh', name: 'GitHub', command: 'npx', args: ['-y', 'x'], env: { GITHUB_PERSONAL_ACCESS_TOKEN: 't' } }
+  ];
+  const assign = { pdf: { all: true }, stitch: { engines: [], personas: ['uiux'] } };
+  assert.deepEqual(mcpFor({ vendor: 'claude' }, servers, assign).map(s => s.id), ['pdf']);
+  assert.deepEqual(mcpFor({ vendor: 'claude', own: ['gh'] }, servers, assign).map(s => s.id), ['pdf', 'gh']);
+  assert.deepEqual(mcpFor({ vendor: 'antigravity', persona: 'uiux' }, servers, assign).map(s => s.id), ['pdf', 'stitch']);
+  const cfg = claudeMcpConfig(mcpFor({ vendor: 'claude', own: ['gh', 'stitch'] }, servers, assign));
+  assert.deepEqual(cfg, { mcpServers: {
+    pdf: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-pdf', '--stdio'] },
+    stitch: { type: 'http', url: 'https://stitch.googleapis.com/mcp', headers: { 'X-Goog-Api-Key': 'k' } },
+    gh: { command: 'npx', args: ['-y', 'x'], env: { GITHUB_PERSONAL_ACCESS_TOKEN: 't' } }
+  } });
+  assert.deepEqual(parseCommandLine('npx -y mcp-remote https://x/mcp --header "X-Goog-Api-Key: SECRET"'), { command: 'npx', args: ['-y', 'mcp-remote', 'https://x/mcp', '--header', 'X-Goog-Api-Key: SECRET'] });
+  assert.deepEqual(parseCommandLine(''), { command: '', args: [] });
+});
