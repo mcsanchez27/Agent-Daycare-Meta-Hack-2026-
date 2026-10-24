@@ -94,3 +94,17 @@ test('member tools: tools can be assigned to members and TOOLS catalog exists (T
   const m = newMember([], { vendor: 'claude', name: 'Agent Smith', tools: ['bash', 'notion', 'web'] });
   assert.deepEqual(m.tools, ['bash', 'notion', 'web']);
 });
+
+test('all personas have corresponding brain files on disk and valid toolsets (TM-60 Batch 2 & 3)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { PERSONAS } = require('../src/renderer/members');
+  for (const [key, p] of Object.entries(PERSONAS)) {
+    assert.ok(p.brainFile, `${key} missing brainFile`);
+    const filePath = path.join(__dirname, '..', 'brains', p.brainFile);
+    assert.ok(fs.existsSync(filePath), `Brain file not found: ${filePath}`);
+    const content = fs.readFileSync(filePath, 'utf8');
+    assert.ok(content.length > 50, `Brain file too short: ${p.brainFile}`);
+    assert.ok(Array.isArray(p.tools) && p.tools.length > 0, `${key} missing tools`);
+  }
+});
