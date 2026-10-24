@@ -6,6 +6,10 @@
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
+## Model picker in the Builders (TM-60 Batch 5)
+- Both Builders have a Model field (`modelField` in `app.js`) fed by the same `models` the chooser uses (Gemini from `agy models`, Claude's three, Grok's two), "Default" first; Codex has no list, so its model is typed and checked against `MODEL_TEXT`. It refills when the engine changes.
+- The pick is saved on the teammate (`org.agents[].model`, checked in `cleanOrg` with `AgentRunner.MODEL_TEXT`) and passed as `model` / `modelLabel` when the teammate is summoned, so the chip reads "Name · haiku" and the launch carries `--model`.
+
 ## Saved teammates (TM-60 Batch 4)
 - **A saved agent is a persona.** `teammates(org)` in `org.js` = the six built-in `PERSONAS` plus `org.agents` from the Builder (`{ id, name, vendor, role, brainFile, mcp: [ids], skills: [files] }`, cleaned in `cleanOrg`). A member made from one carries `persona: <id>` (`newMember`, kept by `mergeThreads`); `personaIdOf` prefers it over the brain file.
 - **The Builder saves** (both the chooser's and Org Control's, "Save as a teammate" on by default): `saveTeammate(cfg)` adds the agent and turns its ticked skills and servers into assignments to it (`org.skills[file].personas`, `org.mcp[id].personas`), so the normal resolution gives them to every member made from it; the member is created with that persona id so it has them from its first turn. `removeTeammate` drops it and those assignment entries (Org Control → Agent Builder → Saved teammates).
