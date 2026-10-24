@@ -718,7 +718,6 @@ const NOTION_TICKETS = {
       { text: 'Flight 5: Autonomous Crew Collaboration (Design → UI/UX → Engineering handoff with live tool steps)', done: false },
       { text: 'Flight 6: Team Management & Debug Maintenance (Member × remove / @ rejoin, Delete all chats purge)', done: false }
     ]
-    ]
   },
   'TM-60': {
     id: 'TM-60',
