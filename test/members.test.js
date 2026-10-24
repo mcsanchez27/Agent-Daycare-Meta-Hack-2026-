@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW } = require('../src/renderer/members');
+const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW, TOOLS } = require('../src/renderer/members');
 const { createThread, addMessage, buildPrompt } = require('../src/renderer/thread');
 
 test('newMember names: vendor, then model, then number', () => {
@@ -87,4 +87,10 @@ test('a crew (TM-59): Codex designs, Gemini does UI/UX, Claude engineers; each p
   assert.ok(p.includes(`Your role: UI/UX. ${ROLES.uiux.brief}`), p);
   assert.match(ROLES.uiux.brief, /Stitch/);
   assert.equal(newMember([], { vendor: 'claude', role: 'nonsense' }).role, undefined, 'unknown roles are dropped');
+});
+
+test('member tools: tools can be assigned to members and TOOLS catalog exists (TM-60 Batch 3)', () => {
+  assert.ok(TOOLS.bash && TOOLS.stitch && TOOLS.notion && TOOLS.github && TOOLS.write && TOOLS.web);
+  const m = newMember([], { vendor: 'claude', name: 'Agent Smith', tools: ['bash', 'notion', 'web'] });
+  assert.deepEqual(m.tools, ['bash', 'notion', 'web']);
 });

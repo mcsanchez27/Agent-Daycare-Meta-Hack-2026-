@@ -26,12 +26,22 @@
 
   // Saved Agent Personas (TM-60 Batch 2): preconfigured agent brains & roles.
   const PERSONAS = {
-    smith: { id: 'smith', name: 'Agent Smith', vendor: 'antigravity', role: 'security', brainFile: 'agent-smith.md', color: '#10b981' },
-    morpheus: { id: 'morpheus', name: 'Morpheus', vendor: 'claude', role: 'operations', brainFile: 'morpheus.md', color: '#8b5cf6' },
-    scout: { id: 'scout', name: 'Grok Scout', vendor: 'grok', role: 'market', brainFile: 'market-scout.md', color: '#94a3b8' },
-    architect: { id: 'architect', name: 'Lead Architect', vendor: 'codex', role: 'design', brainFile: 'lead-architect.md', color: '#38bdf8' },
-    engineer: { id: 'engineer', name: 'Claude Engineer', vendor: 'claude', role: 'engineering', brainFile: 'fullstack-engineer.md', color: '#2563eb' },
-    uiux: { id: 'uiux', name: 'Stitch Prototyper', vendor: 'antigravity', role: 'uiux', brainFile: 'uiux-prototyper.md', color: '#ec4899' }
+    smith: { id: 'smith', name: 'Agent Smith', vendor: 'antigravity', role: 'security', brainFile: 'agent-smith.md', color: '#10b981', tools: ['bash', 'write', 'web', 'github'] },
+    morpheus: { id: 'morpheus', name: 'Morpheus', vendor: 'claude', role: 'operations', brainFile: 'morpheus.md', color: '#8b5cf6', tools: ['bash', 'web', 'notion'] },
+    scout: { id: 'scout', name: 'Grok Scout', vendor: 'grok', role: 'market', brainFile: 'market-scout.md', color: '#94a3b8', tools: ['web', 'notion'] },
+    architect: { id: 'architect', name: 'Lead Architect', vendor: 'codex', role: 'design', brainFile: 'lead-architect.md', color: '#38bdf8', tools: ['bash', 'write', 'github'] },
+    engineer: { id: 'engineer', name: 'Claude Engineer', vendor: 'claude', role: 'engineering', brainFile: 'fullstack-engineer.md', color: '#2563eb', tools: ['bash', 'write', 'github'] },
+    uiux: { id: 'uiux', name: 'Stitch Prototyper', vendor: 'antigravity', role: 'uiux', brainFile: 'uiux-prototyper.md', color: '#ec4899', tools: ['stitch', 'write', 'web'] }
+  };
+
+  // Toolbelt & MCP capabilities library (TM-60 Batch 3)
+  const TOOLS = {
+    bash: { id: 'bash', label: 'Terminal / Shell', brief: 'Run local shell commands and test scripts' },
+    write: { id: 'write', label: 'Filesystem Writes', brief: 'Create and modify files in chat folder' },
+    stitch: { id: 'stitch', label: 'StitchMCP (UI Design)', brief: 'Generate screens and tokens in Stitch' },
+    notion: { id: 'notion', label: 'Notion MCP (Tickets)', brief: 'Read and update Notion task cards' },
+    github: { id: 'github', label: 'GitHub MCP', brief: 'Manage PRs, issues, and git commits' },
+    web: { id: 'web', label: 'Web Search', brief: 'Search documentation and external web' }
   };
 
   // Default names that were retired (TM-57: Antigravity is shown as Gemini,
@@ -41,7 +51,7 @@
   // A new member for a chat that already has `members`. Its name is unique in
   // the chat (case-insensitive): the vendor's name, else the model's label,
   // else the vendor's name with a number ("Claude 2").
-  function newMember(members, { vendor, model = null, memory = null, role = null, name = null, brain = null, brainText = null }, { vendorNames = VENDOR_NAMES, modelLabel = null } = {}) {
+  function newMember(members, { vendor, model = null, memory = null, role = null, name = null, brain = null, brainText = null, tools = null }, { vendorNames = VENDOR_NAMES, modelLabel = null } = {}) {
     if (!VENDORS.includes(vendor)) throw new Error(`Unknown vendor: ${vendor}`);
     const next = 1 + Math.max(0, ...members.map(m => /^m(\d+)$/.exec(m.id)).filter(Boolean).map(r => Number(r[1])));
     const taken = new Set(members.map(m => m.name.toLowerCase()));
@@ -53,6 +63,7 @@
     if (role && ROLES[role]) member.role = role;
     if (brain) member.brain = brain;
     if (brainText) member.brainText = brainText;
+    if (Array.isArray(tools)) member.tools = tools;
     return member;
   }
 
@@ -92,5 +103,5 @@
     return (thread.members || []).find(m => m.id === id) || null;
   }
 
-  return { VENDORS, VENDOR_NAMES, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById };
+  return { VENDORS, VENDOR_NAMES, ROLES, CREW, PERSONAS, TOOLS, newMember, ensureMembers, renameRetired, memberById };
 });

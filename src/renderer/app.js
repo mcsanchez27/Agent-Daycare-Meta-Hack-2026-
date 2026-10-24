@@ -55,7 +55,29 @@ const el = {
   contextGaugeLabel: $('context-gauge-label'),
   contextGaugeVal: $('context-gauge-val'),
   contextBar: $('context-bar'),
-  sidecarPlanWrap: $('sidecar-plan-wrap')
+  sidecarPlanWrap: $('sidecar-plan-wrap'),
+  tabSession: $('tab-session'),
+  tabPreview: $('tab-preview'),
+  tabToolbelt: $('tab-toolbelt'),
+  sidecarExpandBtn: $('sidecar-expand-btn'),
+  sidecarPreview: $('sidecar-preview'),
+  sidecarToolbelt: $('sidecar-toolbelt'),
+  toolbeltList: $('toolbelt-list'),
+  previewTitle: $('preview-title'),
+  previewReload: $('preview-reload'),
+  previewExternal: $('preview-external'),
+  previewEmpty: $('preview-empty'),
+  previewIframe: $('preview-iframe'),
+  notionGlance: $('notion-glance'),
+  notionTitle: $('notion-title'),
+  notionStatus: $('notion-status'),
+  notionPriority: $('notion-priority'),
+  notionAssignee: $('notion-assignee'),
+  notionDesc: $('notion-desc'),
+  notionTasks: $('notion-tasks'),
+  notionLink: $('notion-link'),
+  previewGlanceTm58: $('preview-glance-tm58'),
+  previewGlanceTm60: $('preview-glance-tm60')
 };
 
 // The two places messages show: the main chat, and the thread panel beside
@@ -188,15 +210,18 @@ function createCustomChat(memberOpts) {
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
 // ({ title, name, text } from another chat), name (keep this name if it's
 // free), fromTitle (for the note), threadOf (where the note goes).
-function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, role = null, brain = null, brainText = null, fromTitle = null, threadOf = null } = {}) {
+function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, role = null, brain = null, brainText = null, tools = null, fromTitle = null, threadOf = null } = {}) {
   const chat = chats.get(chatId);
   const names = name ? { ...vendorNames(), [vendor]: name } : vendorNames();
-  const member = newMember(chat.thread.members, { vendor, model, memory, role, name, brain, brainText }, { vendorNames: names, modelLabel });
+  const member = newMember(chat.thread.members, { vendor, model, memory, role, name, brain, brainText, tools }, { vendorNames: names, modelLabel });
   chat.thread.members.push(member);
   const what = member.name === vendorName(vendor) ? modelText(member) : `${vendorName(vendor)}, ${modelText(member)}`;
   post(chatId, { from: 'system', threadOf, text: `${member.name} (${what}) joined` + (fromTitle ? ` from "${fromTitle}"` : '') + '.' });
   api.log('info', 'agent joined', { chatId, member: member.id, vendor, model, from: fromTitle });
-  if (chatId === currentId) renderMembers();
+  if (chatId === currentId) {
+    renderMembers();
+    if (activeSidecarTab === 'toolbelt') renderToolbelt();
+  }
   return member;
 }
 
@@ -264,12 +289,37 @@ function showChat(id) {
   main.input.focus();
 }
 
+let activeSidecarTab = 'session'; // 'session' | 'preview' | 'toolbelt'
+
+function setSidecarTab(tab) {
+  activeSidecarTab = tab;
+  if (panelOpen()) {
+    removePendingRows(panel);
+    closeMentions(panel);
+    panel.threadOf = null;
+    panel.list.replaceChildren();
+    el.panel.hidden = true;
+  }
+  if (el.tabSession) el.tabSession.classList.toggle('active', tab === 'session');
+  if (el.tabPreview) el.tabPreview.classList.toggle('active', tab === 'preview');
+  if (el.tabToolbelt) el.tabToolbelt.classList.toggle('active', tab === 'toolbelt');
+
+  if (el.sidecarContent) el.sidecarContent.hidden = (tab !== 'session');
+  if (el.sidecarPreview) el.sidecarPreview.hidden = (tab !== 'preview');
+  if (el.sidecarToolbelt) el.sidecarToolbelt.hidden = (tab !== 'toolbelt');
+
+  if (tab === 'session' && currentId) renderSidecar();
+  if (tab === 'toolbelt') renderToolbelt();
+}
+
 // Opens a thread in the panel beside the main chat.
 function openPanel(rootId) {
   const root = current().thread.messages.find(m => m.id === rootId);
   if (!root) return;
   panel.threadOf = rootId;
   if (el.sidecarContent) el.sidecarContent.hidden = true;
+  if (el.sidecarPreview) el.sidecarPreview.hidden = true;
+  if (el.sidecarToolbelt) el.sidecarToolbelt.hidden = true;
   el.panel.hidden = false;
   el.panelLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : nameOf(root.from) + "'s"} message`;
   renderView(panel);
@@ -284,8 +334,7 @@ function closePanel() {
   panel.threadOf = null;
   panel.list.replaceChildren();
   el.panel.hidden = true;
-  if (el.sidecarContent) el.sidecarContent.hidden = false;
-  if (currentId) renderSidecar();
+  setSidecarTab(activeSidecarTab);
 }
 
 // Whether a message belongs in a view. The panel shows the thread's first message too.
@@ -441,6 +490,7 @@ function renderMembers() {
 // active models, and workspace folder.
 function renderSidecar() {
   if (!el.sidecar) return;
+  if (activeSidecarTab === 'toolbelt') renderToolbelt();
   const c = current();
   if (!c) {
     if (el.sidecarModels) el.sidecarModels.replaceChildren();
@@ -559,6 +609,177 @@ function renderPlan() {
     el.plan.classList.toggle('warn', p.status !== 'allowed' || (p.fiveHour && p.fiveHour.used >= 0.8));
   }
   renderSidecar();
+}
+
+// Sidecar expansion toggle (TM-60 Batch 3)
+function toggleSidecarExpand() {
+  if (!el.sidecar) return;
+  const isExpanded = el.sidecar.classList.toggle('expanded');
+  if (el.sidecarExpandBtn) {
+    el.sidecarExpandBtn.textContent = isExpanded ? '⤡' : '⤢';
+    el.sidecarExpandBtn.title = isExpanded ? 'Collapse sidecar (320px)' : 'Expand sidecar (55vw)';
+  }
+}
+
+// Renders the toolbelt capabilities tab (TM-60 Batch 3)
+function renderToolbelt() {
+  if (!el.toolbeltList) return;
+  el.toolbeltList.replaceChildren();
+  const c = current();
+  if (!c || !c.thread || !c.thread.members) return;
+
+  for (const m of c.thread.members) {
+    if (m.left) continue;
+    const card = document.createElement('div');
+    card.className = 'toolbelt-agent-card';
+
+    const head = document.createElement('div');
+    head.className = 'toolbelt-agent-head';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = m.name;
+    const modelSpan = document.createElement('span');
+    modelSpan.className = 'sidecar-model-role';
+    modelSpan.textContent = modelText(m);
+    head.append(nameSpan, modelSpan);
+
+    const caps = document.createElement('div');
+    caps.className = 'toolbelt-caps';
+
+    const memberTools = Array.isArray(m.tools) && m.tools.length ? m.tools : ['bash', 'write'];
+    for (const tId of memberTools) {
+      const toolDef = TOOLS[tId] || { id: tId, label: tId, brief: 'Agent capability' };
+      const capItem = document.createElement('div');
+      capItem.className = 'toolbelt-cap-item';
+      const capName = document.createElement('span');
+      capName.className = 'toolbelt-cap-name';
+      capName.textContent = toolDef.label;
+      const capStatus = document.createElement('span');
+      capStatus.className = 'toolbelt-cap-status';
+      capStatus.textContent = '● Active';
+      capItem.append(capName, capStatus);
+      caps.appendChild(capItem);
+    }
+
+    card.append(head, caps);
+    el.toolbeltList.appendChild(card);
+  }
+}
+
+// Notion tickets database for instant smart glance (TM-60 Batch 3)
+const NOTION_TICKETS = {
+  'TM-58': {
+    id: 'TM-58',
+    title: 'Agent Daycare Windows test pass V3.1 & V4',
+    status: 'In Progress',
+    priority: 'P1 High',
+    assignee: 'Matt Sanchez',
+    desc: 'Collects all test cases for V3.1, V4 crew flow, tool steps, vendor sessions, threads, Calm UI, agent builder and toolbelt.',
+    url: 'https://app.notion.com/p/Agent-Daycare-Windows-test-pass-V3-1-V4-40263104ef7881419817c02646db0615',
+    tasks: [
+      { text: 'Verify obsidian palette & floating composer', done: true },
+      { text: 'Verify session sidecar context gauges & plan meters', done: true },
+      { text: 'Verify Agent Builder with brain presets & engine selection', done: true },
+      { text: 'Verify Grok CLI 4th vendor streaming & resume', done: true },
+      { text: 'Verify expandable sidecar inspector tabs (Session, Preview, Toolbelt)', done: true },
+      { text: 'Verify native Notion glance card & live HTML webview', done: true },
+      { text: 'Verify Toolbelt checklist during custom agent forging', done: true }
+    ]
+  },
+  'TM-60': {
+    id: 'TM-60',
+    title: 'Calm UI, Agent Builder & Toolbelt Inspector',
+    status: 'In Progress',
+    priority: 'P1 High',
+    assignee: 'Matt Sanchez',
+    desc: 'Calm Obsidian palette, docked sidecar inspector, saved personas, custom agent builder, and toolbelt checklist.',
+    url: 'https://app.notion.com/p/TM-60-Calm-UI-40263104ef7881419817c02646db0615',
+    tasks: [
+      { text: 'Batch 1: Calm Obsidian CSS, capsule composer, chooser modal', done: true },
+      { text: 'Batch 2: Grok 4th vendor, brains presets, agent builder', done: true },
+      { text: 'Batch 3: Expandable inspector, live webview & Notion glance, toolbelt', done: true }
+    ]
+  }
+};
+
+let currentPreviewUrl = null;
+
+// Displays live webview or native Notion glance in the preview tab
+function showPreview({ title, url = null, type = 'html', ticketData = null }) {
+  setSidecarTab('preview');
+  if (el.previewTitle) el.previewTitle.textContent = title || 'Glance & Live Preview';
+
+  if (type === 'notion' && ticketData) {
+    if (el.previewEmpty) el.previewEmpty.hidden = true;
+    if (el.previewIframe) {
+      el.previewIframe.hidden = true;
+      el.previewIframe.src = 'about:blank';
+    }
+    if (el.notionGlance) {
+      el.notionGlance.hidden = false;
+      if (el.notionTitle) el.notionTitle.textContent = `${ticketData.id}: ${ticketData.title}`;
+      if (el.notionStatus) el.notionStatus.textContent = ticketData.status || 'Active';
+      if (el.notionPriority) el.notionPriority.textContent = ticketData.priority || 'P1 High';
+      if (el.notionAssignee) el.notionAssignee.textContent = ticketData.assignee || 'Matt Sanchez';
+      if (el.notionDesc) el.notionDesc.textContent = ticketData.desc || '';
+      if (el.notionLink) el.notionLink.href = ticketData.url || '#';
+      if (el.notionTasks) {
+        el.notionTasks.replaceChildren();
+        for (const item of (ticketData.tasks || [])) {
+          const li = document.createElement('li');
+          li.className = 'notion-task-item' + (item.done ? ' done' : '');
+          const box = document.createElement('input');
+          box.type = 'checkbox';
+          box.checked = !!item.done;
+          box.disabled = true;
+          const span = document.createElement('span');
+          span.textContent = item.text;
+          li.append(box, span);
+          el.notionTasks.appendChild(li);
+        }
+      }
+    }
+    currentPreviewUrl = ticketData.url || null;
+  } else if (url) {
+    if (el.notionGlance) el.notionGlance.hidden = true;
+    if (el.previewEmpty) el.previewEmpty.hidden = true;
+    if (el.previewIframe) {
+      el.previewIframe.hidden = false;
+      el.previewIframe.src = url;
+    }
+    currentPreviewUrl = url;
+  }
+}
+
+function glanceNotionFromText(text) {
+  const match = /(TM-\d+)/i.exec(text);
+  const ticketKey = match ? match[1].toUpperCase() : 'TM-58';
+  const data = NOTION_TICKETS[ticketKey] || {
+    id: ticketKey,
+    title: `Ticket ${ticketKey}`,
+    status: 'In Review',
+    priority: 'P1 Normal',
+    assignee: 'Matt Sanchez',
+    desc: 'Referenced Notion issue ticket from conversation history.',
+    url: `https://app.notion.com/p/${ticketKey}`,
+    tasks: [
+      { text: 'Review ticket brief and requirements', done: true },
+      { text: 'Verify technical implementation', done: false }
+    ]
+  };
+  showPreview({ title: `Notion: ${data.id}`, type: 'notion', ticketData: data });
+}
+
+function previewFromText(text) {
+  const hostMatch = /(https?:\/\/localhost:\d+[^\s]*)/i.exec(text);
+  const htmlMatch = /([a-zA-Z0-9_\-\/]+\.html)/i.exec(text);
+  if (hostMatch) {
+    showPreview({ title: hostMatch[1], url: hostMatch[1], type: 'html' });
+  } else if (htmlMatch) {
+    const filename = htmlMatch[1];
+    const cFolder = workingDir && currentId ? `${workingDir}/${currentId}`.replace(/\\/g, '/') : '';
+    const fUrl = `file:///${cFolder}/${filename}`;
+    showPreview({ title: filename, url: fUrl, type: 'html' });
+  }
 }
 
 // Adds a message to a chat (open or not), saves it, and draws it wherever it shows.
@@ -686,11 +907,11 @@ function showChooser(mode = 'new', vendor = null) {
           if (match) brainText = match.text;
         } catch (_) {}
         if (prevMode === 'add') {
-          join(currentId, p.vendor, { name: p.name, role: p.role, brain: p.brainFile, brainText });
+          join(currentId, p.vendor, { name: p.name, role: p.role, brain: p.brainFile, brainText, tools: p.tools });
           hideChooser();
           showChat(currentId);
         } else {
-          createCustomChat({ vendor: p.vendor, name: p.name, role: p.role, brain: p.brainFile, brainText });
+          createCustomChat({ vendor: p.vendor, name: p.name, role: p.role, brain: p.brainFile, brainText, tools: p.tools });
         }
       });
     }
@@ -759,13 +980,38 @@ function showChooser(mode = 'new', vendor = null) {
 
     brainField.append(brainLabel, brainSelect);
 
+    // Toolbelt & MCP Capabilities (TM-60 Batch 3)
+    const toolsField = document.createElement('div');
+    toolsField.className = 'builder-field';
+    const toolsLabel = document.createElement('label');
+    toolsLabel.className = 'builder-label';
+    toolsLabel.textContent = 'Enabled Capabilities & MCPs';
+    const toolsGrid = document.createElement('div');
+    toolsGrid.className = 'builder-tools-grid';
+
+    const toolCheckboxes = {};
+    for (const [tId, tool] of Object.entries(TOOLS)) {
+      const toolItem = document.createElement('label');
+      toolItem.className = 'builder-tool-item';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.value = tId;
+      chk.checked = (tId === 'bash' || tId === 'write');
+      toolCheckboxes[tId] = chk;
+      const tText = document.createElement('span');
+      tText.textContent = tool.label;
+      toolItem.append(chk, tText);
+      toolsGrid.appendChild(toolItem);
+    }
+    toolsField.append(toolsLabel, toolsGrid);
+
     // Submit button
     const submitBtn = document.createElement('button');
     submitBtn.type = 'submit';
     submitBtn.className = 'builder-submit';
     submitBtn.textContent = 'Forge & Deploy Teammate';
 
-    form.append(nameField, engineField, brainField, submitBtn);
+    form.append(nameField, engineField, brainField, toolsField, submitBtn);
     card.appendChild(form);
 
     form.addEventListener('submit', (e) => {
@@ -776,12 +1022,13 @@ function showChooser(mode = 'new', vendor = null) {
       const bFile = brainSelect.value;
       const match = loadedBrains.find(b => b.file === bFile);
       const bText = match ? match.text : null;
+      const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
       if (prevMode === 'add') {
-        join(currentId, aVendor, { name: aName, brain: bFile, brainText: bText });
+        join(currentId, aVendor, { name: aName, brain: bFile, brainText: bText, tools: selectedTools });
         hideChooser();
         showChat(currentId);
       } else {
-        createCustomChat({ vendor: aVendor, name: aName, brain: bFile, brainText: bText });
+        createCustomChat({ vendor: aVendor, name: aName, brain: bFile, brainText: bText, tools: selectedTools });
       }
     });
   } else {
@@ -1039,7 +1286,14 @@ function renderMessage(view, m) {
   if (m.steps && m.steps.length) addSteps(row, m.steps);
   if (view === panel && m.id === panel.threadOf) row.classList.add('root');
   if (view === main && m.from !== 'system') {
-    addActions(row, [{ label: 'Thread', title: 'Open a thread on this message beside the chat', onClick: () => openPanel(m.id) }]);
+    const buttons = [{ label: 'Thread', title: 'Open a thread on this message beside the chat', onClick: () => openPanel(m.id) }];
+    if (/([a-zA-Z0-9_\-\/]+\.html|https?:\/\/localhost:\d+)/i.test(m.text)) {
+      buttons.push({ label: '👁 Preview', title: 'Live preview in sidecar inspector', onClick: () => previewFromText(m.text) });
+    }
+    if (/(TM-\d+|notion\.(so|com))/i.test(m.text)) {
+      buttons.push({ label: '📋 Glance Ticket', title: 'Glance Notion ticket card in inspector', onClick: () => glanceNotionFromText(m.text) });
+    }
+    addActions(row, buttons);
   }
 }
 
@@ -1548,6 +1802,14 @@ wireComposer(panel);
 el.newChat.addEventListener('click', startNewChat);
 el.addAgent.addEventListener('click', () => showChooser('add'));
 el.panelClose.addEventListener('click', () => { closePanel(); main.input.focus(); });
+if (el.tabSession) el.tabSession.addEventListener('click', () => setSidecarTab('session'));
+if (el.tabPreview) el.tabPreview.addEventListener('click', () => setSidecarTab('preview'));
+if (el.tabToolbelt) el.tabToolbelt.addEventListener('click', () => setSidecarTab('toolbelt'));
+if (el.sidecarExpandBtn) el.sidecarExpandBtn.addEventListener('click', toggleSidecarExpand);
+if (el.previewReload) el.previewReload.addEventListener('click', () => { if (el.previewIframe && currentPreviewUrl) el.previewIframe.src = currentPreviewUrl; });
+if (el.previewExternal) el.previewExternal.addEventListener('click', () => { if (currentPreviewUrl) window.open(currentPreviewUrl, '_blank'); });
+if (el.previewGlanceTm58) el.previewGlanceTm58.addEventListener('click', () => glanceNotionFromText('TM-58'));
+if (el.previewGlanceTm60) el.previewGlanceTm60.addEventListener('click', () => glanceNotionFromText('TM-60'));
 
 api.onAgentOutput(onOutput);
 api.onAgentStep(onStep);

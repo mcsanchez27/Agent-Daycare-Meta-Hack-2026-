@@ -419,9 +419,9 @@ body {
   font-size: .88rem;
 }
 .side-q { color: var(--muted); }
-.side-a:empty::after { content: "â€¦"; color: var(--muted); }
+.side-a:empty::after { content: "Ã¢â‚¬Â¦"; color: var(--muted); }
 
-.msg.pending .bubble:empty::after { content: "â€¦"; color: var(--muted); animation: blink 1.2s infinite; }
+.msg.pending .bubble:empty::after { content: "Ã¢â‚¬Â¦"; color: var(--muted); animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: .3; } }
 
 .actions { display: flex; gap: .4rem; margin-top: .15rem; }
@@ -559,16 +559,376 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
 .mention.active, .mention:hover { background: var(--panel); }
 .mention-sub { color: var(--muted); font-size: .76rem; }
 
-/* ---- Right Sidecar: Session Info & Thread ---- */
+/* ---- Right Sidecar: Session Info, Live Preview & Toolbelt (TM-60 Batch 3) ---- */
 .sidecar {
-  width: 280px;
+  width: 320px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg);
   border-left: 1px solid var(--line);
   overflow: hidden;
+  transition: width .22s cubic-bezier(0.16, 1, 0.3, 1);
 }
+.sidecar.expanded {
+  width: 55vw;
+  min-width: 580px;
+  max-width: 960px;
+}
+
+.sidecar-tabs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .5rem .75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.sidecar-tabs {
+  display: flex;
+  gap: .3rem;
+}
+.sidecar-tab {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: .8rem;
+  font-weight: 500;
+  padding: .3rem .65rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.sidecar-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+.sidecar-tab.active {
+  color: #fff;
+  background: var(--panel);
+  font-weight: 600;
+}
+.sidecar-expand-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .88rem;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.sidecar-expand-btn:hover {
+  color: var(--text);
+  background: var(--panel);
+  border-color: #3f4246;
+}
+
+.sidecar-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 1.1rem;
+  gap: 1.2rem;
+}
+.sidecar-view[hidden] {
+  display: none;
+}
+
+/* Live Preview View & Notion Glance */
+.sidecar-preview-view {
+  padding: 0;
+  gap: 0;
+  background: var(--bg);
+}
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .5rem .85rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+.preview-title {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70%;
+}
+.preview-actions {
+  display: flex;
+  gap: .35rem;
+}
+.preview-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .82rem;
+  cursor: pointer;
+}
+.preview-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.preview-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow-y: auto;
+  background: #111213;
+}
+.preview-empty {
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .5rem;
+  margin: auto 0;
+}
+.preview-empty[hidden] { display: none; }
+.preview-empty-icon {
+  font-size: 2rem;
+  opacity: .5;
+}
+.preview-empty-text {
+  font-weight: 600;
+  font-size: .95rem;
+  color: var(--text);
+}
+.preview-empty-sub {
+  font-size: .8rem;
+  color: var(--muted);
+  max-width: 280px;
+  line-height: 1.4;
+}
+.preview-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  margin-top: 1rem;
+  width: 100%;
+  max-width: 240px;
+}
+.preview-quick-btn {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: .78rem;
+  padding: .5rem .75rem;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all .15s ease;
+}
+.preview-quick-btn:hover {
+  border-color: var(--matt);
+  background: rgba(37, 99, 235, 0.12);
+}
+.preview-iframe {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #fff;
+}
+.preview-iframe[hidden] { display: none; }
+
+/* Notion Glance Card */
+.notion-glance-card {
+  margin: 1rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.notion-glance-card[hidden] { display: none; }
+.notion-card-header {
+  padding: 1rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+}
+.notion-card-tag {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: #38bdf8;
+  text-transform: uppercase;
+}
+.notion-card-title {
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+.notion-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  margin-top: .2rem;
+}
+.notion-badge {
+  font-size: .72rem;
+  padding: .2rem .5rem;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.notion-badge.status {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.notion-badge.priority {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.notion-badge.assignee {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+.notion-card-body {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .8rem;
+}
+.notion-section-title {
+  font-size: .7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+.notion-card-desc {
+  font-size: .82rem;
+  color: var(--text);
+  line-height: 1.45;
+}
+.notion-task-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+}
+.notion-task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  font-size: .8rem;
+  color: var(--text);
+  line-height: 1.3;
+}
+.notion-task-item.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.notion-card-footer {
+  padding: .75rem 1rem;
+  border-top: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.2);
+}
+.notion-card-link {
+  font-size: .8rem;
+  color: var(--matt);
+  text-decoration: none;
+  font-weight: 500;
+}
+.notion-card-link:hover {
+  text-decoration: underline;
+}
+
+/* Toolbelt View */
+.toolbelt-list {
+  display: flex;
+  flex-direction: column;
+  gap: .9rem;
+}
+.toolbelt-agent-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: .75rem;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+.toolbelt-agent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: .82rem;
+  font-weight: 600;
+}
+.toolbelt-caps {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+}
+.toolbelt-cap-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: .35rem .6rem;
+  border-radius: 6px;
+  font-size: .78rem;
+}
+.toolbelt-cap-name { font-weight: 500; }
+.toolbelt-cap-status {
+  font-size: .68rem;
+  color: #34d399;
+}
+.toolbelt-library {
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+}
+.library-item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: .8rem;
+  color: var(--text);
+  padding: .4rem .6rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.library-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+}
+.library-dot.green { background: #10b981; }
+.library-dot.blue { background: #38bdf8; }
 
 .sidecar-content {
   flex: 1;
@@ -879,4 +1239,31 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
 .builder-submit:disabled {
   opacity: .5;
   cursor: not-allowed;
+}
+
+.builder-tools-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .5rem;
+  padding: .2rem 0;
+}
+.builder-tool-item {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  font-size: .8rem;
+  color: var(--text);
+  cursor: pointer;
+  background: var(--bg);
+  padding: .45rem .6rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  user-select: none;
+}
+.builder-tool-item:hover {
+  border-color: #3f4246;
+}
+.builder-tool-item input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--matt);
 }
