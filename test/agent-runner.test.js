@@ -47,7 +47,10 @@ test('agent arguments: everyone may write in the working folder; codex reads the
   assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', '-p', 'hi'], stdin: null });
   assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', 'hi'], stdin: null });
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
-  assert.deepEqual(runner._buildAgentArgs('grok', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--always-approve', 'hi'], stdin: null });
+  // grok: the prompt goes in a file, so every argument stays shim-safe (its grok.cmd runs through cmd.exe).
+  const grok = runner._buildAgentArgs('grok', 'hi there & "you"', 'grok-4.6', '0f2c7a1e-1b2c-4d3e-8f90-123456789abc');
+  assert.deepEqual(grok, { args: ['--output-format', 'streaming-messages-json', '--permission-mode', 'acceptEdits', '--always-approve', '-m', 'grok-4.6', '--resume', '0f2c7a1e-1b2c-4d3e-8f90-123456789abc', '--prompt-file', '.daycare-prompt.txt'], stdin: null, promptFile: 'hi there & "you"' });
+  assert.ok(AgentRunner.launchCommand('C:\\Users\\Matth\\AppData\\Roaming\\npm\\grok.cmd', grok.args, 'win32'), 'safe for the grok.cmd shim');
   // Codex's arguments must stay safe for a codex.cmd shim.
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
 });
@@ -300,7 +303,7 @@ test('listModels: Antigravity from agy, Claude fixed, Codex typed; agy failing l
   assert.deepEqual(m.antigravity, [{ id: 'x', label: 'X model' }]);
   assert.deepEqual(m.claude.map(x => x.id), ['opus', 'sonnet', 'haiku']);
   assert.deepEqual(m.codex, []);
-  assert.deepEqual(m.grok.map(x => x.id), ['grok-beta', 'grok-2']);
+  assert.deepEqual(m.grok.map(x => x.id), ['grok-4.6', 'grok-4.5']);
   const { runner: r2 } = makeRunner();
   r2._agyModelsText = async () => { throw new Error('agy missing'); };
   assert.deepEqual((await r2.listModels()).antigravity, []);

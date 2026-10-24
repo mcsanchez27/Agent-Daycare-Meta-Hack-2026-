@@ -1629,3 +1629,6 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
   outline: none;
   border-color: #3b82f6;
 }
+
+/* Org Control is a full-size overlay; without this it covered the chat even when hidden (TM-60 review). */
+.org-control[hidden] { display: none; }

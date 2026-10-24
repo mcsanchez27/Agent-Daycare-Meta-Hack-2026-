@@ -35,7 +35,7 @@ const MAX_PENDING = 4 * 1024 * 1024;
 // "Running npm test". Each CLI names its tools and arguments differently.
 function describeTool(name, params = {}) {
   const p = params && typeof params === 'object' ? params : {};
-  const short = (s, n = 70) => { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + 'â€¦' : t; };
+  const short = (s, n = 70) => { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
   const file = p.file_path || p.path || p.Path || p.AbsolutePath || p.TargetFile || p.FilePath || p.notebook_path;
   const base = file ? String(file).split(/[\\/]/).pop() : null;
   const command = p.command || p.CommandLine;
@@ -116,7 +116,10 @@ function parseEvent(vendor, line) {
 }
 
 const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
-const GROK_MODELS = [{ id: 'grok-beta', label: 'grok-beta' }, { id: 'grok-2', label: 'grok-2' }];
+// What `grok models` listed on 2026-10-24 (it answers even when signed out).
+const GROK_MODELS = [{ id: 'grok-4.6', label: 'grok-4.6' }, { id: 'grok-4.5', label: 'grok-4.5' }];
+// grok's prompt goes in this file in the chat folder (see _buildAgentArgs).
+const PROMPT_FILE = '.daycare-prompt.txt';
 
 // `agy models` prints a header, then one "id<TAB>label" line per model.
 function parseAgyModels(text) {
@@ -333,8 +336,9 @@ class AgentRunner {
 
     const exe = this._getExecutable(agent);
     const workingDir = this.chatFolder(runKey);
-    const { args, stdin } = this._buildAgentArgs(vendor, p, model, sessionId);
-    this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, cwd: workingDir });
+    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId);
+    if (promptFile !== null) fs.writeFileSync(path.join(workingDir, PROMPT_FILE), promptFile);
+    this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, promptFile, cwd: workingDir });
 
     const cmd = launchCommand(exe, args);
     if (!cmd) {
@@ -346,6 +350,7 @@ class AgentRunner {
     const child = this._spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin);
     if (!child) return false;
     Object.assign(child, ctx);
+    if (promptFile !== null) child.promptPath = path.join(workingDir, PROMPT_FILE);
 
     this.processes.set(runKey, child);
     // Timeout (TM-53): a reply that takes too long is stopped like Stop.
@@ -398,7 +403,11 @@ class AgentRunner {
     // Lean Claude (TM-59): Matt's own plugins, hooks and MCP servers stay out
     // (about 66k tokens a launch down to 37k). Its login is unaffected.
     if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
-    if (vendor === 'grok') return { args: ['-p', '--permission-mode', 'acceptEdits', '--always-approve', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    // grok (TM-60): one turn from a prompt file in the chat folder (see run):
+    // its npm shim goes through cmd.exe, which a prompt on the command line
+    // would not survive. Output is Claude-shaped streaming JSON. Tools are
+    // auto-approved like the others; it isn't fenced in.
+    if (vendor === 'grok') return { args: ['--output-format', 'streaming-messages-json', '--permission-mode', 'acceptEdits', '--always-approve', ...m, ...(sessionId ? ['--resume', sessionId] : []), '--prompt-file', PROMPT_FILE], stdin: null, promptFile: p };
     // antigravity (agy): -p takes the next word as the prompt, so it goes last
     return { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }
@@ -446,7 +455,7 @@ class AgentRunner {
     const take = (line) => {
       const ev = parseEvent(vendor, line);
       if (!ev) return false;
-      // Each CLI sends its messages whole ("I'll checkâ€¦", tools, then the
+      // Each CLI sends its messages whole ("I'll check…", tools, then the
       // answer), so they get a blank line between them.
       if (ev.text) this.emitOutput(child, (child.saidSomething ? '\n\n' : '') + ev.text);
       if (ev.text) child.saidSomething = true;
@@ -490,6 +499,7 @@ class AgentRunner {
 
     child.on('close', (code) => {
       clearTimeout(child.timer);
+      if (child.promptPath) fs.unlink(child.promptPath, () => {});
       if (this.processes.get(runKey) === child) this.processes.delete(runKey);
       stdoutSink.flush();
       stderrSink.flush();

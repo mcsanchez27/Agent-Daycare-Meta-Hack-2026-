@@ -21,7 +21,9 @@ const electronMock = {
     on() {}
     webContents = {
       on: () => {},
-      send: () => {}
+      send: () => {},
+      setWindowOpenHandler: () => {},
+      getURL: () => ''
     }
     static getAllWindows = () => []
   },

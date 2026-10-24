@@ -17,7 +17,7 @@
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
-const { VENDORS, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
+const { VENDORS, ROLES, CREW, PERSONAS, TOOLS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -690,7 +690,7 @@ function renderToolbelt() {
       capName.textContent = toolDef.label;
       const capStatus = document.createElement('span');
       capStatus.className = 'toolbelt-cap-status';
-      capStatus.textContent = '● Active';
+      capStatus.textContent = 'declared';
       capItem.append(capName, capStatus);
       caps.appendChild(capItem);
     }
@@ -700,39 +700,14 @@ function renderToolbelt() {
   }
 }
 
-// Notion tickets database for instant smart glance (TM-60 Batch 3)
-const NOTION_TICKETS = {
-  'TM-58': {
-    id: 'TM-58',
-    title: 'Agent Daycare Windows test pass V3.1 & V4',
-    status: 'In Progress',
-    priority: 'P1 High',
-    assignee: 'Matt Sanchez',
-    desc: 'Consolidated test pass for V3.1–V4, Calm UI, agent builder and toolbelt.',
-    url: 'https://app.notion.com/p/Agent-Daycare-Windows-test-pass-V3-1-V4-40263104ef7881419817c02646db0615',
-    tasks: [
-      { text: 'Flight 1: Calm Obsidian Shell & Sidecar Inspector (Tabs, ⤢ 55vw toggle, capsule composer)', done: false },
-      { text: 'Flight 2: Saved Personas & Agent Builder (Gallery, custom forge, brain presets, toolbelt checklist)', done: false },
-      { text: 'Flight 3: Live Notion Glance & Webview Sandbox (Calm Notion card, live index.html iframe)', done: false },
-      { text: 'Flight 4: 4-Engine Roster Ping (Gemini, Claude, Codex, Grok streaming check)', done: false },
-      { text: 'Flight 5: Autonomous Crew Collaboration (Design → UI/UX → Engineering handoff with live tool steps)', done: false },
-      { text: 'Flight 6: Team Management & Debug Maintenance (Member × remove / @ rejoin, Delete all chats purge)', done: false }
-    ]
-  },
-  'TM-60': {
-    id: 'TM-60',
-    title: 'Calm UI, Agent Builder & Toolbelt Inspector',
-    status: 'In Progress',
-    priority: 'P1 High',
-    assignee: 'Matt Sanchez',
-    desc: 'Calm Obsidian palette, docked sidecar inspector, saved personas, custom agent builder, and toolbelt checklist.',
-    url: 'https://app.notion.com/p/TM-60-Calm-UI-40263104ef7881419817c02646db0615',
-    tasks: [
-      { text: 'Batch 1: Calm Obsidian CSS, capsule composer, chooser modal', done: true },
-      { text: 'Batch 2: Grok 4th vendor, brains presets, agent builder', done: true },
-      { text: 'Batch 3: Expandable inspector, live webview & Notion glance, toolbelt', done: true }
-    ]
-  }
+// The window isn't connected to Notion (TM-60 built the card, not the
+// link). A glance can only open a ticket whose page Matt's work has a link
+// for; nothing here is live.
+const NOTION_LINKS = {
+  'TM-56': 'https://app.notion.com/p/40263104ef7881d7abdbd44ad8f0093b',
+  'TM-57': 'https://app.notion.com/p/40263104ef78813b9ea1fd88e575d48d',
+  'TM-58': 'https://app.notion.com/p/40263104ef7881419817c02646db0615',
+  'TM-59': 'https://app.notion.com/p/40263104ef7881c1a7abda21b02931d0'
 };
 
 let currentPreviewUrl = null;
@@ -752,10 +727,10 @@ function showPreview({ title, url = null, type = 'html', ticketData = null }) {
       el.notionGlance.hidden = false;
       if (el.notionTitle) el.notionTitle.textContent = `${ticketData.id}: ${ticketData.title}`;
       if (el.notionStatus) el.notionStatus.textContent = ticketData.status || 'Active';
-      if (el.notionPriority) el.notionPriority.textContent = ticketData.priority || 'P1 High';
-      if (el.notionAssignee) el.notionAssignee.textContent = ticketData.assignee || 'Matt Sanchez';
+      if (el.notionPriority) { el.notionPriority.textContent = ticketData.priority || ''; el.notionPriority.hidden = !ticketData.priority; }
+      if (el.notionAssignee) { el.notionAssignee.textContent = ticketData.assignee || ''; el.notionAssignee.hidden = !ticketData.assignee; }
       if (el.notionDesc) el.notionDesc.textContent = ticketData.desc || '';
-      if (el.notionLink) el.notionLink.href = ticketData.url || '#';
+      if (el.notionLink) { el.notionLink.href = ticketData.url || '#'; el.notionLink.hidden = !ticketData.url; }
       if (el.notionTasks) {
         el.notionTasks.replaceChildren();
         for (const item of (ticketData.tasks || [])) {
@@ -786,21 +761,16 @@ function showPreview({ title, url = null, type = 'html', ticketData = null }) {
 
 function glanceNotionFromText(text) {
   const match = /(TM-\d+)/i.exec(text);
-  const ticketKey = match ? match[1].toUpperCase() : 'TM-58';
-  const data = NOTION_TICKETS[ticketKey] || {
-    id: ticketKey,
-    title: `Ticket ${ticketKey}`,
-    status: 'In Review',
-    priority: 'P1 Normal',
-    assignee: 'Matt Sanchez',
-    desc: 'Referenced Notion issue ticket from conversation history.',
-    url: `https://app.notion.com/p/${ticketKey}`,
-    tasks: [
-      { text: 'Review ticket brief and requirements', done: true },
-      { text: 'Verify technical implementation', done: false }
-    ]
-  };
-  showPreview({ title: `Notion: ${data.id}`, type: 'notion', ticketData: data });
+  const id = match ? match[1].toUpperCase() : null;
+  const url = id ? NOTION_LINKS[id] || null : null;
+  showPreview({ title: id ? `Notion: ${id}` : 'Notion', type: 'notion', ticketData: {
+    id: id || 'Notion',
+    title: url ? 'Open in Notion for the live ticket' : 'No link saved for this ticket',
+    status: 'not live',
+    desc: "The window isn't connected to Notion, so this card only links out. A live glance is an idea, not built.",
+    url,
+    tasks: []
+  } });
 }
 
 function previewFromText(text) {
@@ -1020,7 +990,7 @@ function showChooser(mode = 'new', vendor = null) {
     toolsField.className = 'builder-field';
     const toolsLabel = document.createElement('label');
     toolsLabel.className = 'builder-label';
-    toolsLabel.textContent = 'Enabled Capabilities & MCPs';
+    toolsLabel.textContent = "Capabilities (a label on the agent; it doesn't change what its CLI can do)";
     const toolsGrid = document.createElement('div');
     toolsGrid.className = 'builder-tools-grid';
 
@@ -1709,6 +1679,20 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   // Resuming sends only what's new since it last saw the chat.
   const where = threadOf === null ? 'main' : String(threadOf);
   const session = (member.sessions || {})[where] || null;
+  // The reply is pending from here, before the brain files are read (an
+  // await): Send stays off, so a second send can't launch the agent twice.
+  const runKey = runKeyOf(chatId, memberId);
+  const p = pending[runKey] = {
+    chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(),
+    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1, resolvedBrainMtime: 0
+  };
+  if (chatId === currentId) {
+    openViews().forEach(renderPendingRows);
+    renderMembers();
+    if (threadOf !== null) renderSummary(threadOf);
+  }
+  renderChatList();
+  updateSendButtons();
 
   // TM-60 Batch 4: Dynamic Central Brain & Persona Chip Resolution
   let centralBrain = null;
@@ -1727,12 +1711,14 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
         resolvedBrainMtime = Math.max(resolvedBrainMtime, resolved.persona.mtime || 0);
       }
       // If resuming an existing session, check if brain files were updated on disk since last run
-      if (session && session.brainMtime && resolvedBrainMtime > session.brainMtime) {
+      // A session that never saw the brains (brainMtime 0, or saved before
+      // they could be read) catches up here with the full text.
+      if (session && resolvedBrainMtime > (session.brainMtime || 0)) {
         const notices = [];
-        if (resolved.central && resolved.central.mtime > session.brainMtime) {
+        if (resolved.central && resolved.central.mtime > (session.brainMtime || 0)) {
           notices.push(`--- Central Brain Update ---\n${resolved.central.text.trim()}`);
         }
-        if (resolved.persona && resolved.persona.mtime > session.brainMtime) {
+        if (resolved.persona && resolved.persona.mtime > (session.brainMtime || 0)) {
           notices.push(`--- Persona Chip (${resolved.persona.file}) Update ---\n${resolved.persona.text.trim()}`);
         }
         if (notices.length) brainUpdate = notices.join('\n\n');
@@ -1742,6 +1728,8 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
     api.log('warn', 'brain resolution failed', { error: err.message });
   }
 
+  if (pending[runKey] !== p) return; // stopped or replaced while the brains were read
+  p.resolvedBrainMtime = resolvedBrainMtime; // 0 when no brain file could be read
   const prompt = buildPrompt(thread, memberId, {
     threadOf,
     answer,
@@ -1751,21 +1739,8 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
     personaChip,
     brainUpdate
   });
-  const runKey = runKeyOf(chatId, memberId);
-  pending[runKey] = {
-    chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(),
-    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1,
-    resolvedBrainMtime: resolvedBrainMtime || Date.now()
-  };
-  if (chatId === currentId) {
-    openViews().forEach(renderPendingRows);
-    renderMembers();
-    if (threadOf !== null) renderSummary(threadOf);
-  }
-  renderChatList();
-  updateSendButtons();
 
-  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: pending[runKey].sessionId, prompt }).then((started) => {
+  api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: p.sessionId, prompt }).then((started) => {
     if (started === false) finishReply(runKey, null, 'it could not be started');
   }).catch((err) => finishReply(runKey, null, err.message));
 }
@@ -1825,7 +1800,7 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
   if (member && sessionId && !stopped && !timedOut) {
     member.sessions = {
       ...(member.sessions || {}),
-      [p.where]: { id: sessionId, lastId: p.seenUpTo, brainMtime: p.resolvedBrainMtime || Date.now() }
+      [p.where]: { id: sessionId, lastId: p.seenUpTo, brainMtime: p.resolvedBrainMtime || 0 }
     };
   }
   if (member && usage) member.usage = { ...usage, at: new Date().toISOString() };
@@ -2150,12 +2125,12 @@ async function renderOrgMcps(panel) {
   topTitle.textContent = '🔌 MCP Directory & Integration Registry';
   const topBadge = document.createElement('span');
   topBadge.className = 'org-card-badge';
-  topBadge.textContent = 'Connected Tools';
+  topBadge.textContent = 'Reference list';
   topHead.append(topTitle, topBadge);
 
   const topDesc = document.createElement('p');
   topDesc.className = 'org-item-desc';
-  topDesc.textContent = 'Model Context Protocol (MCP) servers connected to Mountain Man Studios teammates. Equip these capabilities on custom agents in the Agent Builder.';
+  topDesc.textContent = "A list of MCP servers for reference (mcp-servers.json). It doesn't connect anything: each agent uses the MCP servers set up in its own CLI (claude mcp, codex mcp, agy mcp).";
   topCard.append(topHead, topDesc);
   panel.appendChild(topCard);
 
@@ -2186,7 +2161,7 @@ async function renderOrgMcps(panel) {
     if (!sName || !sCmd) return;
     addBtn.disabled = true;
     try {
-      await api.saveMcp({ name: sName, command: sCmd, status: 'connected', description: 'User-configured MCP integration', tools: ['custom_query'] });
+      await api.saveMcp({ name: sName, command: sCmd, status: 'listed', description: 'Added from Org Control', tools: [] });
       nameInput.value = '';
       cmdInput.value = '';
       renderOrgDeck();
@@ -2216,7 +2191,7 @@ async function renderOrgMcps(panel) {
     mTitle.textContent = m.name;
     const mStatus = document.createElement('span');
     mStatus.className = 'org-card-badge';
-    mStatus.textContent = '● Connected';
+    mStatus.textContent = 'listed';
     mHead.append(mTitle, mStatus);
 
     const mDesc = document.createElement('div');
@@ -2437,7 +2412,7 @@ async function renderOrgBuilder(panel) {
   toolsField.className = 'builder-field';
   const toolsLabel = document.createElement('label');
   toolsLabel.className = 'builder-label';
-  toolsLabel.textContent = 'Enabled Capabilities & MCP Integrations';
+  toolsLabel.textContent = "Capabilities (a label on the agent; it doesn't change what its CLI can do)";
   const toolsGrid = document.createElement('div');
   toolsGrid.className = 'builder-tools-grid';
 
@@ -2522,7 +2497,7 @@ if (el.sidecarExpandBtn) el.sidecarExpandBtn.addEventListener('click', toggleSid
 if (el.previewReload) el.previewReload.addEventListener('click', () => { if (el.previewIframe && currentPreviewUrl) el.previewIframe.src = currentPreviewUrl; });
 if (el.previewExternal) el.previewExternal.addEventListener('click', () => { if (currentPreviewUrl) window.open(currentPreviewUrl, '_blank'); });
 if (el.previewGlanceTm58) el.previewGlanceTm58.addEventListener('click', () => glanceNotionFromText('TM-58'));
-if (el.previewGlanceTm60) el.previewGlanceTm60.addEventListener('click', () => glanceNotionFromText('TM-60'));
+if (el.previewGlanceTm60) el.previewGlanceTm60.addEventListener('click', () => glanceNotionFromText('TM-59'));
 
 if (el.navOrgBtn) {
   el.navOrgBtn.addEventListener('click', () => {

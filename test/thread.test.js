@@ -154,7 +154,7 @@ test('an agent reply can be marked as stopped or timed out', () => {
 test('a thread hangs off a main-chat message, and handoffs are app notes between two agents', () => {
   const t = createThread(V1());
   const root = addMessage(t, { from: 'claude', text: 'Let me ask @Codex' });
-  const marker = addMessage(t, { from: 'system', text: 'Claude â€º Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
+  const marker = addMessage(t, { from: 'system', text: 'Claude › Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
   assert.equal(marker.threadOf, root.id);
   assert.deepEqual(marker.handoff, { from: 'claude', to: 'codex' });
   assert.equal(addMessage(t, { from: 'codex', text: 'here', threadOf: root.id }).threadOf, root.id);
@@ -196,7 +196,7 @@ test('a handoff prompt sees the main chat up to the thread, then the thread, and
   addMessage(t, { from: 'matt', to: 'claude', text: 'plan the menu' });
   const root = addMessage(t, { from: 'claude', text: 'Soup first. @Codex can you price it?' });
   addMessage(t, { from: 'matt', to: 'claude', text: 'later main-chat message' });
-  addMessage(t, { from: 'system', text: 'Claude â€º Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
+  addMessage(t, { from: 'system', text: 'Claude › Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
   const p = buildPrompt(t, 'codex', { threadOf: root.id });
   assert.match(p, /^You are Codex/);
   assert.match(p, /thread/);

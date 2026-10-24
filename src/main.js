@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, screen, shell, dialog, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
 const userConfig = require('./config');
@@ -103,6 +104,19 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  // Links and window.open from the page (the preview's ↗, Notion links) go to
+  // the system browser, never to a new window that carries this app's bridge
+  // (TM-60 review): a page an agent wrote must not get window.api.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url).catch((err) => logger.warn('app', 'could not open link', { url, error: err.message }));
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url === mainWindow.webContents.getURL()) return;
+    event.preventDefault();
+    shell.openExternal(url).catch(() => {});
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -355,7 +369,7 @@ function setMenu() {
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
-    { label: 'Debug', submenu: [{ label: 'Delete all chatsâ€¦', click: () => deleteAllChats() }] }
+    { label: 'Debug', submenu: [{ label: 'Delete all chats…', click: () => deleteAllChats() }] }
   ]));
 }
 
