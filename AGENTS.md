@@ -71,6 +71,10 @@
 - **Session Sidecar:** Right rail displays live context window token gauges, active models list with vendor dots and roles, Claude rate limit plan meters, and active workspace folder. Threads dock inside the sidecar column when open.
 - **Centered Chooser Modal:** Modern card dialog with backdrop blur for vendor, model, crew, persona, and builder selection.
 
+## Meta hackathon branch (from 2026-10-24)
+- Matt entered Agent Daycare in the **Meta Global AI Developer Hackathon** (Meta + Cerebral Valley, virtual): kickoff Oct 26, submissions due **Nov 4, 9 PM ET**, judging to Nov 8, winners Nov 9. One track per project (Indie or Startup). Builds must use Meta's models and tools through the Meta Model API (Muse Spark, Muse Code, open-weights models); themes "Build for Your World" / "Push the Frontier"; Indie judging is creativity, technical ambition and whether it works.
+- **Branch rule:** general work keeps going to `master` through `tm-<id>/…` branches as before. Anything specific to the competition (a Meta engine, submission text, judging-driven choices) lives on **`hackathon/meta-2026`**, which is merged *from* master regularly and never merged back without Matt saying so. Before changing anything, check which branch you are on and whether the change is general or hackathon-only.
+
 ## How it works
 - Each message to an agent is a **one-shot launch** of its CLI (stdin closed, or closed right after Codex's prompt):
   - Antigravity: `agy --mode accept-edits -p "<prompt>"` (`-p` takes the next word as the prompt, so flags go before it)
