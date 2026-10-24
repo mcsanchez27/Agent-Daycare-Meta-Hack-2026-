@@ -956,7 +956,7 @@ function showChooser(mode = 'new', vendor = null) {
               if (match) brainText = match.text;
             } catch (_) {}
           }
-          const opts = { name: p.name, role: p.role || null, brain: p.brainFile || null, brainText, mcp: p.mcp || null, persona: p.id };
+          const opts = { name: p.name, role: p.role || null, model: p.model || null, modelLabel: modelLabelOf(p.vendor, p.model || null), brain: p.brainFile || null, brainText, mcp: p.mcp || null, persona: p.id };
           if (prevMode === 'add') {
             join(currentId, p.vendor, opts);
             hideChooser();
@@ -1005,6 +1005,7 @@ function showChooser(mode = 'new', vendor = null) {
       engineSelect.appendChild(opt);
     }
     engineField.append(engineLabel, engineSelect);
+    const modelPick = modelField(engineSelect);
 
     // Persona Chip Preset Select (TM-60 Batch 4)
     const brainField = document.createElement('div');
@@ -1068,7 +1069,7 @@ function showChooser(mode = 'new', vendor = null) {
     submitBtn.className = 'builder-submit';
     submitBtn.textContent = 'Forge & Deploy Teammate';
 
-    form.append(nameField, engineField, brainField, toolsField, skillsField, saveField, submitBtn);
+    form.append(nameField, engineField, modelPick.field, brainField, toolsField, skillsField, saveField, submitBtn);
     card.appendChild(form);
 
     form.addEventListener('submit', async (e) => {
@@ -1082,9 +1083,10 @@ function showChooser(mode = 'new', vendor = null) {
       const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
       const selectedSkills = Object.keys(skillBoxes).filter(k => skillBoxes[k].checked);
       submitBtn.disabled = true;
-      const cfg = { name: aName, vendor: aVendor, brain: bFile, brainText: bText, mcp: selectedTools, skills: selectedSkills };
+      const model = modelPick.value();
+      const cfg = { name: aName, vendor: aVendor, model, brain: bFile, brainText: bText, mcp: selectedTools, skills: selectedSkills };
       const persona = saveBox.checked ? await saveTeammate(cfg) : null;
-      const opts = { name: aName, brain: bFile, brainText: bText, mcp: selectedTools, persona };
+      const opts = { name: aName, model, modelLabel: modelLabelOf(aVendor, model), brain: bFile, brainText: bText, mcp: selectedTools, persona };
       if (prevMode === 'add') {
         join(currentId, aVendor, opts);
         hideChooser();
@@ -2574,6 +2576,7 @@ async function renderOrgBuilder(panel) {
     engineSelect.appendChild(opt);
   }
   engineField.append(engineLabel, engineSelect);
+  const modelPick = modelField(engineSelect);
 
   // Persona Chip Select
   const chipField = document.createElement('div');
@@ -2655,11 +2658,11 @@ async function renderOrgBuilder(panel) {
     if (match) bText = match.text;
     const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
     const selectedSkills = Object.keys(skillBoxes).filter(k => skillBoxes[k].checked);
-    return { name: aName, vendor: aVendor, brain: bFile, brainText: bText, mcp: selectedTools, skills: selectedSkills, save: saveBox.checked };
+    return { name: aName, vendor: aVendor, model: modelPick.value(), brain: bFile, brainText: bText, mcp: selectedTools, skills: selectedSkills, save: saveBox.checked };
   }
   // Saving first (TM-60 Batch 4) gives the member its teammate id, so the
   // skills and servers given to that teammate reach it from the first turn.
-  const memberOpts = async (cfg) => ({ name: cfg.name, brain: cfg.brain, brainText: cfg.brainText, mcp: cfg.mcp, persona: cfg.save ? await saveTeammate(cfg) : null });
+  const memberOpts = async (cfg) => ({ name: cfg.name, model: cfg.model, modelLabel: modelLabelOf(cfg.vendor, cfg.model), brain: cfg.brain, brainText: cfg.brainText, mcp: cfg.mcp, persona: cfg.save ? await saveTeammate(cfg) : null });
 
   deployNewBtn.addEventListener('click', async () => {
     const cfg = getBuilderConfig();
@@ -2681,7 +2684,7 @@ async function renderOrgBuilder(panel) {
   });
 
   actionRow.append(deployNewBtn, deployCurrentBtn);
-  form.append(nameField, engineField, chipField, toolsField, skillsField, saveField, actionRow);
+  form.append(nameField, engineField, modelPick.field, chipField, toolsField, skillsField, saveField, actionRow);
   card.appendChild(form);
   panel.appendChild(card);
 
@@ -2712,6 +2715,48 @@ async function renderOrgBuilder(panel) {
   } catch (_) {}
   savedCard.append(savedTitle, savedNote, savedList);
   panel.appendChild(savedCard);
+}
+
+// A model pick for the Builders (TM-60 Batch 5): the engine's models as the
+// chooser offers them (Gemini from agy, Claude's three, Grok's two), with
+// "Default" first; Codex has no list, so its model is typed. Refills when
+// the engine changes.
+function modelField(engineSelect) {
+  const field = document.createElement('div');
+  field.className = 'builder-field';
+  const label = document.createElement('label');
+  label.className = 'builder-label';
+  label.textContent = 'Model';
+  const select = document.createElement('select');
+  select.className = 'builder-select';
+  const typed = document.createElement('input');
+  typed.className = 'builder-input';
+  typed.placeholder = 'Codex model id, blank for its default (e.g. gpt-5.1-codex)';
+  const fill = () => {
+    const v = engineSelect.value;
+    select.replaceChildren();
+    const def = document.createElement('option');
+    def.value = '';
+    def.textContent = 'Default';
+    select.appendChild(def);
+    for (const m of (models && models[v]) || []) {
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.label;
+      select.appendChild(o);
+    }
+    select.hidden = v === 'codex';
+    typed.hidden = v !== 'codex';
+    typed.value = '';
+  };
+  engineSelect.addEventListener('change', fill);
+  fill();
+  field.append(label, select, typed);
+  const value = () => {
+    if (engineSelect.value === 'codex') { const t = typed.value.trim(); return MODEL_TEXT.test(t) ? t : null; }
+    return select.value || null;
+  };
+  return { field, value };
 }
 
 // Skills tick boxes and the "save as a teammate" box both Builders share (TM-60 Batch 4).
@@ -2759,7 +2804,7 @@ async function saveTeammate(cfg) {
   const base = cfg.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'teammate';
   let id = base;
   for (let k = 2; teammates(org).some(t => t.id === id && t.name !== cfg.name); k++) id = `${base}-${k}`.slice(0, 32);
-  org.agents = [...(org.agents || []).filter(a => a.id !== id), { id, name: cfg.name, vendor: cfg.vendor, role: cfg.role || '', brainFile: cfg.brain || '', mcp: cfg.mcp || [], skills: cfg.skills || [] }];
+  org.agents = [...(org.agents || []).filter(a => a.id !== id), { id, name: cfg.name, vendor: cfg.vendor, model: cfg.model || null, role: cfg.role || '', brainFile: cfg.brain || '', mcp: cfg.mcp || [], skills: cfg.skills || [] }];
   org.skills = org.skills || {};
   org.mcp = org.mcp || {};
   const give = (map, key) => {

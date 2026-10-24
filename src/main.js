@@ -411,8 +411,9 @@ function cleanOrg(org) {
     const name = str(a.name, 40);
     if (!PERSONA_ID.test(id) || !name || !userConfig.AGENT_IDS.includes(a.vendor)) continue;
     const brainFile = str(a.brainFile, 80);
+    const model = str(a.model, 64);
     clean.agents.push({
-      id, name, vendor: a.vendor, role: str(a.role, 20),
+      id, name, vendor: a.vendor, model: AgentRunner.MODEL_TEXT.test(model) ? model : null, role: str(a.role, 20),
       brainFile: SKILL_FILE.test(brainFile) ? brainFile : '',
       mcp: (Array.isArray(a.mcp) ? a.mcp : []).filter(x => typeof x === 'string' && SERVER_ID.test(x)),
       skills: (Array.isArray(a.skills) ? a.skills : []).filter(x => typeof x === 'string' && SKILL_FILE.test(x))
