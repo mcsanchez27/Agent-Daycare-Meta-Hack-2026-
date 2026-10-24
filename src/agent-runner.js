@@ -2,6 +2,7 @@ const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { CHAT_ID } = require('./chats');
 const { StringDecoder } = require('string_decoder');
 
@@ -339,7 +340,12 @@ class AgentRunner {
 
     const exe = this._getExecutable(agent);
     const workingDir = this.chatFolder(runKey);
-    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId, mcp);
+    let mcpPath = null;
+    if (vendor === 'claude' && mcp && mcp.mcpServers && Object.keys(mcp.mcpServers).length) {
+      mcpPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-mcp-')), 'mcp.json');
+      fs.writeFileSync(mcpPath, JSON.stringify(mcp), { mode: 0o600, flag: 'wx' });
+    }
+    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId, mcpPath);
     if (promptFile !== null) fs.writeFileSync(path.join(workingDir, PROMPT_FILE), promptFile);
     for (const [name, text] of Object.entries(files || {})) {
       if (FOLDER_FILES.includes(name) && typeof text === 'string') fs.writeFileSync(path.join(workingDir, name), text);
@@ -358,6 +364,7 @@ class AgentRunner {
     if (!child) return false;
     Object.assign(child, ctx);
     if (promptFile !== null) child.promptPath = path.join(workingDir, PROMPT_FILE);
+    if (mcpPath) child.mcpPath = mcpPath;
 
     this.processes.set(runKey, child);
     // Timeout (TM-53): a reply that takes too long is stopped like Stop.
@@ -402,12 +409,13 @@ class AgentRunner {
   // Output (TM-55): each CLI's JSON, read by parseEvent, so the reply's
   // session can be resumed. sessionId resumes that session; codex's resume
   // takes no --sandbox, so the same setting goes in as -c.
-  // mcp (TM-60 Batch 3): Claude's MCP servers for this launch, as the JSON
-  // its --mcp-config takes ({ mcpServers }); passed as a string, not a file,
-  // so no key lands in the chat folder. Only Claude takes servers per launch.
-  _buildAgentArgs(vendor, p, model = null, sessionId = null, mcp = null) {
+  // mcpPath (TM-60 Batch 3): a per-launch file holding Claude's MCP servers
+  // ({ mcpServers }), written by run() in a private temp folder and deleted
+  // when the run ends, so no key sits on the command line, in the log or
+  // in the chat folder. Only Claude takes servers per launch.
+  _buildAgentArgs(vendor, p, model = null, sessionId = null, mcpPath = null) {
     const m = model ? ['-m', model] : [];
-    const mcpArgs = vendor === 'claude' && mcp && mcp.mcpServers && Object.keys(mcp.mcpServers).length ? ['--mcp-config', JSON.stringify(mcp)] : [];
+    const mcpArgs = vendor === 'claude' && mcpPath ? ['--mcp-config', mcpPath] : [];
     if (vendor === 'codex' && sessionId) return { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...m, sessionId, '-'], stdin: p };
     if (vendor === 'codex') return { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...m, '-'], stdin: p };
     const flag = model ? ['--model', model] : [];
@@ -511,6 +519,7 @@ class AgentRunner {
     child.on('close', (code) => {
       clearTimeout(child.timer);
       if (child.promptPath) fs.unlink(child.promptPath, () => {});
+      if (child.mcpPath) fs.rm(path.dirname(child.mcpPath), { recursive: true, force: true }, () => {});
       if (this.processes.get(runKey) === child) this.processes.delete(runKey);
       stdoutSink.flush();
       stderrSink.flush();

@@ -409,14 +409,25 @@ test('folder files (TM-60): only CLAUDE.md, AGENTS.md and GEMINI.md are written,
   assert.ok(!fs.existsSync(path.join(dir, 'up.md')));
 });
 
-test('Claude gets its MCP servers per launch as a --mcp-config string; others never (TM-60 Batch 3)', () => {
+test('Claude gets its MCP servers as a private per-launch file, deleted after the run; others never (TM-60 Batch 3)', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
   const { runner } = makeRunner();
   const mcp = { mcpServers: { pdf: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-pdf', '--stdio'] } } };
-  const claude = runner._buildAgentArgs('claude', 'hi', null, null, mcp).args;
-  const i = claude.indexOf('--mcp-config');
-  assert.ok(i > 0 && claude[i - 1] === '--strict-mcp-config', 'right after --strict-mcp-config');
-  assert.deepEqual(JSON.parse(claude[i + 1]), mcp);
-  assert.ok(!runner._buildAgentArgs('claude', 'hi', null, null, { mcpServers: {} }).args.includes('--mcp-config'), 'no servers, no flag');
-  assert.ok(!runner._buildAgentArgs('codex', 'hi', null, null, mcp).args.join(' ').includes('mcp'));
-  assert.ok(!runner._buildAgentArgs('antigravity', 'hi', null, null, mcp).args.join(' ').includes('mcp'));
+  assert.deepEqual(runner._buildAgentArgs('claude', 'hi', null, null, '/tmp/x/mcp.json').args.slice(6, 8), ['--mcp-config', '/tmp/x/mcp.json'], 'right after --strict-mcp-config');
+  assert.ok(!runner._buildAgentArgs('claude', 'hi').args.includes('--mcp-config'), 'no file, no flag');
+  assert.ok(!runner._buildAgentArgs('codex', 'hi', null, null, 'x.json').args.includes('--mcp-config'));
+  // A real launch: the file holds the servers while the process runs and is gone after.
+  runner.agents.claude.path = process.execPath;
+  let seen = null;
+  runner._buildAgentArgs = (v, p, m, s, mcpPath) => { seen = mcpPath; return { args: ['-e', 'process.stdout.write("ok")'], stdin: null }; };
+  runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-mcp-test-'));
+  const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
+  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', mcp }), true);
+  assert.ok(seen && seen.endsWith('mcp.json') && !seen.startsWith(runner.workingDir), 'a temp file outside the chat folder');
+  assert.deepEqual(JSON.parse(fs.readFileSync(seen, 'utf8')), mcp);
+  await done;
+  await new Promise(r => setTimeout(r, 200));
+  assert.ok(!fs.existsSync(seen), 'deleted after the run');
 });
