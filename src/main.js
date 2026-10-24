@@ -160,7 +160,7 @@ const brainsDir = path.join(__dirname, '..', 'brains');
 handle('brains:list', async () => {
   try {
     const files = await fs.promises.readdir(brainsDir);
-    const mdFiles = files.filter(f => f.endsWith('.md'));
+    const mdFiles = files.filter(f => f.endsWith('.md') && f !== 'central-brain.md');
     const list = await Promise.all(mdFiles.map(async (file) => {
       const text = await fs.promises.readFile(path.join(brainsDir, file), 'utf8');
       const titleMatch = /^#\s*(.+)$/m.exec(text);
@@ -170,6 +170,40 @@ handle('brains:list', async () => {
   } catch (_) {
     return [];
   }
+});
+
+handle('brains:get-central', async () => {
+  try {
+    const centralFile = path.join(brainsDir, 'central-brain.md');
+    const stat = await fs.promises.stat(centralFile);
+    const text = await fs.promises.readFile(centralFile, 'utf8');
+    return { file: 'central-brain.md', text, mtime: stat.mtimeMs };
+  } catch (_) {
+    return null;
+  }
+});
+
+handle('brains:resolve', async ({ personaFile } = {}) => {
+  let central = null;
+  let persona = null;
+  try {
+    const centralFile = path.join(brainsDir, 'central-brain.md');
+    const stat = await fs.promises.stat(centralFile);
+    const text = await fs.promises.readFile(centralFile, 'utf8');
+    central = { file: 'central-brain.md', text, mtime: stat.mtimeMs };
+  } catch (_) {}
+
+  if (personaFile) {
+    try {
+      const clean = path.basename(personaFile);
+      const personaPath = path.join(brainsDir, clean);
+      const stat = await fs.promises.stat(personaPath);
+      const text = await fs.promises.readFile(personaPath, 'utf8');
+      persona = { file: clean, text, mtime: stat.mtimeMs };
+    } catch (_) {}
+  }
+
+  return { central, persona };
 });
 
 // Saved chats (TM-53 Batch 2)

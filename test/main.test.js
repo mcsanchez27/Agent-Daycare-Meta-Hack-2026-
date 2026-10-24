@@ -113,6 +113,9 @@ test('main.js tests', async (t) => {
   await t.test('ipc handlers are registered', () => {
     assert.ok(electronMock.ipcMain.handlers['agent:run']);
     assert.ok(electronMock.ipcMain.handlers['config:get']);
+    assert.ok(electronMock.ipcMain.handlers['brains:list']);
+    assert.ok(electronMock.ipcMain.handlers['brains:get-central']);
+    assert.ok(electronMock.ipcMain.handlers['brains:resolve']);
     // Dashboard-era channels are gone in V1
     for (const ch of ['hooks:status', 'hooks:install', 'agent:update-role', 'agent:forward', 'agent:start', 'agent:send-input']) {
       assert.equal(electronMock.ipcMain.handlers[ch], undefined, ch);

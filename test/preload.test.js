@@ -123,6 +123,20 @@ test('listBrains invokes brains:list', () => {
   assert.deepEqual(invocations[0], { channel: 'brains:list', data: undefined });
 });
 
+test('getCentralBrain invokes brains:get-central', () => {
+  invocations.length = 0;
+  const res = global.api.getCentralBrain();
+  assert.equal(res, 'result-brains:get-central');
+  assert.deepEqual(invocations[0], { channel: 'brains:get-central', data: undefined });
+});
+
+test('resolveBrains invokes brains:resolve with options', () => {
+  invocations.length = 0;
+  const res = global.api.resolveBrains({ personaFile: 'agent-smith.md' });
+  assert.equal(res, 'result-brains:resolve');
+  assert.deepEqual(invocations[0], { channel: 'brains:resolve', data: { personaFile: 'agent-smith.md' } });
+});
+
 // IPC Sends
 test('log sends log:write', () => {
   sends.length = 0;

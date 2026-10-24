@@ -621,12 +621,24 @@ function toggleSidecarExpand() {
   }
 }
 
-// Renders the toolbelt capabilities tab (TM-60 Batch 3)
+// Renders the toolbelt capabilities tab (TM-60 Batch 3, 4)
 function renderToolbelt() {
   if (!el.toolbeltList) return;
   el.toolbeltList.replaceChildren();
   const c = current();
   if (!c || !c.thread || !c.thread.members) return;
+
+  // Central Brain institutional header (TM-60 Batch 4)
+  const centralBanner = document.createElement('div');
+  centralBanner.className = 'toolbelt-central-banner';
+  const cbTitle = document.createElement('div');
+  cbTitle.className = 'toolbelt-central-title';
+  cbTitle.textContent = '🧠 Central Brain (MMS Operating Doctrine)';
+  const cbStatus = document.createElement('div');
+  cbStatus.className = 'toolbelt-central-status';
+  cbStatus.textContent = '● Active across all agents · Synced from brains/central-brain.md';
+  centralBanner.append(cbTitle, cbStatus);
+  el.toolbeltList.appendChild(centralBanner);
 
   for (const m of c.thread.members) {
     if (m.left) continue;
@@ -644,6 +656,18 @@ function renderToolbelt() {
 
     const caps = document.createElement('div');
     caps.className = 'toolbelt-caps';
+
+    // Persona Chip status
+    const chipItem = document.createElement('div');
+    chipItem.className = 'toolbelt-cap-item';
+    const chipName = document.createElement('span');
+    chipName.className = 'toolbelt-cap-name';
+    chipName.textContent = m.brain ? `💾 Persona Chip (${m.brain})` : '💾 Persona Chip (Default)';
+    const chipStatus = document.createElement('span');
+    chipStatus.className = 'toolbelt-cap-status';
+    chipStatus.textContent = '● Attached';
+    chipItem.append(chipName, chipStatus);
+    caps.appendChild(chipItem);
 
     const memberTools = Array.isArray(m.tools) && m.tools.length ? m.tools : ['bash', 'write'];
     for (const tId of memberTools) {
@@ -896,7 +920,7 @@ function showChooser(mode = 'new', vendor = null) {
     h.textContent = 'Saved Teammate Personas';
     const note = document.createElement('p');
     note.className = 'chooser-note';
-    note.textContent = 'Specialized agents with preset operational brains, roles, and instructions.';
+    note.textContent = 'Specialized teammates with preset Persona Chips layered on top of Central Brain.';
     card.insertBefore(note, options);
     for (const [key, p] of Object.entries(PERSONAS)) {
       option(p.name, `${vendorName(p.vendor)} · ${ROLES[p.role] ? ROLES[p.role].label : p.role}`, p.color, async () => {
@@ -954,17 +978,17 @@ function showChooser(mode = 'new', vendor = null) {
     }
     engineField.append(engineLabel, engineSelect);
 
-    // Brain Preset Select
+    // Persona Chip Preset Select (TM-60 Batch 4)
     const brainField = document.createElement('div');
     brainField.className = 'builder-field';
     const brainLabel = document.createElement('label');
     brainLabel.className = 'builder-label';
-    brainLabel.textContent = 'Preset Brain (Memory & Directives)';
+    brainLabel.textContent = 'Preset Persona Chip (Central Brain inherited automatically)';
     const brainSelect = document.createElement('select');
     brainSelect.className = 'builder-select';
     const noneOpt = document.createElement('option');
     noneOpt.value = '';
-    noneOpt.textContent = 'None (Standard Assistant)';
+    noneOpt.textContent = 'Standard Teammate (Central Brain only)';
     brainSelect.appendChild(noneOpt);
 
     let loadedBrains = [];
@@ -1664,7 +1688,7 @@ function wireComposer(view) {
 // (background asks): side ({ chatId, messageId, hop }) when this reply answers
 // another chat; answer ({ chatTitle, text }, or a list of them) for an asker's follow-up; hop,
 // how many chats have asked each other so far in this chain.
-function ask(chatId, memberId, threadOf = null, { side = null, answer = null, hop = 0 } = {}) {
+async function ask(chatId, memberId, threadOf = null, { side = null, answer = null, hop = 0 } = {}) {
   const thread = chats.get(chatId).thread;
   const member = memberById(thread, memberId);
   // The newest 15 other chats with real titles, so the agent can ask one with #.
@@ -1674,11 +1698,53 @@ function ask(chatId, memberId, threadOf = null, { side = null, answer = null, ho
   // Resuming sends only what's new since it last saw the chat.
   const where = threadOf === null ? 'main' : String(threadOf);
   const session = (member.sessions || {})[where] || null;
-  const prompt = buildPrompt(thread, memberId, { threadOf, answer, chatTitles, since: session ? session.lastId : null });
+
+  // TM-60 Batch 4: Dynamic Central Brain & Persona Chip Resolution
+  let centralBrain = null;
+  let personaChip = null;
+  let brainUpdate = null;
+  let resolvedBrainMtime = 0;
+  try {
+    const resolved = await api.resolveBrains({ personaFile: member.brain });
+    if (resolved) {
+      if (resolved.central) {
+        centralBrain = resolved.central.text;
+        resolvedBrainMtime = Math.max(resolvedBrainMtime, resolved.central.mtime || 0);
+      }
+      if (resolved.persona) {
+        personaChip = resolved.persona.text;
+        resolvedBrainMtime = Math.max(resolvedBrainMtime, resolved.persona.mtime || 0);
+      }
+      // If resuming an existing session, check if brain files were updated on disk since last run
+      if (session && session.brainMtime && resolvedBrainMtime > session.brainMtime) {
+        const notices = [];
+        if (resolved.central && resolved.central.mtime > session.brainMtime) {
+          notices.push(`--- Central Brain Update ---\n${resolved.central.text.trim()}`);
+        }
+        if (resolved.persona && resolved.persona.mtime > session.brainMtime) {
+          notices.push(`--- Persona Chip (${resolved.persona.file}) Update ---\n${resolved.persona.text.trim()}`);
+        }
+        if (notices.length) brainUpdate = notices.join('\n\n');
+      }
+    }
+  } catch (err) {
+    api.log('warn', 'brain resolution failed', { error: err.message });
+  }
+
+  const prompt = buildPrompt(thread, memberId, {
+    threadOf,
+    answer,
+    chatTitles,
+    since: session ? session.lastId : null,
+    centralBrain,
+    personaChip,
+    brainUpdate
+  });
   const runKey = runKeyOf(chatId, memberId);
   pending[runKey] = {
     chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(),
-    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1
+    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1,
+    resolvedBrainMtime: resolvedBrainMtime || Date.now()
   };
   if (chatId === currentId) {
     openViews().forEach(renderPendingRows);
@@ -1746,7 +1812,10 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
   }
   // Remember the session to resume next time, and what it has seen; usage for the meter.
   if (member && sessionId && !stopped && !timedOut) {
-    member.sessions = { ...(member.sessions || {}), [p.where]: { id: sessionId, lastId: p.seenUpTo } };
+    member.sessions = {
+      ...(member.sessions || {}),
+      [p.where]: { id: sessionId, lastId: p.seenUpTo, brainMtime: p.resolvedBrainMtime || Date.now() }
+    };
   }
   if (member && usage) member.usage = { ...usage, at: new Date().toISOString() };
   const reply = p.text.trim();

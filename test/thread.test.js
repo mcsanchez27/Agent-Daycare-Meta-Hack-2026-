@@ -463,3 +463,31 @@ test('a member with a brain gets its persona instructions injected in buildPromp
   assert.ok(p.includes('Your assigned persona directives:\nDemand rigorous verification and threat model everything.'));
   assert.ok(p.includes('Your role: Security.'));
 });
+
+test('buildPrompt injects dynamic centralBrain directives and personaChip directives (TM-60 Batch 4)', () => {
+  const { newMember: nm } = require('../src/renderer/members');
+  const member = nm([], { vendor: 'grok', name: 'Grok Scout', role: 'scout' });
+  const t = createThread([member]);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'scout the horizon' });
+  const p = buildPrompt(t, 'm1', {
+    centralBrain: 'Mountain Man Studios Central Brain: keep workspace fenced.',
+    personaChip: 'Market Scout directives: monitor trends and report high signal.'
+  });
+  assert.ok(p.includes('Central Brain directives:\nMountain Man Studios Central Brain: keep workspace fenced.'));
+  assert.ok(p.includes('Your assigned persona directives:\nMarket Scout directives: monitor trends and report high signal.'));
+});
+
+test('buildPrompt in session resume mode injects brainUpdate notice when brain files change', () => {
+  const { newMember: nm } = require('../src/renderer/members');
+  const member = nm([], { vendor: 'codex', name: 'Codex' });
+  const t = createThread([member]);
+  const m1 = addMessage(t, { from: 'matt', to: 'm1', text: 'first turn' });
+  addMessage(t, { from: 'm1', text: 'acknowledged' });
+  addMessage(t, { from: 'matt', to: 'm1', text: 'second turn' });
+  const p = buildPrompt(t, 'm1', {
+    since: m1.id,
+    brainUpdate: '--- Central Brain Update ---\nUpdated MMS Doctrine: always add unit tests.'
+  });
+  assert.ok(p.includes('[Notice: Central Brain or Persona Chip updated on disk:\n--- Central Brain Update ---\nUpdated MMS Doctrine: always add unit tests.]'));
+  assert.ok(p.includes("Matt's message to you:\nsecond turn"));
+});

@@ -6,6 +6,19 @@
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
+## Central Brain & Dynamic Persona Chips (TM-60 Batch 4)
+- **Central Brain (`brains/central-brain.md`):** Institutional memory, Mountain Man Studios operating doctrine, workspace boundaries, and `@` / `#` cross-chat collaboration rules. Inherited automatically by *all* agents across all chats.
+- **Persona Chips (`brains/<chip>.md`):** Specialized persona chips (Agent Smith, Morpheus, Grok Scout, Lead Architect, Fullstack Engineer, Stitch Prototyper) layered on top of the Central Brain.
+- **Dynamic Pointer Resolution (Hot-Reloading):** On every turn, `api.resolveBrains({ personaFile })` reads the brain files directly from disk. Editing `central-brain.md` or any persona chip immediately updates all active and future agents without restarting the app.
+- **Session Update Notices:** When resuming an existing vendor session (`--resume`), if brain files on disk were modified since the member's previous turn (`mtime > session.brainMtime`), a structured `[Notice: Central Brain or Persona Chip updated on disk: ...]` preamble is automatically injected.
+- **Toolbelt Status:** The Session Sidecar Toolbelt tab displays a prominent Central Brain sync status (`🧠 Central Brain: ● Active across all agents · Synced`) and the member's attached Persona Chip.
+
+## Sidecar Inspector, Webview Preview & Toolbelt (TM-60 Batch 3)
+- **Inspector Tabs:** `[Session]`, `[Preview]`, and `[Toolbelt]` tabs in the right-side rail.
+- **Expandable Rail:** `⤢` button toggles width between 320px and 55vw for reading tickets or inspecting previews without cramping the main chat.
+- **Live Preview:** Webview embedded for testing local dev servers or HTML deliverables directly in-app.
+- **Notion Card Glance:** Instant native Calm Obsidian glance for Notion tickets (e.g. TM-58), with checklist states and batch progress.
+
 ## Agent Builder, Brains & Grok (TM-60 Batch 2)
 - **Grok:** xAI's Grok CLI (`grok`) is added as the 4th vendor (`grok -p --permission-mode acceptEdits --always-approve`), with session resume and Messages-API wire format streaming. Color is `#e2e8f0`.
 - **Brain Presets (`brains/`):** Markdown files defining institutional memory, role directives, and boundaries (e.g. `lead-architect.md`, `uiux-prototyper.md`, `fullstack-engineer.md`, `agent-smith.md`, `morpheus.md`, `market-scout.md`). Loaded via `api.listBrains()`.

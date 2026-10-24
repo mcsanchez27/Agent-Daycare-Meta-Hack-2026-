@@ -870,6 +870,24 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
   flex-direction: column;
   gap: .9rem;
 }
+.toolbelt-central-banner {
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.3);
+  border-radius: 10px;
+  padding: .7rem .85rem;
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+.toolbelt-central-title {
+  font-size: .82rem;
+  font-weight: 600;
+  color: #93c5fd;
+}
+.toolbelt-central-status {
+  font-size: .72rem;
+  color: var(--muted);
+}
 .toolbelt-agent-card {
   background: var(--panel);
   border: 1px solid var(--line);
