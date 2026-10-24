@@ -24,7 +24,7 @@ const req = (o = {}) => ({ runKey: 'chat1/m1', vendor: 'claude', model: null, pr
 
 test('run refuses an unknown vendor and an empty prompt', () => {
   const { runner } = makeRunner();
-  assert.throws(() => runner.run(req({ vendor: 'grok' })), /not found/);
+  assert.throws(() => runner.run(req({ vendor: 'deepseek' })), /not found/);
   assert.throws(() => runner.run(req({ prompt: '   ' })), /prompt is required/);
 });
 
@@ -37,9 +37,9 @@ test('typed models are checked before anything is launched', () => {
   for (const bad of ['gpt 5', 'a&b', '']) assert.ok(!AgentRunner.MODEL_TEXT.test(bad), bad);
 });
 
-test('only the three V1 agents exist', () => {
+test('supported agents exist (V1 + grok)', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(Object.keys(runner.agents), ['antigravity', 'claude', 'codex']);
+  assert.deepEqual(Object.keys(runner.agents), ['antigravity', 'claude', 'codex', 'grok']);
 });
 
 test('agent arguments: everyone may write in the working folder; codex reads the prompt from stdin', () => {
@@ -47,6 +47,7 @@ test('agent arguments: everyone may write in the working folder; codex reads the
   assert.deepEqual(runner._buildAgentArgs('antigravity', 'hi'), { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', '-p', 'hi'], stdin: null });
   assert.deepEqual(runner._buildAgentArgs('claude', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', 'hi'], stdin: null });
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
+  assert.deepEqual(runner._buildAgentArgs('grok', 'hi'), { args: ['-p', '--permission-mode', 'acceptEdits', '--always-approve', 'hi'], stdin: null });
   // Codex's arguments must stay safe for a codex.cmd shim.
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
 });
@@ -299,6 +300,7 @@ test('listModels: Antigravity from agy, Claude fixed, Codex typed; agy failing l
   assert.deepEqual(m.antigravity, [{ id: 'x', label: 'X model' }]);
   assert.deepEqual(m.claude.map(x => x.id), ['opus', 'sonnet', 'haiku']);
   assert.deepEqual(m.codex, []);
+  assert.deepEqual(m.grok.map(x => x.id), ['grok-beta', 'grok-2']);
   const { runner: r2 } = makeRunner();
   r2._agyModelsText = async () => { throw new Error('agy missing'); };
   assert.deepEqual((await r2.listModels()).antigravity, []);

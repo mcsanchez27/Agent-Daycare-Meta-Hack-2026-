@@ -13,7 +13,7 @@ test('newMember names: vendor, then model, then number', () => {
   assert.deepEqual(members.map(m => m.name), ['Claude', 'Opus', 'Claude 2', 'Sonnet', 'Claude 3']);
   assert.deepEqual(members.map(m => m.id), ['m1', 'm2', 'm3', 'm4', 'm5']);
   assert.equal(members[2].model, null);
-  assert.throws(() => newMember(members, { vendor: 'grok' }), /Unknown vendor/);
+  assert.throws(() => newMember(members, { vendor: 'deepseek' }), /Unknown vendor/);
 });
 
 test('a renamed vendor gives new members its name; memory is kept', () => {
@@ -49,7 +49,7 @@ test('one-on-one header names the vendor and model', () => {
   addMessage(t, { from: 'matt', to: 'm1', text: 'hi' });
   const p = buildPrompt(t, 'm1');
   assert.ok(p.startsWith('You are Claude (claude, model opus), chatting one-on-one with Matt.'), p);
-  assert.match(p, /@Gemini, @Claude or @Codex/);
+  assert.match(p, /@Gemini, @Claude, @Codex or @Grok/);
 });
 
 test('group header lists the members', () => {
@@ -61,7 +61,7 @@ test('group header lists the members', () => {
   assert.match(p, /^You are Haiku \(claude, model haiku\)/);
   assert.match(p, /Claude and Haiku/);
   assert.ok(!p.includes('one-on-one'));
-  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex']);
+  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok']);
 });
 
 test('saved members named Antigravity become Gemini (TM-57), unless the name is taken', () => {

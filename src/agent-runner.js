@@ -35,7 +35,7 @@ const MAX_PENDING = 4 * 1024 * 1024;
 // "Running npm test". Each CLI names its tools and arguments differently.
 function describeTool(name, params = {}) {
   const p = params && typeof params === 'object' ? params : {};
-  const short = (s, n = 70) => { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+  const short = (s, n = 70) => { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + 'â€¦' : t; };
   const file = p.file_path || p.path || p.Path || p.AbsolutePath || p.TargetFile || p.FilePath || p.notebook_path;
   const base = file ? String(file).split(/[\\/]/).pop() : null;
   const command = p.command || p.CommandLine;
@@ -57,7 +57,7 @@ function parseEvent(vendor, line) {
   let j;
   try { j = JSON.parse(line); } catch (_) { return null; }
   if (!j || typeof j !== 'object') return null;
-  if (vendor === 'claude') {
+  if (vendor === 'claude' || vendor === 'grok') {
     if (j.type === 'system' && j.subtype === 'init') return sessionOk(j.session_id) ? { sessionId: j.session_id } : null;
     if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
       const text = j.message.content.filter(c => c.type === 'text').map(c => c.text).join('');
@@ -116,6 +116,7 @@ function parseEvent(vendor, line) {
 }
 
 const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
+const GROK_MODELS = [{ id: 'grok-beta', label: 'grok-beta' }, { id: 'grok-2', label: 'grok-2' }];
 
 // `agy models` prints a header, then one "id<TAB>label" line per model.
 function parseAgyModels(text) {
@@ -197,7 +198,8 @@ class AgentRunner {
     this.agents = {
       antigravity: { id: 'antigravity', name: 'Gemini', command: 'agy.exe', path: 'agy.exe', color: '#9d4edd', installed: true, version: 'Unknown' },
       claude: { id: 'claude', name: 'Claude', command: 'claude.exe', path: 'claude.exe', color: '#e76f51', installed: true, version: 'Unknown' },
-      codex: { id: 'codex', name: 'Codex', command: 'codex.exe', path: 'codex.exe', color: '#2a9d8f', installed: true, version: 'Unknown' }
+      codex: { id: 'codex', name: 'Codex', command: 'codex.exe', path: 'codex.exe', color: '#2a9d8f', installed: true, version: 'Unknown' },
+      grok: { id: 'grok', name: 'Grok', command: 'grok.cmd', path: 'grok.cmd', color: '#e2e8f0', installed: true, version: 'Unknown' }
     };
 
     if (config) this.applyConfig(config);
@@ -289,7 +291,7 @@ class AgentRunner {
           this.log.warn('antigravity', 'could not list models', { error: err.message });
           return [];
         })
-        .then(antigravity => ({ antigravity, claude: CLAUDE_MODELS, codex: [] }));
+        .then(antigravity => ({ antigravity, claude: CLAUDE_MODELS, codex: [], grok: GROK_MODELS }));
     }
     return this._models;
   }
@@ -396,6 +398,7 @@ class AgentRunner {
     // Lean Claude (TM-59): Matt's own plugins, hooks and MCP servers stay out
     // (about 66k tokens a launch down to 37k). Its login is unaffected.
     if (vendor === 'claude') return { args: ['-p', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local', '--strict-mcp-config', '--allowedTools', 'Bash,PowerShell', '--output-format', 'stream-json', '--verbose', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
+    if (vendor === 'grok') return { args: ['-p', '--permission-mode', 'acceptEdits', '--always-approve', ...flag, ...(sessionId ? ['--resume', sessionId] : []), p], stdin: null };
     // antigravity (agy): -p takes the next word as the prompt, so it goes last
     return { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }
@@ -443,7 +446,7 @@ class AgentRunner {
     const take = (line) => {
       const ev = parseEvent(vendor, line);
       if (!ev) return false;
-      // Each CLI sends its messages whole ("I'll check…", tools, then the
+      // Each CLI sends its messages whole ("I'll checkâ€¦", tools, then the
       // answer), so they get a blank line between them.
       if (ev.text) this.emitOutput(child, (child.saidSomething ? '\n\n' : '') + ev.text);
       if (ev.text) child.saidSomething = true;

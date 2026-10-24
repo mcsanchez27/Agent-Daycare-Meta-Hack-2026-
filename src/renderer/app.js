@@ -17,7 +17,7 @@
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
-const { VENDORS, ROLES, CREW, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
+const { VENDORS, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -175,13 +175,23 @@ function createCrew() {
   api.log('info', 'crew created', { chatId: chat.id, members: members.map(m => `${m.vendor}:${m.role}`) });
 }
 
+function createCustomChat(memberOpts) {
+  const now = new Date().toISOString();
+  const member = newMember([], memberOpts, { vendorNames: vendorNames() });
+  const chat = { id: newChatId(), title: 'New chat', createdAt: now, updatedAt: now, thread: createThread([member]) };
+  chats.set(chat.id, chat);
+  hideChooser();
+  showChat(chat.id);
+  api.log('info', 'custom agent chat created', { chatId: chat.id, agent: member.name, vendor: member.vendor });
+}
+
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
 // ({ title, name, text } from another chat), name (keep this name if it's
 // free), fromTitle (for the note), threadOf (where the note goes).
-function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, fromTitle = null, threadOf = null } = {}) {
+function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, role = null, brain = null, brainText = null, fromTitle = null, threadOf = null } = {}) {
   const chat = chats.get(chatId);
   const names = name ? { ...vendorNames(), [vendor]: name } : vendorNames();
-  const member = newMember(chat.thread.members, { vendor, model, memory }, { vendorNames: names, modelLabel });
+  const member = newMember(chat.thread.members, { vendor, model, memory, role, name, brain, brainText }, { vendorNames: names, modelLabel });
   chat.thread.members.push(member);
   const what = member.name === vendorName(vendor) ? modelText(member) : `${vendorName(vendor)}, ${modelText(member)}`;
   post(chatId, { from: 'system', threadOf, text: `${member.name} (${what}) joined` + (fromTitle ? ` from "${fromTitle}"` : '') + '.' });
@@ -651,13 +661,129 @@ function showChooser(mode = 'new', vendor = null) {
         });
       }
     }
-  } else if (!vendor) {
+  } else if (!vendor && mode !== 'personas' && mode !== 'builder') {
     h.textContent = mode === 'new' ? 'Who do you want to talk to?' : 'Add which agent to this chat?';
-    for (const v of VENDORS) option(vendorName(v), null, vendors[v] && vendors[v].color, () => showChooser(mode, v));
     if (mode === 'new') {
-      option('Crew', CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), null, createCrew);
+      option('Autonomous Crew', CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), '#2563eb', createCrew);
     }
+    option('Saved Personas…', 'Agent Smith, Morpheus, Grok Scout, Lead Architect', '#8b5cf6', () => showChooser('personas', mode));
+    option('Agent Builder…', 'Forge an agent with custom engine, brain and role', '#10b981', () => showChooser('builder', mode));
+    for (const v of VENDORS) option(vendorName(v), `Run with ${vendorName(v)} default`, vendors[v] && vendors[v].color, () => showChooser(mode, v));
     if (mode === 'add' && chats.size > 1) option('From another chat…', 'brings that chat as background', null, () => showChooser('from'));
+  } else if (mode === 'personas') {
+    const prevMode = vendor || 'new';
+    h.textContent = 'Saved Teammate Personas';
+    const note = document.createElement('p');
+    note.className = 'chooser-note';
+    note.textContent = 'Specialized agents with preset operational brains, roles, and instructions.';
+    card.insertBefore(note, options);
+    for (const [key, p] of Object.entries(PERSONAS)) {
+      option(p.name, `${vendorName(p.vendor)} · ${ROLES[p.role] ? ROLES[p.role].label : p.role}`, p.color, async () => {
+        let brainText = '';
+        try {
+          const brains = await api.listBrains();
+          const match = (brains || []).find(b => b.file === p.brainFile);
+          if (match) brainText = match.text;
+        } catch (_) {}
+        if (prevMode === 'add') {
+          join(currentId, p.vendor, { name: p.name, role: p.role, brain: p.brainFile, brainText });
+          hideChooser();
+          showChat(currentId);
+        } else {
+          createCustomChat({ vendor: p.vendor, name: p.name, role: p.role, brain: p.brainFile, brainText });
+        }
+      });
+    }
+  } else if (mode === 'builder') {
+    const prevMode = vendor || 'new';
+    h.textContent = 'Agent Builder';
+    const note = document.createElement('p');
+    note.className = 'chooser-note';
+    note.textContent = 'Configure a new specialized agent from the ground up.';
+    card.insertBefore(note, options);
+
+    const form = document.createElement('form');
+    form.className = 'builder-form';
+
+    // Agent Name
+    const nameField = document.createElement('div');
+    nameField.className = 'builder-field';
+    const nameLabel = document.createElement('label');
+    nameLabel.className = 'builder-label';
+    nameLabel.textContent = 'Agent Name';
+    const nameInput = document.createElement('input');
+    nameInput.className = 'builder-input';
+    nameInput.placeholder = 'e.g. Agent Smith, Neo, Security Auditor';
+    nameInput.required = true;
+    nameField.append(nameLabel, nameInput);
+
+    // Engine / Vendor Select
+    const engineField = document.createElement('div');
+    engineField.className = 'builder-field';
+    const engineLabel = document.createElement('label');
+    engineLabel.className = 'builder-label';
+    engineLabel.textContent = 'CLI Engine (Vendor)';
+    const engineSelect = document.createElement('select');
+    engineSelect.className = 'builder-select';
+    for (const v of VENDORS) {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = vendorName(v);
+      engineSelect.appendChild(opt);
+    }
+    engineField.append(engineLabel, engineSelect);
+
+    // Brain Preset Select
+    const brainField = document.createElement('div');
+    brainField.className = 'builder-field';
+    const brainLabel = document.createElement('label');
+    brainLabel.className = 'builder-label';
+    brainLabel.textContent = 'Preset Brain (Memory & Directives)';
+    const brainSelect = document.createElement('select');
+    brainSelect.className = 'builder-select';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'None (Standard Assistant)';
+    brainSelect.appendChild(noneOpt);
+
+    let loadedBrains = [];
+    api.listBrains().then(list => {
+      loadedBrains = list || [];
+      for (const b of loadedBrains) {
+        const opt = document.createElement('option');
+        opt.value = b.file;
+        opt.textContent = `${b.title} (${b.file})`;
+        brainSelect.appendChild(opt);
+      }
+    }).catch(() => {});
+
+    brainField.append(brainLabel, brainSelect);
+
+    // Submit button
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'builder-submit';
+    submitBtn.textContent = 'Forge & Deploy Teammate';
+
+    form.append(nameField, engineField, brainField, submitBtn);
+    card.appendChild(form);
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const aName = nameInput.value.trim();
+      if (!aName) return;
+      const aVendor = engineSelect.value;
+      const bFile = brainSelect.value;
+      const match = loadedBrains.find(b => b.file === bFile);
+      const bText = match ? match.text : null;
+      if (prevMode === 'add') {
+        join(currentId, aVendor, { name: aName, brain: bFile, brainText: bText });
+        hideChooser();
+        showChat(currentId);
+      } else {
+        createCustomChat({ vendor: aVendor, name: aName, brain: bFile, brainText: bText });
+      }
+    });
   } else {
     const color = vendors[vendor] && vendors[vendor].color;
     h.textContent = `Which ${vendorName(vendor)} model?`;
@@ -692,11 +818,17 @@ function showChooser(mode = 'new', vendor = null) {
   }
   const nav = document.createElement('div');
   nav.className = 'chooser-nav';
-  if ((vendor || mode === 'from') && mode !== 'merge') {
+  if ((vendor || mode === 'from' || mode === 'personas' || mode === 'builder') && mode !== 'merge') {
     const back = document.createElement('button');
     back.type = 'button';
     back.textContent = '← Back';
-    back.addEventListener('click', () => showChooser(mode === 'from' && !vendor ? 'add' : mode, null));
+    back.addEventListener('click', () => {
+      if (mode === 'personas' || mode === 'builder') {
+        showChooser(vendor || 'new', null);
+      } else {
+        showChooser(mode === 'from' && !vendor ? 'add' : mode, null);
+      }
+    });
     nav.appendChild(back);
   }
   const returnTo = mode === 'new' ? newest() : current();

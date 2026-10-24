@@ -116,6 +116,13 @@ test('openLogsFolder invokes logs:open-folder', () => {
   assert.deepEqual(invocations[0], { channel: 'logs:open-folder', data: undefined });
 });
 
+test('listBrains invokes brains:list', () => {
+  invocations.length = 0;
+  const res = global.api.listBrains();
+  assert.equal(res, 'result-brains:list');
+  assert.deepEqual(invocations[0], { channel: 'brains:list', data: undefined });
+});
+
 // IPC Sends
 test('log sends log:write', () => {
   sends.length = 0;

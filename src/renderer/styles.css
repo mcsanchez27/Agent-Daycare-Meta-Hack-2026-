@@ -419,9 +419,9 @@ body {
   font-size: .88rem;
 }
 .side-q { color: var(--muted); }
-.side-a:empty::after { content: "…"; color: var(--muted); }
+.side-a:empty::after { content: "â€¦"; color: var(--muted); }
 
-.msg.pending .bubble:empty::after { content: "…"; color: var(--muted); animation: blink 1.2s infinite; }
+.msg.pending .bubble:empty::after { content: "â€¦"; color: var(--muted); animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: .3; } }
 
 .actions { display: flex; gap: .4rem; margin-top: .15rem; }
@@ -830,3 +830,53 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
   font-size: .78rem;
 }
 .plan.warn { color: #f4a261; border-color: #f4a261; }
+
+/* ---- Agent Builder Form ---------------------------------------------------- */
+.builder-form {
+  display: flex;
+  flex-direction: column;
+  gap: .85rem;
+  width: 100%;
+}
+.builder-field {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+}
+.builder-label {
+  font-size: .8rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+.builder-input,
+.builder-select {
+  padding: .6rem .8rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: .88rem;
+}
+.builder-input:focus,
+.builder-select:focus {
+  outline: none;
+  border-color: var(--matt);
+}
+.builder-submit {
+  padding: .65rem 1.2rem;
+  border-radius: 9999px;
+  border: 1px solid var(--line);
+  background: var(--matt);
+  color: #fff;
+  font: inherit;
+  font-weight: 500;
+  font-size: .9rem;
+  cursor: pointer;
+  margin-top: .4rem;
+  transition: opacity .15s;
+}
+.builder-submit:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}

@@ -39,8 +39,8 @@ test('unknown senders and missing recipients are rejected', () => {
   assert.equal(t.messages.length, 0);
 });
 
-test('the thread knows the three V1 agents', () => {
-  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex']);
+test('the thread knows the supported agents', () => {
+  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok']);
 });
 
 test("buildPrompt ends with Matt's newest message and includes earlier history", () => {
@@ -154,7 +154,7 @@ test('an agent reply can be marked as stopped or timed out', () => {
 test('a thread hangs off a main-chat message, and handoffs are app notes between two agents', () => {
   const t = createThread(V1());
   const root = addMessage(t, { from: 'claude', text: 'Let me ask @Codex' });
-  const marker = addMessage(t, { from: 'system', text: 'Claude › Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
+  const marker = addMessage(t, { from: 'system', text: 'Claude â€º Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
   assert.equal(marker.threadOf, root.id);
   assert.deepEqual(marker.handoff, { from: 'claude', to: 'codex' });
   assert.equal(addMessage(t, { from: 'codex', text: 'here', threadOf: root.id }).threadOf, root.id);
@@ -196,7 +196,7 @@ test('a handoff prompt sees the main chat up to the thread, then the thread, and
   addMessage(t, { from: 'matt', to: 'claude', text: 'plan the menu' });
   const root = addMessage(t, { from: 'claude', text: 'Soup first. @Codex can you price it?' });
   addMessage(t, { from: 'matt', to: 'claude', text: 'later main-chat message' });
-  addMessage(t, { from: 'system', text: 'Claude › Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
+  addMessage(t, { from: 'system', text: 'Claude â€º Codex', threadOf: root.id, handoff: { from: 'claude', to: 'codex' } });
   const p = buildPrompt(t, 'codex', { threadOf: root.id });
   assert.match(p, /^You are Codex/);
   assert.match(p, /thread/);
@@ -452,4 +452,14 @@ test('a crew gets 6 handoffs in a row before Matt, other chats 3 (TM-59)', () =>
   assert.equal(hopLimit(createThread(crew)), 6);
   assert.equal(hopLimit(createThread(V1())), 3);
   assert.equal(hopLimit(createThread(crew.map(m => ({ ...m, left: true })))), 3, 'only agents still in the chat count');
+});
+
+test('a member with a brain gets its persona instructions injected in buildPrompt', () => {
+  const { newMember: nm } = require('../src/renderer/members');
+  const member = nm([], { vendor: 'claude', name: 'Agent Smith', role: 'security', brain: 'agent-smith.md', brainText: 'Demand rigorous verification and threat model everything.' });
+  const t = createThread([member]);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'check this code' });
+  const p = buildPrompt(t, 'm1');
+  assert.ok(p.includes('Your assigned persona directives:\nDemand rigorous verification and threat model everything.'));
+  assert.ok(p.includes('Your role: Security.'));
 });

@@ -7,14 +7,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const AGENT_IDS = ['antigravity', 'claude', 'codex'];
+const AGENT_IDS = ['antigravity', 'claude', 'codex', 'grok'];
 
 // How long one reply may take before the app stops the agent (TM-53).
 const DEFAULT_TIMEOUT_SEC = 300;
 
 // What each agent is called in the chat (TM-53). Matt can rename them here;
 // the picker, bubbles, relay buttons and prompts all use this name.
-const DEFAULT_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex' };
+const DEFAULT_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex', grok: 'Grok' };
 // Names that were only ever a default (TM-57: Antigravity is shown as Gemini,
 // the models its CLI runs). A config still holding one gets the new default.
 const RETIRED_NAMES = { antigravity: 'Antigravity' };
@@ -26,6 +26,7 @@ async function defaultAgentPaths() {
   const home = os.homedir();
   const win = process.platform === 'win32';
   const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
   let codexPath = win ? path.join(local, 'OpenAI', 'Codex', 'bin', 'codex.exe') : path.join(home, '.local', 'bin', 'codex');
   if (win && !(await fs.promises.access(codexPath).then(() => true).catch(() => false))) {
     const codexBinDir = path.join(local, 'OpenAI', 'Codex', 'bin');
@@ -41,10 +42,12 @@ async function defaultAgentPaths() {
       } catch (_) {}
     }
   }
+  let grokPath = win ? path.join(appData, 'npm', 'grok.cmd') : path.join(home, '.local', 'bin', 'grok');
   return {
     antigravity: { command: win ? 'agy.exe' : 'agy', path: win ? path.join(local, 'agy', 'bin', 'agy.exe') : path.join(home, '.local', 'bin', 'agy') },
     claude: { command: win ? 'claude.exe' : 'claude', path: path.join(home, '.local', 'bin', win ? 'claude.exe' : 'claude') },
-    codex: { command: win ? 'codex.exe' : 'codex', path: codexPath }
+    codex: { command: win ? 'codex.exe' : 'codex', path: codexPath },
+    grok: { command: win ? 'grok.cmd' : 'grok', path: grokPath }
   };
 }
 

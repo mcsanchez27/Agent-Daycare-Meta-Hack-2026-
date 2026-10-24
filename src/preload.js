@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('api', {
   loadChat: (id) => ipcRenderer.invoke('chats:load', { id }),
   saveChat: (chat) => ipcRenderer.invoke('chats:save', { chat }),
 
+  // Preset Brains (TM-60 Batch 2)
+  listBrains: () => ipcRenderer.invoke('brains:list'),
+
   // Logging (goes to logs/latest.log in the main process)
   log: (level, message, data) => ipcRenderer.send('log:write', { level, message, data }),
   openLogsFolder: () => ipcRenderer.invoke('logs:open-folder')

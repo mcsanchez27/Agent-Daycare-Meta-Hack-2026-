@@ -156,6 +156,22 @@ handle('config:pick-file', async ({ current, title }) => {
   return r.canceled ? null : r.filePaths[0];
 });
 
+const brainsDir = path.join(__dirname, '..', 'brains');
+handle('brains:list', async () => {
+  try {
+    const files = await fs.promises.readdir(brainsDir);
+    const mdFiles = files.filter(f => f.endsWith('.md'));
+    const list = await Promise.all(mdFiles.map(async (file) => {
+      const text = await fs.promises.readFile(path.join(brainsDir, file), 'utf8');
+      const titleMatch = /^#\s*(.+)$/m.exec(text);
+      return { file, title: titleMatch ? titleMatch[1] : file, text };
+    }));
+    return list;
+  } catch (_) {
+    return [];
+  }
+});
+
 // Saved chats (TM-53 Batch 2)
 handle('chats:list', async () => {
   const r = await chats.list(chatsDir);
@@ -199,7 +215,7 @@ function setMenu() {
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
-    { label: 'Debug', submenu: [{ label: 'Delete all chats…', click: () => deleteAllChats() }] }
+    { label: 'Debug', submenu: [{ label: 'Delete all chatsâ€¦', click: () => deleteAllChats() }] }
   ]));
 }
 
