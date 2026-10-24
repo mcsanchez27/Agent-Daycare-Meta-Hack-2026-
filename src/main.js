@@ -349,7 +349,10 @@ async function readServers() {
   }
 }
 async function writeServers(list) {
-  await fs.promises.writeFile(mcpFile, JSON.stringify(list, null, 2) + '\n', 'utf8');
+  // Owner-only where the OS honours it (macOS, Linux); on Windows the file
+  // sits in Matt's own profile under its normal per-user access, like
+  // config.json. Keys would be safer in the OS keychain: a Batcave job.
+  await fs.promises.writeFile(mcpFile, JSON.stringify(list, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
   return list;
 }
 handle('mcp:list', () => readServers());
