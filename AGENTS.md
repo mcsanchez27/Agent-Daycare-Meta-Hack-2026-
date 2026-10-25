@@ -19,6 +19,12 @@
 - **Persona deployment counts read every chat** (`renderOrgPersonas` loads the chats not opened yet this session), so "N active agents" is true across all chats, not only the opened ones.
 - Deleted: `docs/superpowers/` (Oct 22 planning docs for group chats, long since built) and the stray `chat1/` folder (a test had run `chatFolder` with no `workingDir`; tests set one now).
 
+## Custom instructions (Codex's PR #57, merged 2026-10-25 after the sweep)
+- Both Builders have a **Custom instructions** textarea (in `builderForm`), saved as `member.customInstructions` and, on a saved teammate, `org.agents[].customInstructions` plus a `brainText` snapshot (`cleanOrg` keeps both). `mergeThreads` and the Teammates chooser carry them.
+- `promptGuidance(member, { centralBrain, personaChip, personaSkills })` in `thread.js` composes the header: Central Brain, persona chip (live text, else the cached `brainText` when the member has a brain file), "Your custom instructions" (or legacy free-text `brainText` when there is no brain file), then each persona skill as "Assigned skill". Duplicate texts appear once. `ask()` now passes persona skills as `personaSkills` instead of appending them to the persona text.
+- The resume signature (`brainSig`) covers that whole composed text; when it changes and nothing remains, the notice says "No additional directives remain. Discard the previous additional directives."
+- Its test, `test/agent-instructions.test.js`, runs `saveTeammate` and the chooser's restore block out of `app.js` in a vm; it needs `teammates` and `teammateId` in its context.
+
 ## Model picker in the Builders (TM-60 Batch 5)
 - Both Builders have a Model field (`modelField` in `app.js`) fed by the same `models` the chooser uses (Gemini from `agy models`, Claude's three, Grok's two), "Default" first; Codex has no list, so its model is typed and checked against `MODEL_TEXT`. It refills when the engine changes.
 - The pick is saved on the teammate (`org.agents[].model`, checked in `cleanOrg` with `AgentRunner.MODEL_TEXT`) and passed as `model` / `modelLabel` when the teammate is summoned, so the chip reads "Name · haiku" and the launch carries `--model`.
