@@ -16,7 +16,7 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
 const { VENDORS, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 const { folderFile, personaIdOf, teammates, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine } = window.ChatOrg;
 
@@ -221,10 +221,10 @@ function createCustomChat(memberOpts) {
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
 // ({ title, name, text } from another chat), name (keep this name if it's
 // free), fromTitle (for the note), threadOf (where the note goes).
-function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, role = null, brain = null, brainText = null, mcp = null, persona = null, fromTitle = null, threadOf = null } = {}) {
+function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, role = null, brain = null, brainText = null, customInstructions = null, mcp = null, persona = null, fromTitle = null, threadOf = null } = {}) {
   const chat = chats.get(chatId);
   const names = name ? { ...vendorNames(), [vendor]: name } : vendorNames();
-  const member = newMember(chat.thread.members, { vendor, model, memory, role, name, brain, brainText, mcp, persona }, { vendorNames: names, modelLabel });
+  const member = newMember(chat.thread.members, { vendor, model, memory, role, name, brain, brainText, customInstructions, mcp, persona }, { vendorNames: names, modelLabel });
   chat.thread.members.push(member);
   const what = member.name === vendorName(vendor) ? modelText(member) : `${vendorName(vendor)}, ${modelText(member)}`;
   post(chatId, { from: 'system', threadOf, text: `${member.name} (${what}) joined` + (fromTitle ? ` from "${fromTitle}"` : '') + '.' });
@@ -948,15 +948,15 @@ function showChooser(mode = 'new', vendor = null) {
       for (const p of teammates(org)) {
         const sub = `${vendorName(p.vendor)}${p.role && ROLES[p.role] ? ` · ${ROLES[p.role].label}` : ''}${p.builtIn ? '' : ' · saved'}`;
         option(p.name, sub, p.color || (vendors[p.vendor] && vendors[p.vendor].color), async () => {
-          let brainText = '';
-          if (p.brainFile) {
+          let brainText = p.brainText || '';
+          if (p.brainFile && !brainText) {
             try {
               const brains = await api.listBrains();
               const match = (brains || []).find(b => b.file === p.brainFile);
               if (match) brainText = match.text;
             } catch (_) {}
           }
-          const opts = { name: p.name, role: p.role || null, model: p.model || null, modelLabel: modelLabelOf(p.vendor, p.model || null), brain: p.brainFile || null, brainText, mcp: p.mcp || null, persona: p.id };
+          const opts = { name: p.name, role: p.role || null, model: p.model || null, modelLabel: modelLabelOf(p.vendor, p.model || null), brain: p.brainFile || null, brainText, customInstructions: p.customInstructions || null, mcp: p.mcp || null, persona: p.id };
           if (prevMode === 'add') {
             join(currentId, p.vendor, opts);
             hideChooser();
@@ -1032,6 +1032,7 @@ function showChooser(mode = 'new', vendor = null) {
     }).catch(() => {});
 
     brainField.append(brainLabel, brainSelect);
+    const { field: instructionsField, input: instructionsInput } = customInstructionsField();
 
     // Toolbelt & MCP Capabilities (TM-60 Batch 3)
     const toolsField = document.createElement('div');
@@ -1069,7 +1070,7 @@ function showChooser(mode = 'new', vendor = null) {
     submitBtn.className = 'builder-submit';
     submitBtn.textContent = 'Forge & Deploy Teammate';
 
-    form.append(nameField, engineField, modelPick.field, brainField, toolsField, skillsField, saveField, submitBtn);
+    form.append(nameField, engineField, modelPick.field, brainField, instructionsField, toolsField, skillsField, saveField, submitBtn);
     card.appendChild(form);
 
     form.addEventListener('submit', async (e) => {
@@ -1084,9 +1085,9 @@ function showChooser(mode = 'new', vendor = null) {
       const selectedSkills = Object.keys(skillBoxes).filter(k => skillBoxes[k].checked);
       submitBtn.disabled = true;
       const model = modelPick.value();
-      const cfg = { name: aName, vendor: aVendor, model, brain: bFile, brainText: bText, mcp: selectedTools, skills: selectedSkills };
+      const cfg = { name: aName, vendor: aVendor, model, brain: bFile, brainText: bText, customInstructions: instructionsInput.value, mcp: selectedTools, skills: selectedSkills };
       const persona = saveBox.checked ? await saveTeammate(cfg) : null;
-      const opts = { name: aName, model, modelLabel: modelLabelOf(aVendor, model), brain: bFile, brainText: bText, mcp: selectedTools, persona };
+      const opts = { name: aName, model, modelLabel: modelLabelOf(aVendor, model), brain: bFile, brainText: bText, customInstructions: instructionsInput.value, mcp: selectedTools, persona };
       if (prevMode === 'add') {
         join(currentId, aVendor, opts);
         hideChooser();
@@ -1756,6 +1757,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   // TM-60 Batch 4: Dynamic Central Brain & Persona Chip Resolution
   let centralBrain = null;
   let personaChip = null;
+  let personaSkills = [];
   let brainUpdate = null;
   let files = null;
   try {
@@ -1779,7 +1781,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
     } else if (mine.engine.length) {
       centralBrain = `${centralBrain || ''}\n\n${mine.engine.map(s => s.text.trim()).join('\n\n')}`;
     }
-    if (mine.persona.length) personaChip = `${personaChip || ''}\n\n${mine.persona.map(s => s.text.trim()).join('\n\n')}`;
+    personaSkills = mine.persona;
   } catch (err) {
     api.log('warn', 'skills resolution failed', { error: err.message });
   }
@@ -1801,9 +1803,9 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   // rest). A resumed session only saw the header once, so when this text
   // differs from what the session last got (an edit, a new skill, or a
   // session from before the brains worked), the launch carries it again.
-  const promptBrain = [centralBrain, personaChip].filter(Boolean).join('\n\n');
+  const promptBrain = promptGuidance(member, { centralBrain, personaChip, personaSkills });
   p.brainSig = promptBrain ? textSig(promptBrain) : '';
-  if (session && promptBrain && p.brainSig !== (session.brainSig || '')) brainUpdate = promptBrain;
+  if (session && p.brainSig !== (session.brainSig || '')) brainUpdate = promptBrain || 'No additional directives remain. Discard the previous additional directives.';
   const prompt = buildPrompt(thread, memberId, {
     threadOf,
     answer,
@@ -1811,6 +1813,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
     since: session ? session.lastId : null,
     centralBrain,
     personaChip,
+    personaSkills,
     brainUpdate
   });
 
@@ -2602,6 +2605,7 @@ async function renderOrgBuilder(panel) {
     }
   } catch (_) {}
   chipField.append(chipLabel, chipSelect);
+  const { field: instructionsField, input: instructionsInput } = customInstructionsField();
 
   // Enabled Tools & MCPs
   const toolsField = document.createElement('div');
@@ -2658,11 +2662,11 @@ async function renderOrgBuilder(panel) {
     if (match) bText = match.text;
     const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
     const selectedSkills = Object.keys(skillBoxes).filter(k => skillBoxes[k].checked);
-    return { name: aName, vendor: aVendor, model: modelPick.value(), brain: bFile, brainText: bText, mcp: selectedTools, skills: selectedSkills, save: saveBox.checked };
+    return { name: aName, vendor: aVendor, model: modelPick.value(), brain: bFile, brainText: bText, customInstructions: instructionsInput.value, mcp: selectedTools, skills: selectedSkills, save: saveBox.checked };
   }
   // Saving first (TM-60 Batch 4) gives the member its teammate id, so the
   // skills and servers given to that teammate reach it from the first turn.
-  const memberOpts = async (cfg) => ({ name: cfg.name, model: cfg.model, modelLabel: modelLabelOf(cfg.vendor, cfg.model), brain: cfg.brain, brainText: cfg.brainText, mcp: cfg.mcp, persona: cfg.save ? await saveTeammate(cfg) : null });
+  const memberOpts = async (cfg) => ({ name: cfg.name, model: cfg.model, modelLabel: modelLabelOf(cfg.vendor, cfg.model), brain: cfg.brain, brainText: cfg.brainText, customInstructions: cfg.customInstructions, mcp: cfg.mcp, persona: cfg.save ? await saveTeammate(cfg) : null });
 
   deployNewBtn.addEventListener('click', async () => {
     const cfg = getBuilderConfig();
@@ -2684,7 +2688,7 @@ async function renderOrgBuilder(panel) {
   });
 
   actionRow.append(deployNewBtn, deployCurrentBtn);
-  form.append(nameField, engineField, modelPick.field, chipField, toolsField, skillsField, saveField, actionRow);
+  form.append(nameField, engineField, modelPick.field, chipField, instructionsField, toolsField, skillsField, saveField, actionRow);
   card.appendChild(form);
   panel.appendChild(card);
 
@@ -2796,6 +2800,19 @@ function builderExtras() {
   return { skillsField, skillBoxes, saveField, saveBox };
 }
 
+function customInstructionsField() {
+  const field = document.createElement('label');
+  field.className = 'builder-field';
+  const label = document.createElement('span');
+  label.className = 'builder-label';
+  label.textContent = 'Custom instructions';
+  const input = document.createElement('textarea');
+  input.className = 'org-textarea';
+  input.rows = 4;
+  field.append(label, input);
+  return { field, input };
+}
+
 // A Builder agent becomes a saved teammate: it joins org.agents, and its
 // skills and servers become assignments to it, so the usual resolution
 // gives them to every member made from it. Same name re-saves it.
@@ -2804,7 +2821,7 @@ async function saveTeammate(cfg) {
   const base = cfg.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'teammate';
   let id = base;
   for (let k = 2; teammates(org).some(t => t.id === id && t.name !== cfg.name); k++) id = `${base}-${k}`.slice(0, 32);
-  org.agents = [...(org.agents || []).filter(a => a.id !== id), { id, name: cfg.name, vendor: cfg.vendor, model: cfg.model || null, role: cfg.role || '', brainFile: cfg.brain || '', mcp: cfg.mcp || [], skills: cfg.skills || [] }];
+  org.agents = [...(org.agents || []).filter(a => a.id !== id), { id, name: cfg.name, vendor: cfg.vendor, model: cfg.model || null, role: cfg.role || '', brainFile: cfg.brain || '', brainText: cfg.brainText || '', customInstructions: cfg.customInstructions || '', mcp: cfg.mcp || [], skills: cfg.skills || [] }];
   org.skills = org.skills || {};
   org.mcp = org.mcp || {};
   const give = (map, key) => {
