@@ -180,6 +180,28 @@
     return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
   }
 
+  // Legacy brainText is a cached persona when a brain file is present,
+  // otherwise free-text instructions. Keep it as a fallback, never append
+  // an old snapshot to a freshly resolved persona.
+  function promptGuidance(member, { centralBrain = null, personaChip = null, personaSkills = [] } = {}) {
+    const persona = (personaChip || (member.brain ? member.brainText : '') || '').trim();
+    const custom = (member.customInstructions || (!member.brain ? member.brainText : '') || '').trim();
+    const seen = new Set();
+    const parts = [];
+    const add = (label, text) => {
+      text = (text || '').trim();
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      parts.push(`${label}:\n${text} `);
+    };
+    add('Central Brain directives', centralBrain);
+    add('Your assigned persona directives', persona);
+    // Keep the legacy free-text heading for older chats.
+    add(member.customInstructions ? 'Your custom instructions' : 'Your assigned persona directives', custom);
+    for (const skill of personaSkills) add('Assigned skill', skill.text);
+    return parts.join('');
+  }
+
   // The prompt for a member, answering the newest message: Matt's message to
   // it, or another member's reply that brought it in with @Name. Earlier
   // messages go in as history, newest kept first when it has to be cut: at
@@ -199,7 +221,7 @@
   // upTo: the newest message id this launch answers. The window reads brain
   // files (an await) between asking and building, and a message posted to
   // someone else meanwhile must not become "the newest message".
-  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, brainUpdate = null, upTo = null } = {}) {
+  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, personaSkills = [], brainUpdate = null, upTo = null } = {}) {
     const members = thread.members || [];
     const me = members.find(m => m.id === memberId);
     const names = nameMap(thread);
@@ -217,15 +239,12 @@
     const here = members.filter(m => !m.left);
     // Roles (TM-59): each agent knows its own brief and who does what.
     const roleOf = (m) => (m.role && ROLES[m.role] ? ROLES[m.role] : null);
-    const effectivePersona = (personaChip || me.brainText || '').trim();
-    const brain = effectivePersona ? `Your assigned persona directives:\n${effectivePersona} ` : '';
-    const central = centralBrain ? `Central Brain directives:\n${centralBrain.trim()} ` : '';
+    const guidance = promptGuidance(me, { centralBrain, personaChip, personaSkills });
     const intro = (here.length === 1
       ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
       : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring another agent in, write @Name in your reply; only do that when you need it to act, since every @ launches it (not to thank or agree). `) +
       (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '') +
-      (central ? central : '') +
-      (brain ? brain : '');
+      guidance;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
       (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
@@ -328,7 +347,7 @@
     const memberMaps = [a, b].map(t => {
       const map = {};
       for (const m of t.members) {
-        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null, brain: m.brain || null, brainText: m.brainText || null, mcp: m.mcp || null, skills: m.skills || null, persona: m.persona || null }, { vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null, brain: m.brain || null, brainText: m.brainText || null, customInstructions: m.customInstructions || null, mcp: m.mcp || null, skills: m.skills || null, persona: m.persona || null }, { vendorNames: { ...vendorNames, [m.vendor]: m.name } });
         if (m.left) fresh.left = true;
         members.push(fresh);
         map[m.id] = fresh.id;
@@ -363,5 +382,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
+  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
 });

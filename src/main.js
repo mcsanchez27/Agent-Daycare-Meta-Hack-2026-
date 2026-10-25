@@ -414,6 +414,8 @@ function cleanOrg(org) {
     clean.agents.push({
       id, name, vendor: a.vendor, model: AgentRunner.MODEL_TEXT.test(model) ? model : null, role: str(a.role, 20),
       brainFile: SKILL_FILE.test(brainFile) ? brainFile : '',
+      brainText: typeof a.brainText === 'string' ? a.brainText : '',
+      customInstructions: typeof a.customInstructions === 'string' ? a.customInstructions : '',
       mcp: (Array.isArray(a.mcp) ? a.mcp : []).filter(x => typeof x === 'string' && SERVER_ID.test(x)),
       skills: (Array.isArray(a.skills) ? a.skills : []).filter(x => typeof x === 'string' && SKILL_FILE.test(x))
     });
