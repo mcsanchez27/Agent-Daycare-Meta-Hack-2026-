@@ -331,7 +331,29 @@ test('tool steps (TM-59), from real CLI output: Claude tool_use, Codex item.star
   assert.equal(parseEvent('antigravity', step('DONE')), null);
   assert.deepEqual(parseEvent('antigravity', JSON.stringify({ event: 'step_update', step_update: { state: 'ACTIVE', step_type: 'tool', tool_name: 'read_file', tool_info: { name: 'read_file', parameters: { Path: 'C:\\chat\\x\\hello.txt' } } } })), { steps: ['Reading hello.txt'] });
   assert.deepEqual(parseEvent('antigravity', JSON.stringify({ event: 'result', result: { conversation_id: 'f16d456f-8b34-4734-b966-26d2f7b315ca', status: 'SUCCESS', response: 'banana', usage: { input_tokens: 23009, output_tokens: 272 } } })),
-    { sessionId: 'f16d456f-8b34-4734-b966-26d2f7b315ca', text: 'banana', usage: { inputTokens: 23009, outputTokens: 272 } });
+    { sessionId: 'f16d456f-8b34-4734-b966-26d2f7b315ca', text: 'banana', full: true, usage: { inputTokens: 23009, outputTokens: 272 } });
+});
+
+test('agy text_delta streams, and the final result is not shown again', () => {
+  const { parseEvent, applyReply } = AgentRunner;
+  assert.deepEqual(parseEvent('antigravity', JSON.stringify({ event: 'step_update', step_update: { state: 'ACTIVE', step_type: 'agent_response', text_delta: 'apple' } })), { text: 'apple', delta: true });
+  assert.deepEqual(parseEvent('antigravity', JSON.stringify({ event: 'step_update', step_update: { state: 'DONE', step_type: 'agent_response', text_delta: '\n' } })), { text: '\n', delta: true });
+  assert.equal(parseEvent('antigravity', JSON.stringify({ event: 'step_update', step_update: { state: 'ACTIVE', step_type: 'agent_response', text_delta: '' } })), null);
+  let said = false;
+  let shown = '';
+  for (const ev of [
+    { text: 'apple', delta: true },
+    { text: '\n', delta: true },
+    { text: 'apple\n', full: true, sessionId: 'c1' }
+  ]) {
+    const next = applyReply(said, ev);
+    said = next.said;
+    if (next.text) shown += next.text;
+  }
+  assert.equal(shown, 'apple\n');
+  const first = applyReply(false, { text: 'only the envelope' });
+  const second = applyReply(first.said, { text: 'a later message' });
+  assert.equal(first.text + second.text, 'only the envelope\n\na later message');
 });
 
 test('folder files (TM-60): only CLAUDE.md, AGENTS.md and GEMINI.md are written, into the chat folder', async () => {

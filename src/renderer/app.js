@@ -16,7 +16,7 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT, joinIntent } = window.ChatThread;
 const { VENDORS, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 const { folderFile, personaIdOf, teammates, teammateId, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine } = window.ChatOrg;
 
@@ -77,8 +77,6 @@ const el = {
   notionDesc: $('notion-desc'),
   notionTasks: $('notion-tasks'),
   notionLink: $('notion-link'),
-  previewGlanceTm58: $('preview-glance-tm58'),
-  previewGlanceTm60: $('preview-glance-tm60'),
   navOrgBtn: $('nav-org-btn'),
   orgControl: $('org-control'),
   orgCloseBtn: $('org-close-btn'),
@@ -715,8 +713,8 @@ function renderToolbelt() {
       skillsName.textContent = `⚡ Skills: ${names.length ? `${names.join(', ')} (${how})` : 'none'}`;
     }).catch(() => { skillsName.textContent = '⚡ Skills: unknown'; });
 
-    // The MCP servers this member gets (TM-60 Batch 3): for Claude, passed at
-    // launch; for the others, only those its CLI actually has count.
+    // Claude gets directory servers at launch. The other engines do not, so
+    // the line says that instead of "none assigned" next to a full CLI list.
     const mcpItem = document.createElement('div');
     mcpItem.className = 'toolbelt-cap-item';
     const mcpName = document.createElement('span');
@@ -730,8 +728,7 @@ function renderToolbelt() {
         mcpName.textContent = `🔌 MCP: ${mine.length ? `${mine.map(s => s.name).join(', ')} (passed at launch)` : 'none'}`;
       } else {
         const has = new Set((cli[m.vendor] || []).filter(s => s.enabled).map(s => s.name.toLowerCase()));
-        const parts = mine.map(s => `${s.name}${has.has(s.name.toLowerCase()) || has.has(s.id) ? '' : ' (not in its CLI yet)'}`);
-        mcpName.textContent = `🔌 MCP: ${parts.length ? parts.join(', ') : 'none assigned'} · its CLI has ${has.size}`;
+        mcpName.textContent = `🔌 MCP: not passed by Daycare. Its CLI has ${has.size}.`;
       }
     }).catch(() => { mcpName.textContent = '🔌 MCP: unknown'; });
 
@@ -1428,17 +1425,34 @@ function addActions(row, buttons) {
   return bar;
 }
 
-// A member's finished reply that names another agent with @ brings it in,
-// in the same place (the main chat or the thread it is in). An agent not in
-// the chat joins on its default model. After hopLimit (3, or 6 in a crew) handoffs in a row
-// there, Matt has to say something first.
+// A member's finished reply that @-names someone already in the chat brings
+// them in. A vendor who is not in the chat is not joined from prose (models
+// echo "@Claude"). @Name alone on its own line asks Matt to type it himself,
+// unless his latest message already asked for that vendor.
+function lastMattText(thread, threadOf) {
+  let text = '';
+  for (const m of thread.messages) {
+    if ((m.threadOf || null) !== threadOf) continue;
+    if (m.from === 'matt') text = m.text;
+  }
+  return text;
+}
+
 function handOff(chatId, m) {
   const chat = chats.get(chatId);
-  const target = findTarget(m.text, m.from, chat.thread.members, vendorNames());
+  const names = vendorNames();
+  const target = findTarget(m.text, m.from, chat.thread.members, names);
   if (!target) return;
   const where = m.threadOf || null;
+  const intent = joinIntent(m.text, target, { mattText: lastMattText(chat.thread, where), vendorNames: names });
   const name = (id) => nameOf(id, chat);
   const toName = target.memberId ? name(target.memberId) : vendorName(target.vendor);
+  if (intent === 'ignore') return;
+  if (intent === 'confirm') {
+    post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} put @${toName} on its own line. Type @${toName} if you want them in this chat.` });
+    api.log('info', 'join needs Matt', { chatId, where, from: m.from, vendor: target.vendor });
+    return;
+  }
   const hops = hopsSinceMatt(chat.thread, where);
   const limit = hopLimit(chat.thread);
   if (hops >= limit) {
@@ -2697,9 +2711,22 @@ function builderForm({ defaultName = '' } = {}) {
   instructions.rows = 4;
   instructions.placeholder = 'Anything this teammate should always know or do';
 
-  // MCP servers from the directory (TM-60 Batch 3): real for a Claude agent
-  // at launch; for the other engines a label until their CLI has the server.
+  // MCP servers from the directory. Only Claude takes them at launch, so the
+  // other engines get a sentence instead of ticks that would do nothing.
   const tools = grid(api.listMcps(), s => s.id, s => s.name, 'No servers in the MCP Directory yet (Org Control → MCP Directory).');
+  const mcpNote = document.createElement('p');
+  mcpNote.className = 'builder-note';
+  mcpNote.textContent = 'Daycare can only hand servers to Claude at launch. Gemini, Codex and Grok keep whatever is already in their own CLI (agy mcp add, codex mcp add, grok mcp add).';
+  const mcpWrap = document.createElement('div');
+  mcpWrap.append(mcpNote, tools.grid);
+  const syncMcp = () => {
+    const claude = engineSelect.value === 'claude';
+    tools.grid.hidden = !claude;
+    mcpNote.hidden = claude;
+    if (!claude) for (const box of Object.values(tools.boxes)) box.checked = false;
+  };
+  engineSelect.addEventListener('change', syncMcp);
+  syncMcp();
   const skills = grid(api.listSkills(), s => s.file, s => s.title, 'No skills in the library yet.');
 
   const saveField = document.createElement('label');
@@ -2717,14 +2744,14 @@ function builderForm({ defaultName = '' } = {}) {
     modelPick.field,
     field('Persona Chip (Central Brain inherited automatically)', brainSelect),
     field('Custom instructions', instructions),
-    field('MCP servers (from the directory; real for a Claude agent at launch, a label for the other engines until their CLI has the server)', tools.grid),
+    field('MCP servers', mcpWrap),
     field('Skills (given to this teammate)', skills.grid),
     saveField
   ];
   const config = () => {
     const brain = brainSelect.value;
     const match = loadedBrains.find(b => b.file === brain);
-    return { name: nameInput.value.trim(), vendor: engineSelect.value, model: modelPick.value(), brain, brainText: match ? match.text : '', customInstructions: instructions.value.trim(), mcp: tools.picked(), skills: skills.picked(), save: saveBox.checked };
+    return { name: nameInput.value.trim(), vendor: engineSelect.value, model: modelPick.value(), brain, brainText: match ? match.text : '', customInstructions: instructions.value.trim(), mcp: engineSelect.value === 'claude' ? tools.picked() : [], skills: skills.picked(), save: saveBox.checked };
   };
   return { fields, config };
 }
@@ -2784,8 +2811,6 @@ if (el.tabToolbelt) el.tabToolbelt.addEventListener('click', () => setSidecarTab
 if (el.sidecarExpandBtn) el.sidecarExpandBtn.addEventListener('click', toggleSidecarExpand);
 if (el.previewReload) el.previewReload.addEventListener('click', () => { if (el.previewIframe && currentPreviewUrl) el.previewIframe.src = currentPreviewUrl; });
 if (el.previewExternal) el.previewExternal.addEventListener('click', () => { if (currentPreviewUrl) window.open(currentPreviewUrl, '_blank'); });
-if (el.previewGlanceTm58) el.previewGlanceTm58.addEventListener('click', () => glanceNotionFromText('TM-58'));
-if (el.previewGlanceTm60) el.previewGlanceTm60.addEventListener('click', () => glanceNotionFromText('TM-59'));
 
 if (el.navOrgBtn) {
   el.navOrgBtn.addEventListener('click', () => {

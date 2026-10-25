@@ -114,6 +114,33 @@
     return t && t.memberId ? t.memberId : null;
   }
 
+  // A line that is only `@Name`, optional trailing punctuation. Buried mentions
+  // ("see @Claude") do not count: models echo those, and they must not join anyone.
+  function mentionOnOwnLine(text, name) {
+    return new RegExp(`^\\s*@${escapeRegExp(name)}\\s*[.!?]*\\s*$`, 'im').test(String(text || ''));
+  }
+
+  // Matt's message asked for this vendor by @Name or "bring in / add / ask Name".
+  function mattAskedForVendor(text, vendor, vendorNames = VENDOR_NAMES) {
+    const name = vendorNames[vendor];
+    if (!name || !text) return false;
+    if (mentionAt(text, name) !== -1) return true;
+    return new RegExp(`\\b(?:bring in|add|ask)\\s+@?${escapeRegExp(name)}\\b`, 'i').test(text);
+  }
+
+  // What an agent reply may do with a findTarget hit.
+  // 'handoff' — someone already in the chat, or a new vendor Matt just asked
+  //   for and the agent put @Name alone on a line.
+  // 'confirm' — new vendor, @Name alone on a line, Matt didn't ask. Tell him.
+  // 'ignore' — a new vendor mentioned in passing. Do nothing.
+  function joinIntent(text, target, { mattText = '', vendorNames = VENDOR_NAMES } = {}) {
+    if (!target) return 'ignore';
+    if (target.memberId) return 'handoff';
+    const name = vendorNames[target.vendor];
+    if (!name || !mentionOnOwnLine(text, name)) return 'ignore';
+    return mattAskedForVendor(mattText, target.vendor, vendorNames) ? 'handoff' : 'confirm';
+  }
+
   // Who text brings in with @ (TM-54): { memberId } for a member by name, or
   // { vendor } for a vendor's name that no member of the chat has (it joins
   // on its default model). The earliest @ wins; selfId is never a target.
@@ -241,8 +268,8 @@
     const roleOf = (m) => (m.role && ROLES[m.role] ? ROLES[m.role] : null);
     const guidance = promptGuidance(me, { centralBrain, personaChip, personaSkills });
     const intro = (here.length === 1
-      ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
-      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring another agent in, write @Name in your reply; only do that when you need it to act, since every @ launches it (not to thank or agree). `) +
+      ? `${who}, chatting one-on-one with Matt. Do not @ another agent. Matt adds one by typing @Name himself. If he asked you to bring one in, put @Name alone on its own line. `
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring in someone already here, write @Name; only do that when you need them to act, since every @ of someone here launches them (not to thank or agree). Do not @ a vendor who is not in this chat unless Matt asked, and then put @Name alone on its own line. `) +
       (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '') +
       guidance;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
@@ -382,5 +409,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
+  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads, joinIntent, mentionOnOwnLine };
 });
