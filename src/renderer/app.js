@@ -18,7 +18,7 @@
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
 const { VENDORS, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
-const { folderFile, personaIdOf, teammates, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine } = window.ChatOrg;
+const { folderFile, personaIdOf, teammates, teammateId, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine } = window.ChatOrg;
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -221,10 +221,10 @@ function createCustomChat(memberOpts) {
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
 // ({ title, name, text } from another chat), name (keep this name if it's
 // free), fromTitle (for the note), threadOf (where the note goes).
-function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, role = null, brain = null, brainText = null, customInstructions = null, mcp = null, persona = null, fromTitle = null, threadOf = null } = {}) {
+function join(chatId, vendor, { model = null, modelLabel = null, memory = null, name = null, role = null, brain = null, brainText = null, customInstructions = null, mcp = null, skills = null, persona = null, fromTitle = null, threadOf = null } = {}) {
   const chat = chats.get(chatId);
   const names = name ? { ...vendorNames(), [vendor]: name } : vendorNames();
-  const member = newMember(chat.thread.members, { vendor, model, memory, role, name, brain, brainText, customInstructions, mcp, persona }, { vendorNames: names, modelLabel });
+  const member = newMember(chat.thread.members, { vendor, model, memory, role, name, brain, brainText, customInstructions, mcp, skills, persona }, { vendorNames: names, modelLabel });
   chat.thread.members.push(member);
   const what = member.name === vendorName(vendor) ? modelText(member) : `${vendorName(vendor)}, ${modelText(member)}`;
   post(chatId, { from: 'system', threadOf, text: `${member.name} (${what}) joined` + (fromTitle ? ` from "${fromTitle}"` : '') + '.' });
@@ -244,7 +244,7 @@ function removeMember(chatId, memberId) {
   const member = memberById(chat.thread, memberId);
   if (!member || member === chat.thread.members[0] || member.left) return;
   const key = runKeyOf(chatId, memberId);
-  if (pending[key]) api.stop(key);
+  if (pending[key]) stopRun(key);
   member.left = true;
   post(chatId, { from: 'system', text: `${member.name} left.` });
   api.log('info', 'agent removed', { chatId, member: memberId });
@@ -520,29 +520,24 @@ function renderSidecar() {
     el.sidecarFolder.title = fPath;
   }
 
-  // Context gauge and tokens
-  let totalTokens = 0;
-  let maxWindow = 0;
-  for (const m of c.thread.members) {
-    if (m.left) continue;
-    if (m.usage && m.usage.inputTokens) {
-      totalTokens += m.usage.inputTokens;
-      if (m.usage.contextWindow && m.usage.contextWindow > maxWindow) {
-        maxWindow = m.usage.contextWindow;
-      }
-    }
-  }
-
-  if (el.contextGaugeVal && el.contextBar) {
-    if (maxWindow > 0) {
-      const pct = Math.min(100, (100 * totalTokens) / maxWindow);
-      el.contextGaugeVal.textContent = `${tokens(totalTokens)} / ${tokens(maxWindow)}`;
+  // Context gauge: each agent has a context of its own, so the gauge shows
+  // the fullest one (by share of its window when the CLI reports one, else
+  // by tokens), named. Summing them against one window said nothing real.
+  const share = (u) => (u.contextWindow ? u.inputTokens / u.contextWindow : 0);
+  const fullest = c.thread.members.filter(m => !m.left && m.usage && m.usage.inputTokens)
+    .sort((a, b) => share(b.usage) - share(a.usage) || b.usage.inputTokens - a.usage.inputTokens)[0];
+  if (el.contextGaugeVal && el.contextBar && el.contextGaugeLabel) {
+    const u = fullest ? fullest.usage : null;
+    el.contextGaugeLabel.textContent = fullest ? `Context · ${fullest.name}` : 'Context Window';
+    if (u && u.contextWindow) {
+      const pct = Math.min(100, 100 * share(u));
+      el.contextGaugeVal.textContent = `${tokens(u.inputTokens)} / ${tokens(u.contextWindow)}`;
       el.contextBar.style.width = `${pct.toFixed(1)}%`;
-      el.contextBar.title = `${totalTokens.toLocaleString()} of ${maxWindow.toLocaleString()} tokens (${pct.toFixed(1)}%)`;
-    } else if (totalTokens > 0) {
-      el.contextGaugeVal.textContent = `${tokens(totalTokens)} tokens`;
+      el.contextBar.title = `${fullest.name}'s last reply read ${u.inputTokens.toLocaleString()} of ${u.contextWindow.toLocaleString()} tokens (${pct.toFixed(1)}%)`;
+    } else if (u) {
+      el.contextGaugeVal.textContent = `${tokens(u.inputTokens)} tokens`;
       el.contextBar.style.width = '25%';
-      el.contextBar.title = `${totalTokens.toLocaleString()} tokens read in last responses`;
+      el.contextBar.title = `${fullest.name}'s last reply read ${u.inputTokens.toLocaleString()} tokens (its CLI doesn't say how big its window is)`;
     } else {
       el.contextGaugeVal.textContent = '0 tokens';
       el.contextBar.style.width = '0%';
@@ -651,16 +646,21 @@ function renderToolbelt() {
   cbStatus.textContent = '● Active across all agents · Synced from brains/central-brain.md';
   centralBanner.append(cbTitle, cbStatus);
   el.toolbeltList.appendChild(centralBanner);
+  // Everything the cards need, read once for the whole tab (not once per
+  // member): the assignments, the skills, the directory and the CLIs' lists.
+  const loaded = Promise.all([api.getOrg(), api.listSkills(), api.listMcps(), api.listCliMcps()])
+    .then(([org, skills, servers, cli]) => ({ org: org || {}, skills: skills || [], servers: servers || [], cli: cli || {} }));
+
   // What each CLI has as MCP servers, read live (TM-60 Batch 3).
   const lib = document.getElementById('toolbelt-library');
   if (lib) {
     lib.textContent = 'Reading…';
-    api.listCliMcps().then((cli) => {
+    loaded.then(({ cli }) => {
       lib.replaceChildren();
       for (const v of ['antigravity', 'codex', 'grok']) {
         const row = document.createElement('div');
         row.className = 'library-item';
-        const names = ((cli || {})[v] || []).filter(x => x.enabled).map(x => x.name);
+        const names = (cli[v] || []).filter(x => x.enabled).map(x => x.name);
         row.textContent = `${vendorName(v)}: ${names.length ? names.join(', ') : 'none (or the CLI did not answer)'}`;
         lib.appendChild(row);
       }
@@ -708,8 +708,8 @@ function renderToolbelt() {
     skillsName.textContent = '⚡ Skills: …';
     skillsItem.appendChild(skillsName);
     caps.appendChild(skillsItem);
-    Promise.all([api.getOrg(), api.listSkills()]).then(([org, skills]) => {
-      const mine = skillsFor({ vendor: m.vendor, persona: personaIdOf(m) }, skills || [], (org && org.skills) || {});
+    loaded.then(({ org, skills }) => {
+      const mine = skillsFor({ vendor: m.vendor, persona: personaIdOf(m), own: m.skills }, skills, org.skills || {});
       const names = [...mine.engine, ...mine.persona].map(s => s.title);
       const how = folderFile(m.vendor) ? `via ${folderFile(m.vendor)}` : 'in the prompt';
       skillsName.textContent = `⚡ Skills: ${names.length ? `${names.join(', ')} (${how})` : 'none'}`;
@@ -724,12 +724,12 @@ function renderToolbelt() {
     mcpName.textContent = '🔌 MCP: …';
     mcpItem.appendChild(mcpName);
     caps.appendChild(mcpItem);
-    Promise.all([api.getOrg(), api.listMcps(), m.vendor === 'claude' ? null : api.listCliMcps()]).then(([org, servers, cli]) => {
-      const mine = mcpFor({ vendor: m.vendor, persona: personaIdOf(m), own: m.mcp }, servers || [], (org && org.mcp) || {});
+    loaded.then(({ org, servers, cli }) => {
+      const mine = mcpFor({ vendor: m.vendor, persona: personaIdOf(m), own: m.mcp }, servers, org.mcp || {});
       if (m.vendor === 'claude') {
         mcpName.textContent = `🔌 MCP: ${mine.length ? `${mine.map(s => s.name).join(', ')} (passed at launch)` : 'none'}`;
       } else {
-        const has = new Set(((cli || {})[m.vendor] || []).filter(s => s.enabled).map(s => s.name.toLowerCase()));
+        const has = new Set((cli[m.vendor] || []).filter(s => s.enabled).map(s => s.name.toLowerCase()));
         const parts = mine.map(s => `${s.name}${has.has(s.name.toLowerCase()) || has.has(s.id) ? '' : ' (not in its CLI yet)'}`);
         mcpName.textContent = `🔌 MCP: ${parts.length ? parts.join(', ') : 'none assigned'} · its CLI has ${has.size}`;
       }
@@ -977,123 +977,26 @@ function showChooser(mode = 'new', vendor = null) {
 
     const form = document.createElement('form');
     form.className = 'builder-form';
-
-    // Agent Name
-    const nameField = document.createElement('div');
-    nameField.className = 'builder-field';
-    const nameLabel = document.createElement('label');
-    nameLabel.className = 'builder-label';
-    nameLabel.textContent = 'Agent Name';
-    const nameInput = document.createElement('input');
-    nameInput.className = 'builder-input';
-    nameInput.placeholder = 'e.g. Agent Smith, Neo, Security Auditor';
-    nameInput.required = true;
-    nameField.append(nameLabel, nameInput);
-
-    // Engine / Vendor Select
-    const engineField = document.createElement('div');
-    engineField.className = 'builder-field';
-    const engineLabel = document.createElement('label');
-    engineLabel.className = 'builder-label';
-    engineLabel.textContent = 'CLI Engine (Vendor)';
-    const engineSelect = document.createElement('select');
-    engineSelect.className = 'builder-select';
-    for (const v of VENDORS) {
-      const opt = document.createElement('option');
-      opt.value = v;
-      opt.textContent = vendorName(v);
-      engineSelect.appendChild(opt);
-    }
-    engineField.append(engineLabel, engineSelect);
-    const modelPick = modelField(engineSelect);
-
-    // Persona Chip Preset Select (TM-60 Batch 4)
-    const brainField = document.createElement('div');
-    brainField.className = 'builder-field';
-    const brainLabel = document.createElement('label');
-    brainLabel.className = 'builder-label';
-    brainLabel.textContent = 'Preset Persona Chip (Central Brain inherited automatically)';
-    const brainSelect = document.createElement('select');
-    brainSelect.className = 'builder-select';
-    const noneOpt = document.createElement('option');
-    noneOpt.value = '';
-    noneOpt.textContent = 'Standard Teammate (Central Brain only)';
-    brainSelect.appendChild(noneOpt);
-
-    let loadedBrains = [];
-    api.listBrains().then(list => {
-      loadedBrains = list || [];
-      for (const b of loadedBrains) {
-        const opt = document.createElement('option');
-        opt.value = b.file;
-        opt.textContent = `${b.title} (${b.file})`;
-        brainSelect.appendChild(opt);
-      }
-    }).catch(() => {});
-
-    brainField.append(brainLabel, brainSelect);
-    const { field: instructionsField, input: instructionsInput } = customInstructionsField();
-
-    // Toolbelt & MCP Capabilities (TM-60 Batch 3)
-    const toolsField = document.createElement('div');
-    toolsField.className = 'builder-field';
-    const toolsLabel = document.createElement('label');
-    toolsLabel.className = 'builder-label';
-    toolsLabel.textContent = 'MCP servers (from the directory; real for a Claude agent at launch, a label for the other engines until their CLI has the server)';
-    const toolsGrid = document.createElement('div');
-    toolsGrid.className = 'builder-tools-grid';
-
-    const toolCheckboxes = {};
-    // MCP servers from the directory (TM-60 Batch 3): real for a Claude agent
-    // at launch; for the other engines a label until their CLI has the server.
-    api.listMcps().then((servers) => {
-      for (const s of servers || []) {
-        const toolItem = document.createElement('label');
-        toolItem.className = 'builder-tool-item';
-        const chk = document.createElement('input');
-        chk.type = 'checkbox';
-        chk.value = s.id;
-        toolCheckboxes[s.id] = chk;
-        const tText = document.createElement('span');
-        tText.textContent = s.name;
-        toolItem.append(chk, tText);
-        toolsGrid.appendChild(toolItem);
-      }
-      if (!(servers || []).length) toolsGrid.textContent = 'No servers in the MCP Directory yet (Org Control → MCP Directory).';
-    }).catch(() => {});
-    toolsField.append(toolsLabel, toolsGrid);
-    const { skillsField, skillBoxes, saveField, saveBox } = builderExtras();
-
-    // Submit button
+    const builder = builderForm();
     const submitBtn = document.createElement('button');
     submitBtn.type = 'submit';
     submitBtn.className = 'builder-submit';
     submitBtn.textContent = 'Forge & Deploy Teammate';
-
-    form.append(nameField, engineField, modelPick.field, brainField, instructionsField, toolsField, skillsField, saveField, submitBtn);
+    form.append(...builder.fields, submitBtn);
     card.appendChild(form);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const aName = nameInput.value.trim();
-      if (!aName) return;
-      const aVendor = engineSelect.value;
-      const bFile = brainSelect.value;
-      const match = loadedBrains.find(b => b.file === bFile);
-      const bText = match ? match.text : null;
-      const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
-      const selectedSkills = Object.keys(skillBoxes).filter(k => skillBoxes[k].checked);
+      const cfg = builder.config();
+      if (!cfg.name) return;
       submitBtn.disabled = true;
-      const model = modelPick.value();
-      const cfg = { name: aName, vendor: aVendor, model, brain: bFile, brainText: bText, customInstructions: instructionsInput.value, mcp: selectedTools, skills: selectedSkills };
-      const persona = saveBox.checked ? await saveTeammate(cfg) : null;
-      const opts = { name: aName, model, modelLabel: modelLabelOf(aVendor, model), brain: bFile, brainText: bText, customInstructions: instructionsInput.value, mcp: selectedTools, persona };
+      const opts = await builderMember(cfg);
       if (prevMode === 'add') {
-        join(currentId, aVendor, opts);
+        join(currentId, cfg.vendor, opts);
         hideChooser();
         showChat(currentId);
       } else {
-        createCustomChat({ vendor: aVendor, ...opts });
+        createCustomChat({ vendor: cfg.vendor, ...opts });
       }
     });
   } else {
@@ -1252,7 +1155,7 @@ function sideRow(m) {
   head.addEventListener('click', () => { body.hidden = !body.hidden; });
   row.append(head, body);
   const buttons = [{ label: `Open "${s.chatTitle}"`, title: 'Go to that chat', onClick: () => openChat(s.chatId) }];
-  if (s.state === 'asking') buttons.unshift({ label: 'Stop', title: 'Stop the other chat answering', onClick: () => api.stop(s.runKey) });
+  if (s.state === 'asking') buttons.unshift({ label: 'Stop', title: 'Stop the other chat answering', onClick: () => stopRun(s.runKey) });
   addActions(row, buttons);
   return row;
 }
@@ -1282,11 +1185,22 @@ async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null
     api.log('info', 'background ask refused: hop limit', { from: fromChatId, to: targetId, hop });
     return;
   }
-  await loadChat(dst);
-  const owner = dst.thread.members[0];
-  const runKey = runKeyOf(targetId, owner.id);
+  let loadError = null;
+  try {
+    await loadChat(dst);
+  } catch (err) {
+    loadError = err.message;
+  }
+  const owner = dst.thread ? dst.thread.members[0] : null;
+  const runKey = owner ? runKeyOf(targetId, owner.id) : null;
   const side = post(fromChatId, { from: 'system', threadOf, text: `${askerName} asked "${dst.title}" in the background.`, side: { chatId: targetId, chatTitle: dst.title, asker, question: text, state: 'asking', hop, runKey, ...(group || {}) } });
   api.log('info', 'background ask', { from: fromChatId, to: targetId, asker, hop });
+  if (!owner) {
+    // The row must not sit at "asking…" forever when the chat can't be opened.
+    api.log('error', 'background ask: could not open the chat', { to: targetId, error: loadError });
+    settleSide(fromChatId, side, 'failed', `The chat "${dst.title}" couldn't be opened${loadError ? ` (${loadError})` : ''}.`);
+    return;
+  }
   if (pending[runKey]) {
     settleSide(fromChatId, side, 'busy', `${owner.name} in "${dst.title}" is busy answering something else. Try again once it's done.`);
     return;
@@ -1373,9 +1287,14 @@ function renderView(view) {
     view.empty.textContent = `Say hi to ${chat.thread.members[0].name}. Type @ to bring in another agent.`;
   }
   for (const m of chat.thread.messages) {
-    if (!inView(view, m)) continue;
-    renderMessage(view, m);
-    if (view === main) renderSummary(m.id);
+    if (inView(view, m)) renderMessage(view, m);
+  }
+  // Summary rows only under messages that have a thread (or a reply coming
+  // in one): asking every message would scan the whole history each time.
+  if (view === main) {
+    const roots = new Set(chat.thread.messages.filter(m => m.threadOf).map(m => m.threadOf));
+    for (const p of Object.values(pending)) if (p.chatId === chat.id && p.threadOf) roots.add(p.threadOf);
+    for (const id of roots) renderSummary(id);
   }
   renderPendingRows(view);
   scrollToBottom(view);
@@ -1419,7 +1338,7 @@ function renderSummary(rootId) {
   open.addEventListener('click', () => openPanel(rootId));
   row.appendChild(open);
   // One Stop ends the thread: a stopped reply never hands off.
-  if (info.live) addActions(row, [{ label: 'Stop', title: `Stop ${nameOf(info.live)}`, onClick: () => api.stop(info.liveKey) }]);
+  if (info.live) addActions(row, [{ label: 'Stop', title: `Stop ${nameOf(info.live)}`, onClick: () => stopRun(info.liveKey) }]);
   if (old) old.replaceWith(row);
   else {
     const rootRow = main.list.querySelector(`[data-id="${rootId}"]`);
@@ -1435,7 +1354,7 @@ function renderPendingRows(view) {
     if (!pendingInView(view, p) || pendingRows[key]) continue;
     const r = createRow(view, p.memberId, '', p.text.trim());
     r.row.classList.add('pending');
-    addActions(r.row, [{ label: 'Stop', title: `Stop ${nameOf(p.memberId)}`, onClick: () => api.stop(key) }]);
+    addActions(r.row, [{ label: 'Stop', title: `Stop ${nameOf(p.memberId)}`, onClick: () => stopRun(key) }]);
     pendingRows[key] = { ...r, view };
     updatePendingMeta(key);
   }
@@ -1472,8 +1391,8 @@ function updatePendingMeta(key) {
 }
 
 // An agent used a tool (TM-59): "Reading note.txt", "Running npm test".
-function onStep({ runKey, step }) {
-  const p = pending[runKey];
+function onStep({ runKey, run, step }) {
+  const p = pendingFor(runKey, run);
   if (!p || !step) return;
   p.steps.push(step);
   updatePendingMeta(runKey);
@@ -1724,6 +1643,15 @@ function wireComposer(view) {
 
 // ---- Runs -------------------------------------------------------------------
 
+// Stop for a reply: kills the process once launched; before that (the brain
+// files are still being read) it ends the reply here, so the launch never
+// happens and the member isn't left "working" with nothing running.
+function stopRun(runKey) {
+  const p = pending[runKey];
+  if (p && !p.launched) finishReply(runKey, null, null, { stopped: true });
+  else api.stop(runKey);
+}
+
 // Launches a member with the chat so far and opens a bubble for its reply.
 // threadOf: the thread it answers in, or null for the main chat. extra
 // (background asks): side ({ chatId, messageId, hop }) when this reply answers
@@ -1744,7 +1672,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   const runKey = runKeyOf(chatId, memberId);
   const p = pending[runKey] = {
     chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(),
-    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1, brainSig: ''
+    where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1, brainSig: '', launched: false
   };
   if (chatId === currentId) {
     openViews().forEach(renderPendingRows);
@@ -1773,7 +1701,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   // ride in the prompt. Grok has no such file, so it keeps both in the prompt.
   try {
     const [org, skills] = await Promise.all([api.getOrg(), api.listSkills()]);
-    const mine = skillsFor({ vendor: member.vendor, persona: personaIdOf(member) }, skills || [], (org && org.skills) || {});
+    const mine = skillsFor({ vendor: member.vendor, persona: personaIdOf(member), own: member.skills }, skills || [], (org && org.skills) || {});
     const file = folderFile(member.vendor);
     if (file) {
       files = { [file]: folderText(centralBrain, mine.engine) };
@@ -1806,24 +1734,45 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   const promptBrain = promptGuidance(member, { centralBrain, personaChip, personaSkills });
   p.brainSig = promptBrain ? textSig(promptBrain) : '';
   if (session && p.brainSig !== (session.brainSig || '')) brainUpdate = promptBrain || 'No additional directives remain. Discard the previous additional directives.';
-  const prompt = buildPrompt(thread, memberId, {
-    threadOf,
-    answer,
-    chatTitles,
-    since: session ? session.lastId : null,
-    centralBrain,
-    personaChip,
-    personaSkills,
-    brainUpdate
-  });
+  // The prompt answers the chat as it was when this reply was asked for
+  // (upTo): a message to someone else posted during the awaits above is not
+  // this member's to answer, and must not strand it as "working".
+  let prompt;
+  try {
+    prompt = buildPrompt(thread, memberId, {
+      threadOf,
+      answer,
+      chatTitles,
+      since: session ? session.lastId : null,
+      centralBrain,
+      personaChip,
+      personaSkills,
+      brainUpdate,
+      upTo: p.seenUpTo
+    });
+  } catch (err) {
+    api.log('error', 'could not build the prompt', { runKey, error: err.message });
+    finishReply(runKey, null, `the app couldn't build its prompt (${err.message})`);
+    return;
+  }
 
+  p.launched = true;
   api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: p.sessionId, prompt, files, mcp }).then((started) => {
     if (started === false) finishReply(runKey, null, 'it could not be started');
+    else if (pending[runKey] === p) p.run = started;
   }).catch((err) => finishReply(runKey, null, err.message));
 }
 
-function onOutput({ runKey, stream, text }) {
+// An event belongs to the reply pending under its runKey unless it comes
+// from an earlier launch of the same key that was superseded (its late
+// output or exit must not land in, or end, the newer reply).
+function pendingFor(runKey, run) {
   const p = pending[runKey];
+  return p && (p.run == null || run == null || run === p.run) ? p : null;
+}
+
+function onOutput({ runKey, run, stream, text }) {
+  const p = pendingFor(runKey, run);
   if (!p || !text) return;
   if (stream === 'stderr') {
     p.stderr = (p.stderr + text).slice(-2000);
@@ -1865,8 +1814,9 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
     renderPlan();
   }
   // A saved session that couldn't be resumed (expired, deleted): forget it and
-  // ask again once with a fresh session and the usual recent history.
-  if (p.sessionId && member && !p.text.trim() && !stopped && !timedOut && !why) {
+  // ask again once with a fresh session and the usual recent history. An
+  // agent that used tools but said nothing did resume, so it keeps its session.
+  if (p.sessionId && member && !p.text.trim() && !p.steps.length && !stopped && !timedOut && !why) {
     delete member.sessions[p.where];
     post(p.chatId, { from: 'system', threadOf: p.threadOf || null, text: `${name}'s saved session couldn't be resumed, so it's starting a fresh one.` });
     api.log('warn', 'session resume failed, starting fresh', { runKey, code, sessionId: p.sessionId });
@@ -2058,6 +2008,9 @@ async function renderOrgMemory(panel) {
 }
 
 async function renderOrgPersonas(panel) {
+  // Chats not opened yet this session have no members in memory; read them,
+  // so the deployment counts cover every chat, not only the ones opened.
+  await Promise.all([...chats.values()].filter(c => !c.thread).map(c => loadChat(c).catch((err) => api.log('warn', 'could not read a chat for the persona counts', { id: c.id, error: err.message }))));
   const stats = getChipDeploymentStats();
 
   const topCard = document.createElement('div');
@@ -2551,90 +2504,7 @@ async function renderOrgBuilder(panel) {
 
   const form = document.createElement('div');
   form.className = 'builder-form';
-
-  // Agent Name
-  const nameField = document.createElement('div');
-  nameField.className = 'builder-field';
-  const nameLabel = document.createElement('label');
-  nameLabel.className = 'builder-label';
-  nameLabel.textContent = 'Agent Name';
-  const nameInput = document.createElement('input');
-  nameInput.className = 'builder-input';
-  nameInput.placeholder = 'e.g. Agent Smith, Sentinel, Lead Architect';
-  nameInput.value = 'Custom Teammate';
-  nameField.append(nameLabel, nameInput);
-
-  // Engine Select
-  const engineField = document.createElement('div');
-  engineField.className = 'builder-field';
-  const engineLabel = document.createElement('label');
-  engineLabel.className = 'builder-label';
-  engineLabel.textContent = 'CLI Engine (Vendor)';
-  const engineSelect = document.createElement('select');
-  engineSelect.className = 'builder-select';
-  for (const v of VENDORS) {
-    const opt = document.createElement('option');
-    opt.value = v;
-    opt.textContent = vendorName(v);
-    engineSelect.appendChild(opt);
-  }
-  engineField.append(engineLabel, engineSelect);
-  const modelPick = modelField(engineSelect);
-
-  // Persona Chip Select
-  const chipField = document.createElement('div');
-  chipField.className = 'builder-field';
-  const chipLabel = document.createElement('label');
-  chipLabel.className = 'builder-label';
-  chipLabel.textContent = 'Assigned Persona Chip (Central Brain inherited automatically)';
-  const chipSelect = document.createElement('select');
-  chipSelect.className = 'builder-select';
-  const noneOpt = document.createElement('option');
-  noneOpt.value = '';
-  noneOpt.textContent = 'Standard Teammate (Central Brain only)';
-  chipSelect.appendChild(noneOpt);
-
-  let loadedBrains = [];
-  try {
-    loadedBrains = await api.listBrains();
-    for (const b of loadedBrains) {
-      const opt = document.createElement('option');
-      opt.value = b.file;
-      opt.textContent = `${b.title} (${b.file})`;
-      chipSelect.appendChild(opt);
-    }
-  } catch (_) {}
-  chipField.append(chipLabel, chipSelect);
-  const { field: instructionsField, input: instructionsInput } = customInstructionsField();
-
-  // Enabled Tools & MCPs
-  const toolsField = document.createElement('div');
-  toolsField.className = 'builder-field';
-  const toolsLabel = document.createElement('label');
-  toolsLabel.className = 'builder-label';
-  toolsLabel.textContent = 'MCP servers (from the directory; real for a Claude agent at launch, a label for the other engines until their CLI has the server)';
-  const toolsGrid = document.createElement('div');
-  toolsGrid.className = 'builder-tools-grid';
-
-  const toolCheckboxes = {};
-  // MCP servers from the directory (TM-60 Batch 3); see the chooser's builder.
-  api.listMcps().then((servers) => {
-    for (const s of servers || []) {
-      const toolItem = document.createElement('label');
-      toolItem.className = 'builder-tool-item';
-      const chk = document.createElement('input');
-      chk.type = 'checkbox';
-      chk.value = s.id;
-      toolCheckboxes[s.id] = chk;
-      const tText = document.createElement('span');
-      tText.textContent = s.name;
-      toolItem.append(chk, tText);
-      toolsGrid.appendChild(toolItem);
-    }
-    if (!(servers || []).length) toolsGrid.textContent = 'No servers in the MCP Directory yet.';
-  }).catch(() => {});
-  toolsField.append(toolsLabel, toolsGrid);
-  const { skillsField, skillBoxes, saveField, saveBox } = builderExtras();
+  const builder = builderForm({ defaultName: 'Custom Teammate' });
 
   // Action buttons
   const actionRow = document.createElement('div');
@@ -2653,31 +2523,18 @@ async function renderOrgBuilder(panel) {
   deployCurrentBtn.style.padding = '.5rem 1rem';
   deployCurrentBtn.textContent = '👥 Summon into Current Chat';
 
-  function getBuilderConfig() {
-    const aName = nameInput.value.trim() || 'Custom Agent';
-    const aVendor = engineSelect.value;
-    const bFile = chipSelect.value;
-    let bText = '';
-    const match = (loadedBrains || []).find(b => b.file === bFile);
-    if (match) bText = match.text;
-    const selectedTools = Object.keys(toolCheckboxes).filter(k => toolCheckboxes[k].checked);
-    const selectedSkills = Object.keys(skillBoxes).filter(k => skillBoxes[k].checked);
-    return { name: aName, vendor: aVendor, model: modelPick.value(), brain: bFile, brainText: bText, customInstructions: instructionsInput.value, mcp: selectedTools, skills: selectedSkills, save: saveBox.checked };
-  }
-  // Saving first (TM-60 Batch 4) gives the member its teammate id, so the
-  // skills and servers given to that teammate reach it from the first turn.
-  const memberOpts = async (cfg) => ({ name: cfg.name, model: cfg.model, modelLabel: modelLabelOf(cfg.vendor, cfg.model), brain: cfg.brain, brainText: cfg.brainText, customInstructions: cfg.customInstructions, mcp: cfg.mcp, persona: cfg.save ? await saveTeammate(cfg) : null });
+  const getBuilderConfig = () => { const cfg = builder.config(); cfg.name = cfg.name || 'Custom Agent'; return cfg; };
 
   deployNewBtn.addEventListener('click', async () => {
     const cfg = getBuilderConfig();
-    const opts = await memberOpts(cfg);
+    const opts = await builderMember(cfg);
     closeOrgControl();
     createCustomChat({ vendor: cfg.vendor, ...opts });
   });
 
   deployCurrentBtn.addEventListener('click', async () => {
     const cfg = getBuilderConfig();
-    const opts = await memberOpts(cfg);
+    const opts = await builderMember(cfg);
     closeOrgControl();
     if (currentId) {
       join(currentId, cfg.vendor, opts);
@@ -2688,7 +2545,7 @@ async function renderOrgBuilder(panel) {
   });
 
   actionRow.append(deployNewBtn, deployCurrentBtn);
-  form.append(nameField, engineField, modelPick.field, chipField, instructionsField, toolsField, skillsField, saveField, actionRow);
+  form.append(...builder.fields, actionRow);
   card.appendChild(form);
   panel.appendChild(card);
 
@@ -2763,32 +2620,88 @@ function modelField(engineSelect) {
   return { field, value };
 }
 
-// Skills tick boxes and the "save as a teammate" box both Builders share (TM-60 Batch 4).
-function builderExtras() {
-  const skillsField = document.createElement('div');
-  skillsField.className = 'builder-field';
-  const skillsLabel = document.createElement('label');
-  skillsLabel.className = 'builder-label';
-  skillsLabel.textContent = 'Skills (given to this teammate)';
-  const skillsGrid = document.createElement('div');
-  skillsGrid.className = 'builder-tools-grid';
-  const skillBoxes = {};
-  api.listSkills().then((list) => {
-    for (const sk of list || []) {
-      const item = document.createElement('label');
-      item.className = 'builder-tool-item';
-      const chk = document.createElement('input');
-      chk.type = 'checkbox';
-      chk.value = sk.file;
-      skillBoxes[sk.file] = chk;
-      const t = document.createElement('span');
-      t.textContent = sk.title;
-      item.append(chk, t);
-      skillsGrid.appendChild(item);
+// The fields both Builders share (the chooser's and Org Control's): name,
+// engine, model, persona chip, MCP servers, skills and "save as a teammate".
+// config() reads them: { name, vendor, model, brain, brainText, mcp, skills, save }.
+function builderForm({ defaultName = '' } = {}) {
+  const field = (text, control) => {
+    const f = document.createElement('div');
+    f.className = 'builder-field';
+    const l = document.createElement('label');
+    l.className = 'builder-label';
+    l.textContent = text;
+    f.append(l, control);
+    return f;
+  };
+  // A grid of tick boxes filled once a list arrives: boxes[key] -> checkbox.
+  const grid = (load, key, label, emptyText) => {
+    const g = document.createElement('div');
+    g.className = 'builder-tools-grid';
+    const boxes = {};
+    load.then((list) => {
+      for (const x of list || []) {
+        const item = document.createElement('label');
+        item.className = 'builder-tool-item';
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.value = key(x);
+        boxes[key(x)] = chk;
+        const t = document.createElement('span');
+        t.textContent = label(x);
+        item.append(chk, t);
+        g.appendChild(item);
+      }
+      if (!(list || []).length) g.textContent = emptyText;
+    }).catch(() => {});
+    return { grid: g, boxes, picked: () => Object.keys(boxes).filter(k => boxes[k].checked) };
+  };
+
+  const nameInput = document.createElement('input');
+  nameInput.className = 'builder-input';
+  nameInput.placeholder = 'e.g. Agent Smith, Neo, Security Auditor';
+  nameInput.required = true;
+  nameInput.value = defaultName;
+
+  const engineSelect = document.createElement('select');
+  engineSelect.className = 'builder-select';
+  for (const v of VENDORS) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = vendorName(v);
+    engineSelect.appendChild(opt);
+  }
+  const modelPick = modelField(engineSelect);
+
+  // Persona chip (TM-60 Batch 4): a brain file, or none (Central Brain only).
+  const brainSelect = document.createElement('select');
+  brainSelect.className = 'builder-select';
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = 'Standard Teammate (Central Brain only)';
+  brainSelect.appendChild(noneOpt);
+  let loadedBrains = [];
+  api.listBrains().then((list) => {
+    loadedBrains = list || [];
+    for (const b of loadedBrains) {
+      const opt = document.createElement('option');
+      opt.value = b.file;
+      opt.textContent = `${b.title} (${b.file})`;
+      brainSelect.appendChild(opt);
     }
-    if (!(list || []).length) skillsGrid.textContent = 'No skills in the library yet.';
   }).catch(() => {});
-  skillsField.append(skillsLabel, skillsGrid);
+
+  // Free-text instructions (PR #57), kept beside the persona chip rather than
+  // replaced by it; they ride in the prompt as "Your custom instructions".
+  const instructions = document.createElement('textarea');
+  instructions.className = 'org-textarea';
+  instructions.rows = 4;
+  instructions.placeholder = 'Anything this teammate should always know or do';
+
+  // MCP servers from the directory (TM-60 Batch 3): real for a Claude agent
+  // at launch; for the other engines a label until their CLI has the server.
+  const tools = grid(api.listMcps(), s => s.id, s => s.name, 'No servers in the MCP Directory yet (Org Control → MCP Directory).');
+  const skills = grid(api.listSkills(), s => s.file, s => s.title, 'No skills in the library yet.');
+
   const saveField = document.createElement('label');
   saveField.className = 'builder-tool-item builder-save';
   const saveBox = document.createElement('input');
@@ -2797,36 +2710,48 @@ function builderExtras() {
   const saveText = document.createElement('span');
   saveText.textContent = 'Save as a teammate (offered in + New chat, and a "Give to" target)';
   saveField.append(saveBox, saveText);
-  return { skillsField, skillBoxes, saveField, saveBox };
+
+  const fields = [
+    field('Agent Name', nameInput),
+    field('CLI Engine (Vendor)', engineSelect),
+    modelPick.field,
+    field('Persona Chip (Central Brain inherited automatically)', brainSelect),
+    field('Custom instructions', instructions),
+    field('MCP servers (from the directory; real for a Claude agent at launch, a label for the other engines until their CLI has the server)', tools.grid),
+    field('Skills (given to this teammate)', skills.grid),
+    saveField
+  ];
+  const config = () => {
+    const brain = brainSelect.value;
+    const match = loadedBrains.find(b => b.file === brain);
+    return { name: nameInput.value.trim(), vendor: engineSelect.value, model: modelPick.value(), brain, brainText: match ? match.text : '', customInstructions: instructions.value.trim(), mcp: tools.picked(), skills: skills.picked(), save: saveBox.checked };
+  };
+  return { fields, config };
 }
 
-function customInstructionsField() {
-  const field = document.createElement('label');
-  field.className = 'builder-field';
-  const label = document.createElement('span');
-  label.className = 'builder-label';
-  label.textContent = 'Custom instructions';
-  const input = document.createElement('textarea');
-  input.className = 'org-textarea';
-  input.rows = 4;
-  field.append(label, input);
-  return { field, input };
+// A Builder config as the options for a new member. Saving first (TM-60
+// Batch 4) gives the member its teammate id, so the skills and servers given
+// to that teammate reach it from the first turn; its own picks ride on the
+// member too, so an agent that was not saved still has them.
+async function builderMember(cfg) {
+  return { name: cfg.name, model: cfg.model, modelLabel: modelLabelOf(cfg.vendor, cfg.model), brain: cfg.brain || null, brainText: cfg.brainText || null, customInstructions: cfg.customInstructions || null, mcp: cfg.mcp, skills: cfg.skills, persona: cfg.save ? await saveTeammate(cfg) : null };
 }
 
 // A Builder agent becomes a saved teammate: it joins org.agents, and its
 // skills and servers become assignments to it, so the usual resolution
-// gives them to every member made from it. Same name re-saves it.
+// gives them to every member made from it. Same name re-saves it, and what
+// was unticked this time is taken away again.
 async function saveTeammate(cfg) {
   const org = (await api.getOrg()) || {};
-  const base = cfg.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'teammate';
-  let id = base;
-  for (let k = 2; teammates(org).some(t => t.id === id && t.name !== cfg.name); k++) id = `${base}-${k}`.slice(0, 32);
+  const same = teammates(org).find(t => !t.builtIn && t.name === cfg.name);
+  const id = same ? same.id : teammateId(cfg.name, teammates(org).map(t => t.id));
   org.agents = [...(org.agents || []).filter(a => a.id !== id), { id, name: cfg.name, vendor: cfg.vendor, model: cfg.model || null, role: cfg.role || '', brainFile: cfg.brain || '', brainText: cfg.brainText || '', customInstructions: cfg.customInstructions || '', mcp: cfg.mcp || [], skills: cfg.skills || [] }];
   org.skills = org.skills || {};
   org.mcp = org.mcp || {};
+  for (const map of [org.skills, org.mcp]) for (const a of Object.values(map)) a.personas = (a.personas || []).filter(p => p !== id);
   const give = (map, key) => {
     const a = map[key] || { all: false, engines: [], personas: [] };
-    if (!a.personas.includes(id)) a.personas = [...a.personas, id];
+    a.personas = [...(a.personas || []), id];
     map[key] = a;
   };
   for (const f of cfg.skills || []) give(org.skills, f);
@@ -2877,7 +2802,10 @@ if (el.orgTabBuilder) el.orgTabBuilder.addEventListener('click', () => setOrgTab
 
 api.onAgentOutput(onOutput);
 api.onAgentStep(onStep);
-api.onAgentDone(({ runKey, code, ...outcome }) => finishReply(runKey, code, null, outcome));
+api.onAgentDone(({ runKey, code, run, ...outcome }) => {
+  if (!pendingFor(runKey, run)) return api.log('warn', 'ignored a done event from a superseded launch', { runKey, run });
+  finishReply(runKey, code, null, outcome);
+});
 api.onNotice(({ text }) => { if (current()) post(currentId, { from: 'system', text }); });
 
 async function init() {
@@ -2888,7 +2816,10 @@ async function init() {
   // Asked once in the background; the chooser shows models once they arrive.
   api.listModels().then((m) => {
     models = m;
-    if (!el.chooser.hidden && el.chooser.dataset.mode !== 'from') showChooser(el.chooser.dataset.mode, el.chooser.dataset.vendor || null);
+    // Only the model screen changes with the list; redrawing the Builder
+    // would throw away a half-filled form.
+    const { mode, vendor } = el.chooser.dataset;
+    if (!el.chooser.hidden && vendor && (mode === 'new' || mode === 'add')) showChooser(mode, vendor);
   }).catch((err) => api.log('warn', 'could not list models', { error: err.message }));
 
   const { config } = await api.getConfig();

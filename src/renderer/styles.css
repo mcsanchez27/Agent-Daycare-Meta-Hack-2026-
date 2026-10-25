@@ -977,13 +977,6 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
   border: 1px solid var(--line);
   border-radius: 8px;
 }
-.library-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 9999px;
-}
-.library-dot.green { background: #10b981; }
-.library-dot.blue { background: #38bdf8; }
 
 .sidecar-content {
   flex: 1;

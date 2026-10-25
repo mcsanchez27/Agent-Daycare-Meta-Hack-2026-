@@ -218,11 +218,14 @@
   // centralBrain: Mountain Man Studios operating doctrine (TM-60 Batch 4).
   // personaChip: dynamic persona instructions resolved from disk.
   // brainUpdate: notification notice for resumed sessions if brain files changed.
-  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, personaSkills = [], brainUpdate = null } = {}) {
+  // upTo: the newest message id this launch answers. The window reads brain
+  // files (an await) between asking and building, and a message posted to
+  // someone else meanwhile must not become "the newest message".
+  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, personaSkills = [], brainUpdate = null, upTo = null } = {}) {
     const members = thread.members || [];
     const me = members.find(m => m.id === memberId);
     const names = nameMap(thread);
-    const said = thread.messages.filter(m => spoken(m) &&
+    const said = thread.messages.filter(m => spoken(m) && (upTo === null || m.id <= upTo) &&
       (threadOf === null || m.threadOf === threadOf || (!m.threadOf && m.id <= threadOf)));
     const last = said[said.length - 1];
     const fromMatt = last && (last.from === 'matt' || last.from === 'guest') && last.to === memberId;
@@ -251,7 +254,10 @@
     const was = me.memory && me.memory.name && me.memory.name !== me.name ? ` (you were called ${me.memory.name} there)` : '';
     const memory = me.memory && me.memory.text ? `Background from your earlier chat '${me.memory.title}'${was}:\n${me.memory.text}` : '';
     const history = [];
-    let used = memory.length;
+    const notice = since === null ? '' : brainUpdate ? `[Notice: your Central Brain, persona or skills changed. The current text:\n${brainUpdate.trim()}]` : '';
+    // The header (brains and skills) counts toward the budget too: the whole
+    // prompt goes on one command line for Claude and agy.
+    let used = memory.length + (since === null ? header.length : notice.length);
     // A follow-up keeps everything but the answered asks themselves (the
     // newest side rows), which end the prompt. One answer or several (TM-57).
     const answers = answer ? [].concat(answer) : null;
@@ -277,7 +283,7 @@
       used += line.length;
     }
 
-    const parts = since === null ? [header] : (brainUpdate ? [`[Notice: your Central Brain, persona or skills changed. The current text:\n${brainUpdate.trim()}]`] : []);
+    const parts = since === null ? [header] : (notice ? [notice] : []);
     if (memory && since === null) parts.push(memory);
     if (history.length) parts.push((since === null ? 'Recent conversation:\n' : 'New in this chat since your last reply:\n') + history.join('\n\n'));
     if (answers && answers.length === 1) {
@@ -341,7 +347,7 @@
     const memberMaps = [a, b].map(t => {
       const map = {};
       for (const m of t.members) {
-        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null, brain: m.brain || null, brainText: m.brainText || null, customInstructions: m.customInstructions || null, mcp: m.mcp || null, persona: m.persona || null },{ vendorNames: { ...vendorNames, [m.vendor]: m.name } });
+        const fresh = newMember(members, { vendor: m.vendor, model: m.model, memory: m.memory || null, role: m.role || null, brain: m.brain || null, brainText: m.brainText || null, customInstructions: m.customInstructions || null, mcp: m.mcp || null, skills: m.skills || null, persona: m.persona || null }, { vendorNames: { ...vendorNames, [m.vendor]: m.name } });
         if (m.left) fresh.left = true;
         members.push(fresh);
         map[m.id] = fresh.id;

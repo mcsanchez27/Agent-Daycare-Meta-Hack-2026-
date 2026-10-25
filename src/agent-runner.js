@@ -119,8 +119,9 @@ function parseEvent(vendor, line) {
 const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
 // What `grok models` listed on 2026-10-24 (it answers even when signed out).
 const GROK_MODELS = [{ id: 'grok-4.6', label: 'grok-4.6' }, { id: 'grok-4.5', label: 'grok-4.5' }];
-// grok's prompt goes in this file in the chat folder (see _buildAgentArgs).
-const PROMPT_FILE = '.daycare-prompt.txt';
+// grok's prompt goes in a file in the chat folder (see _buildAgentArgs), one
+// per run, so two Grok members of one chat never share it.
+const promptFileName = (run) => `.daycare-prompt-${run}.txt`;
 // The Central Brain and skills reach Claude, Codex and Gemini as the file each
 // reads from its folder on its own (TM-60 Batch 2). Only these names are written.
 const FOLDER_FILES = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md'];
@@ -143,10 +144,6 @@ function launchCommand(exe, args, platform = process.platform, env = process.env
     };
   }
   return { file: exe, args, options: {} };
-}
-
-function versionCommand(exe, platform = process.platform, env = process.env) {
-  return launchCommand(exe, ['--version'], platform, env);
 }
 
 // Finds the file to launch. The configured path wins if it exists. On Windows
@@ -185,7 +182,6 @@ function whereSync(name) {
   }
 }
 
-const { parseAnsi } = require('./utils/ansi.js');
 const { stripAnsi } = require('./logger');
 const { DEFAULT_TIMEOUT_SEC } = require('./config');
 
@@ -236,53 +232,6 @@ class AgentRunner {
     this.log.info('app', 'agent runner shut down');
   }
 
-  async scanAgents() {
-    return Promise.all(Object.values(this.agents).map(async agent => {
-      let isInstalled = false;
-      let version = 'Unknown';
-      let verifiedPath = agent.path;
-      // The file the version check actually runs: the configured path, or the
-      // first hit `where` reports (which may be a .cmd shim, see versionCommand).
-      let versionTarget = agent.path;
-
-      if (fs.existsSync(agent.path)) {
-        isInstalled = true;
-      } else {
-        try {
-          const { stdout } = await execFileAsync('where', [agent.command], { encoding: 'utf8', timeout: 2500 });
-          isInstalled = true;
-          verifiedPath = agent.command;
-          versionTarget = String(stdout).split(/\r?\n/)[0].trim() || agent.command;
-        } catch (err) {
-          this.log.debug(agent.id, 'not found on PATH', { path: agent.path, error: err.message });
-        }
-      }
-
-      if (isInstalled) {
-        const cmd = versionCommand(versionTarget);
-        if (!cmd) {
-          version = 'Installed';
-          this.log.debug(agent.id, '--version skipped: batch file path contains shell metacharacters', { path: versionTarget });
-        } else {
-          try {
-            const { stdout } = await execFileAsync(cmd.file, cmd.args, { ...cmd.options, encoding: 'utf8', timeout: 2500 });
-            version = stdout.trim().split('\n')[0].replace(/Usage of.*$/i, '').trim() || 'Installed';
-          } catch (err) {
-            version = 'Installed';
-            this.log.debug(agent.id, '--version check failed', { path: versionTarget, error: err.message });
-          }
-        }
-      }
-      this.log.info(agent.id, 'scan result', { installed: isInstalled, version, path: verifiedPath });
-
-      agent.installed = isInstalled;
-      agent.version = version;
-      agent.path = verifiedPath;
-
-      return { id: agent.id, name: agent.name, installed: isInstalled, version, path: verifiedPath };
-    }));
-  }
-
   getConfigs() {
     return Object.values(this.agents);
   }
@@ -316,6 +265,7 @@ class AgentRunner {
   // runKey (`<chatId>/<memberId>`, TM-54) names the run: events carry it, and
   // Stop and the timeout act on it alone, so two members of one vendor can
   // answer at once. model is the vendor's model id, or null for its default.
+  // Returns the run number once launched, false when the launch was refused.
   run({ runKey, vendor, model = null, sessionId = null, prompt = '', files = null, mcp = null }) {
     const agent = this.agents[vendor];
     if (!agent) throw new Error(`Agent ${vendor} not found`);
@@ -345,25 +295,29 @@ class AgentRunner {
       mcpPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-mcp-')), 'mcp.json');
       fs.writeFileSync(mcpPath, JSON.stringify(mcp), { mode: 0o600, flag: 'wx' });
     }
-    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId, mcpPath);
-    if (promptFile !== null) fs.writeFileSync(path.join(workingDir, PROMPT_FILE), promptFile);
+    const promptName = promptFileName(run);
+    const { args, stdin, promptFile = null } = this._buildAgentArgs(vendor, p, model, sessionId, mcpPath, promptName);
+    if (promptFile !== null) fs.writeFileSync(path.join(workingDir, promptName), promptFile);
     for (const [name, text] of Object.entries(files || {})) {
       if (FOLDER_FILES.includes(name) && typeof text === 'string') fs.writeFileSync(path.join(workingDir, name), text);
       else this.log.warn(vendor, 'refused folder file', { run, runKey, name });
     }
     this.log.info(vendor, 'launching', { run, runKey, exe, args, stdin, promptFile, cwd: workingDir });
 
+    // A refused launch must not leave the MCP file (it may hold keys) behind.
+    const dropMcp = () => { if (mcpPath) fs.rm(path.dirname(mcpPath), { recursive: true, force: true }, () => {}); };
     const cmd = launchCommand(exe, args);
     if (!cmd) {
       this.log.warn(vendor, 'refused to launch batch file with unsafe path or arguments', { run, exe });
       this.emitOutput(ctx, `[Can't launch ${agent.name}]: ${exe} is a .cmd/.bat file in a folder name Windows' command shell could misread. Point ${agent.name}'s path in config.json at a plain folder.\r\n`, 'stderr');
+      dropMcp();
       return false;
     }
 
     const child = this._spawnAgentProcess(vendor, agent, cmd, workingDir, ctx, stdin);
-    if (!child) return false;
+    if (!child) { dropMcp(); return false; }
     Object.assign(child, ctx);
-    if (promptFile !== null) child.promptPath = path.join(workingDir, PROMPT_FILE);
+    if (promptFile !== null) child.promptPath = path.join(workingDir, promptName);
     if (mcpPath) child.mcpPath = mcpPath;
 
     this.processes.set(runKey, child);
@@ -376,7 +330,9 @@ class AgentRunner {
       this.stop(runKey, 'timeout');
     }, timeoutSec * 1000);
     this._attachProcessStreams(child);
-    return true;
+    // The run number: every event of this launch carries it, so the window
+    // can tell this reply's events from a superseded launch's late ones.
+    return run;
   }
 
   // Each chat works in a folder of its own inside the working folder (TM-59),
@@ -413,7 +369,7 @@ class AgentRunner {
   // ({ mcpServers }), written by run() in a private temp folder and deleted
   // when the run ends, so no key sits on the command line, in the log or
   // in the chat folder. Only Claude takes servers per launch.
-  _buildAgentArgs(vendor, p, model = null, sessionId = null, mcpPath = null) {
+  _buildAgentArgs(vendor, p, model = null, sessionId = null, mcpPath = null, promptName = promptFileName(0)) {
     const m = model ? ['-m', model] : [];
     const mcpArgs = vendor === 'claude' && mcpPath ? ['--mcp-config', mcpPath] : [];
     if (vendor === 'codex' && sessionId) return { args: ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode=workspace-write', ...m, sessionId, '-'], stdin: p };
@@ -426,7 +382,7 @@ class AgentRunner {
     // its npm shim goes through cmd.exe, which a prompt on the command line
     // would not survive. Output is Claude-shaped streaming JSON. Tools are
     // auto-approved like the others; it isn't fenced in.
-    if (vendor === 'grok') return { args: ['--output-format', 'streaming-messages-json', '--permission-mode', 'acceptEdits', '--always-approve', ...m, ...(sessionId ? ['--resume', sessionId] : []), '--prompt-file', PROMPT_FILE], stdin: null, promptFile: p };
+    if (vendor === 'grok') return { args: ['--output-format', 'streaming-messages-json', '--permission-mode', 'acceptEdits', '--always-approve', ...m, ...(sessionId ? ['--resume', sessionId] : []), '--prompt-file', promptName], stdin: null, promptFile: p };
     // antigravity (agy): -p takes the next word as the prompt, so it goes last
     return { args: ['--mode', 'accept-edits', '--sandbox', '--dangerously-skip-permissions', '--output-format', 'stream-json', ...flag, ...(sessionId ? ['--conversation', sessionId] : []), '-p', p], stdin: null };
   }
@@ -557,7 +513,7 @@ class AgentRunner {
   // ctx: { runKey, vendor, run } (a running child carries these).
   emitOutput({ runKey, vendor, run }, rawText, stream = 'stdout') {
     // text: colour and cursor codes removed, for the chat bubbles.
-    this._send('agent:output', { runKey, vendor, stream, run, raw: rawText, text: stripAnsi(rawText), html: parseAnsi(rawText) });
+    this._send('agent:output', { runKey, vendor, stream, run, text: stripAnsi(rawText) });
   }
 
   _send(channel, payload) {
@@ -567,7 +523,6 @@ class AgentRunner {
   }
 }
 
-AgentRunner.versionCommand = versionCommand;
 AgentRunner.launchCommand = launchCommand;
 AgentRunner.resolveExecutable = resolveExecutable;
 AgentRunner.killTree = killTree;

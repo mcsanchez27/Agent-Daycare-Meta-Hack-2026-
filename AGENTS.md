@@ -6,6 +6,19 @@
 - **The old dashboard is gone.** Mascots, sound, roles, hooks, Sentry and Grok were removed in TM-47 Batch 1. The last dashboard version is the git tag `v0-dashboard`. Do not restore any of it unless a ticket asks for it.
 - **Work in batches.** One batch at a time, commit with the TM ID and batch number (`TM-47 Batch 2: ...`), then stop and tell Matt what to test.
 
+## Health sweep (2026-10-25, overnight, after Codex's review)
+- **A reply answers the chat as it was when asked.** `ask()` passes `upTo: seenUpTo` to `buildPrompt`, so a message posted to someone else while the brain files were being read can't make `buildPrompt` throw and strand the member as "working". If building still fails, `finishReply` reports it instead of leaving `pending` set.
+- **Stop before launch works:** `stopRun(runKey)` in `app.js` ends a reply that hasn't launched yet (`pending[key].launched` is false) and otherwise calls `api.stop`. Every Stop button goes through it.
+- **Grok's prompt file is per run** (`.daycare-prompt-<run>.txt`, `promptFileName` in `agent-runner.js`), so two Grok members in one chat don't overwrite each other. A refused launch deletes Claude's MCP temp folder too.
+- **Builder:** both Builders share `builderForm()` + `builderMember()`. A member keeps its own `skills` (like `mcp`), and `skillsFor({ own })` puts them in its prompt, so an agent not saved as a teammate still gets them. `saveTeammate` takes an unticked skill or server away again on re-save and uses `teammateId` in `org.js` (a 32-character name used to loop forever).
+- **The prompt budget counts the header** (brains and skills) now, not only the history. The log scrubs strings inside arrays and objects (`scrub` in `logger.js`), so a key in `args` or an MCP `env` is `[REDACTED]`.
+- **Gone:** `scanAgents`/`agent:scan`/`versionCommand` (never called), `utils/ansi.js` and the `raw`/`html` fields on `agent:output` (the window only ever used `text`).
+- **Sidecar gauge** shows the fullest single agent's context (named), not every agent's tokens summed against one window. `renderToolbelt` reads org, skills, directory and CLI lists once per draw. `renderView` draws summary rows only under messages that have a thread. The CSP allows the Preview iframe to load `file:` and `http://localhost:*`; checked live 2026-10-25 over the DevTools port (`npx electron . --remote-debugging-port=9333`, then CDP `Runtime.evaluate`): an `.html` in the chat folder and a localhost page both rendered in the sandboxed iframe.
+- **`run()` returns the run number** (false when refused); the window keeps it as `pending.run` and `pendingFor(runKey, run)` drops output, steps and the done event of a superseded launch of the same key, so a late exit can't end a newer reply.
+- **A resumed session is kept when the agent used tools but said nothing** (`p.steps.length`); only a reply with no text and no steps counts as a failed resume and gets the fresh retry.
+- **Persona deployment counts read every chat** (`renderOrgPersonas` loads the chats not opened yet this session), so "N active agents" is true across all chats, not only the opened ones.
+- Deleted: `docs/superpowers/` (Oct 22 planning docs for group chats, long since built) and the stray `chat1/` folder (a test had run `chatFolder` with no `workingDir`; tests set one now).
+
 ## Model picker in the Builders (TM-60 Batch 5)
 - Both Builders have a Model field (`modelField` in `app.js`) fed by the same `models` the chooser uses (Gemini from `agy models`, Claude's three, Grok's two), "Default" first; Codex has no list, so its model is typed and checked against `MODEL_TEXT`. It refills when the engine changes.
 - The pick is saved on the teammate (`org.agents[].model`, checked in `cleanOrg` with `AgentRunner.MODEL_TEXT`) and passed as `model` / `modelLabel` when the teammate is summoned, so the chip reads "Name · haiku" and the launch carries `--model`.

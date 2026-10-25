@@ -30,7 +30,7 @@ test('Builder save, disk reload, summon and chat reload retain custom instructio
       getOrg: async () => fs.existsSync(file) ? cleanOrg(JSON.parse(fs.readFileSync(file, 'utf8'))) : {},
       saveOrg: async org => fs.writeFileSync(file, JSON.stringify(cleanOrg(org))), log() {}
     };
-    const save = vm.runInNewContext(functionSource(app, 'async function saveTeammate(cfg)', 'async function removeTeammate') + '; saveTeammate', { api, teammates: orgTools.teammates });
+    const save = vm.runInNewContext(functionSource(app, 'async function saveTeammate(cfg)', 'async function removeTeammate') + '; saveTeammate', { api, teammates: orgTools.teammates, teammateId: orgTools.teammateId });
     const custom = '  Keep the original wording.\n\nCheck café notes.  ';
     await save({ name: 'Verifier', vendor: 'codex', brain: 'persona.md', brainText: 'Cached persona', customInstructions: custom, skills: ['audit.md'] });
     const p = orgTools.teammates(await api.getOrg()).find(p => p.id === 'verifier');

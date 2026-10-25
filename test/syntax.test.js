@@ -12,6 +12,9 @@ test('all source files pass syntax validation', () => {
     'src/chats.js',
     'src/logger.js',
     'src/agent-runner.js',
+    'src/cli-mcp.js',
+    'src/spellcheck.js',
+    'src/renderer/org.js',
     'src/renderer/members.js',
     'src/renderer/thread.js',
     'src/renderer/app.js'
