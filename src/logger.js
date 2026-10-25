@@ -48,6 +48,15 @@ function redact(text) {
   return out;
 }
 
+// Every string in a log value, however deep (a launch's args array, an MCP
+// server's env), is stripped and redacted; everything else passes through.
+function scrub(v) {
+  if (typeof v === 'string') return redact(stripAnsi(v));
+  if (Array.isArray(v)) return v.map(scrub);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)]));
+  return v;
+}
+
 function fileStamp(date) {
   return date.toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
 }
@@ -169,7 +178,7 @@ class Logger {
     if (extra) {
       for (const [k, v] of Object.entries(extra)) {
         if (k === 'run' || v === undefined) continue;
-        entry[k] = typeof v === 'string' ? redact(stripAnsi(v)) : v;
+        entry[k] = scrub(v);
       }
     }
     const line = JSON.stringify(entry) + '\n';

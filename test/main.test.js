@@ -57,7 +57,6 @@ const agentRunnerMock = class {
   stop() {}
   listModels() { return {}; }
   getConfigs() { return []; }
-  scanAgents() { return []; }
   applyConfig() {}
   shutdown() {}
 };

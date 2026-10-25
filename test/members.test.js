@@ -117,3 +117,9 @@ test('skills library files exist on disk (TM-60 Batch 5; the MCP directory lives
   assert.ok(skillFiles.length >= 4, `expected at least 4 skill playbooks, found ${skillFiles.length}`);
 
 });
+
+test('a member keeps the skill files picked for it in the Builder', () => {
+  const m = newMember([], { vendor: 'grok', name: 'Scout', skills: ['market-scouting.md', 3] });
+  assert.deepEqual(m.skills, ['market-scouting.md']);
+  assert.equal(newMember([], { vendor: 'grok', skills: [] }).skills, undefined);
+});

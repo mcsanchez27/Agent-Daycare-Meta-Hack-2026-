@@ -92,3 +92,25 @@ test('teammates are the built-in personas plus saved agents; a member knows its 
   assert.equal(describeAssignment({ personas: ['scout-bot', 'smith'] }, undefined, team), 'Scout Bot, Agent Smith');
   assert.equal(teammates(null).length, 6);
 });
+
+test("a member's own skill picks reach it in the prompt, even with no assignment (Builder, unsaved)", () => {
+  const own = skillsFor({ vendor: 'grok', persona: null, own: ['stitch.md', 'missing.md'] }, skills, assignments);
+  assert.deepEqual(own.engine.map(s => s.file), ['notion-sync.md'], '"all" still reaches it as the engine');
+  assert.deepEqual(own.persona.map(s => s.file), ['stitch.md'], 'its own pick rides in the prompt');
+  const both = skillsFor({ vendor: 'claude', own: ['security-audit.md'] }, skills, assignments);
+  assert.deepEqual(both.engine.map(s => s.file), ['security-audit.md', 'notion-sync.md'], 'an engine assignment is not listed twice');
+});
+
+test('a saved teammate gets a slug id, numbered when taken, never over 32 characters', () => {
+  const { teammateId } = require('../src/renderer/org');
+  assert.equal(teammateId('Agent Smith!', []), 'agent-smith');
+  assert.equal(teammateId('Agent Smith', ['agent-smith']), 'agent-smith-2');
+  assert.equal(teammateId('Agent Smith', ['agent-smith', 'agent-smith-2']), 'agent-smith-3');
+  assert.equal(teammateId('***', []), 'teammate');
+  const long = 'Lead Architect For The Whole Mountain Man Studios Fleet';
+  const first = teammateId(long, []);
+  assert.equal(first.length, 32);
+  const second = teammateId(long, [first]);
+  assert.notEqual(second, first, 'a long name still gets a new id (this used to loop forever)');
+  assert.ok(second.length <= 32 && second.endsWith('-2'), second);
+});

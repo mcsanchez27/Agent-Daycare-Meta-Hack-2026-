@@ -98,3 +98,15 @@ test('reports a write failure once via onError and disables itself', async () =>
   assert.equal(calls, 1);
   assert.equal(logger.broken, true);
 });
+
+test('secrets inside arrays and nested objects are redacted too', async () => {
+  const dir = tmpDir();
+  const logger = new Logger({ dir }).open();
+  logger.info('claude', 'launching', { args: ['--mcp-config', 'x', 'token=ghp_abcdefghijklmnopqrstuvwxyz0123'], mcp: { env: { API_KEY: 'sk-ant-abcdefghijklmnopqrstu' } }, run: 1, n: 3 });
+  await logger.close();
+  const line = readLines(path.join(dir, 'latest.log')).find(l => l.msg === 'launching');
+  assert.deepEqual(line.args, ['--mcp-config', 'x', 'token=[REDACTED]']);
+  assert.deepEqual(line.mcp, { env: { API_KEY: '[REDACTED]' } });
+  assert.equal(line.n, 3);
+  assert.equal(line.run, 1);
+});

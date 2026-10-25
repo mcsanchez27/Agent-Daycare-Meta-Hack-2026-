@@ -7,7 +7,6 @@ contextBridge.exposeInMainWorld('api', {
   stop: (runKey) => ipcRenderer.invoke('agent:stop', { runKey }),
   listModels: () => ipcRenderer.invoke('agent:models'),
   getAgentConfigs: () => ipcRenderer.invoke('agent:get-configs'),
-  scanAgents: () => ipcRenderer.invoke('agent:scan'),
 
   // Events from the main process
   onAgentOutput: (callback) => ipcRenderer.on('agent:output', (_, data) => callback(data)),

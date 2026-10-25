@@ -44,13 +44,27 @@
   }
 
   // skills: [{ file, title, text }]; assignments: { [file]: assignment }.
+  // target.own: skill files picked for this member itself (Builder); they
+  // ride in its prompt like a persona's, since the folder file is shared.
   function skillsFor(target, skills, assignments) {
     const out = { engine: [], persona: [] };
+    const own = new Set(target.own || []);
     for (const s of skills || []) {
-      const how = applies((assignments || {})[s.file], target);
+      const how = applies((assignments || {})[s.file], target) || (own.has(s.file) ? 'persona' : null);
       if (how) out[how].push(s);
     }
     return out;
+  }
+
+  // The id a saved teammate gets from its name: a slug, numbered when another
+  // teammate already holds it. Never longer than 32 characters, so a long
+  // name still gets a fresh number rather than the same slug again.
+  const TEAMMATE_ID_MAX = 32;
+  function teammateId(name, taken) {
+    const base = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, TEAMMATE_ID_MAX) || 'teammate';
+    let id = base;
+    for (let k = 2; taken.includes(id); k++) id = `${base.slice(0, TEAMMATE_ID_MAX - String(k).length - 1)}-${k}`;
+    return id;
   }
 
   // The folder file's text: the Central Brain, then the skills, each as written.
@@ -106,5 +120,5 @@
     return `${text.length}:${h.toString(16)}`;
   }
 
-  return { FOLDER_FILES, folderFile, personaIdOf, teammates, applies, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine };
+  return { FOLDER_FILES, folderFile, personaIdOf, teammates, teammateId, applies, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine };
 });
