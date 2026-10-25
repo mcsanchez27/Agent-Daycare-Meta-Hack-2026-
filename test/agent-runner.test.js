@@ -49,7 +49,7 @@ test('agent arguments: everyone may write in the working folder; codex reads the
   assert.deepEqual(runner._buildAgentArgs('codex', 'hi'), { args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-'], stdin: 'hi' });
   // grok: the prompt goes in a file, so every argument stays shim-safe (its grok.cmd runs through cmd.exe).
   const grok = runner._buildAgentArgs('grok', 'hi there & "you"', 'grok-4.6', '0f2c7a1e-1b2c-4d3e-8f90-123456789abc');
-  assert.deepEqual(grok, { args: ['--output-format', 'streaming-messages-json', '--permission-mode', 'acceptEdits', '--always-approve', '-m', 'grok-4.6', '--resume', '0f2c7a1e-1b2c-4d3e-8f90-123456789abc', '--prompt-file', '.daycare-prompt.txt'], stdin: null, promptFile: 'hi there & "you"' });
+  assert.deepEqual(grok, { args: ['--output-format', 'streaming-messages-json', '--permission-mode', 'acceptEdits', '--always-approve', '-m', 'grok-4.6', '--resume', '0f2c7a1e-1b2c-4d3e-8f90-123456789abc', '--prompt-file', '.daycare-prompt-0.txt'], stdin: null, promptFile: 'hi there & "you"' });
   assert.ok(AgentRunner.launchCommand('C:\\Users\\Matth\\AppData\\Roaming\\npm\\grok.cmd', grok.args, 'win32'), 'safe for the grok.cmd shim');
   // Codex's arguments must stay safe for a codex.cmd shim.
   assert.ok(AgentRunner.launchCommand('C:\\npm\\codex.cmd', runner._buildAgentArgs('codex', 'x').args, 'win32'));
@@ -108,70 +108,12 @@ test('codex gets the whole prompt on stdin, shell characters and new lines intac
   runner.workingDir = dir;
 
   const done = new Promise(resolve => { runner._send = (ch, d) => { sent.push({ ch, d }); if (ch === 'agent:done') resolve(d); }; });
-  assert.equal(runner.run(req({ vendor: 'codex', prompt: 'ignored' })), true);
+  assert.ok(Number.isInteger(runner.run(req({ vendor: 'codex', prompt: 'ignored' }))), 'returns the run number');
   const result = await done;
   assert.equal(result.code, 0);
   const out = JSON.parse(sent.filter(s => s.ch === 'agent:output' && s.d.stream === 'stdout').map(s => s.d.text).join(''));
   assert.deepEqual(out.args, ['exec', '-']);
   assert.equal(out.stdin, 'hi & "you" | %PATH%\nline 2');
-});
-
-test('versionCommand runs executables directly and only routes safe Windows batch shims through cmd.exe', () => {
-  const vc = AgentRunner.versionCommand;
-  assert.deepEqual(vc('C:\\tools\\claude.exe', 'win32'), { file: 'C:\\tools\\claude.exe', args: ['--version'], options: {} });
-  assert.deepEqual(vc('claude', 'win32'), { file: 'claude', args: ['--version'], options: {} });
-  assert.deepEqual(vc('/home/me/claude.cmd', 'linux'), { file: '/home/me/claude.cmd', args: ['--version'], options: {} });
-
-  const shim = 'C:\\Users\\Matt Sanchez\\AppData\\Roaming\\npm\\claude.cmd';
-  const viaCmd = vc(shim, 'win32', { ComSpec: 'C:\\Windows\\system32\\cmd.exe' });
-  assert.equal(viaCmd.file, 'C:\\Windows\\system32\\cmd.exe');
-  assert.deepEqual(viaCmd.args, ['/d', '/s', '/c', `""${shim}" --version"`]);
-  assert.equal(viaCmd.options.windowsVerbatimArguments, true);
-  assert.equal(vc(shim, 'win32', {}).file, 'cmd.exe');
-
-  // Anything cmd.exe could interpret is refused rather than escaped.
-  for (const bad of ['C:\\x\\a&b.cmd', 'C:\\x\\a|b.cmd', 'C:\\x\\%TEMP%\\a.cmd', 'C:\\x\\a"b.cmd', 'C:\\x\\a^b.cmd', 'C:\\x\\a!b.cmd', 'relative\\a.cmd']) {
-    assert.equal(vc(bad, 'win32'), null, bad);
-  }
-});
-
-// Ported from Jules PRs #28, #7, #6 and #2, rewritten for the async scanAgents.
-
-test('scanAgents falls back to "Installed" when the --version check fails', async () => {
-  const fs = require('node:fs');
-  const os = require('node:os');
-  const path = require('node:path');
-  const { runner, logEvents } = makeRunner();
-  // A real file that exists but cannot be executed, on any platform.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-scan-'));
-  const notExe = path.join(dir, 'not-an-executable.txt');
-  fs.writeFileSync(notExe, 'hello');
-  runner.agents = { testagent: { id: 'testagent', name: 'Test Agent', path: notExe, command: 'testagent', status: 'idle' } };
-
-  const results = await runner.scanAgents();
-
-  assert.equal(runner.agents.testagent.installed, true, 'installed flag stays true: the file exists');
-  assert.equal(runner.agents.testagent.version, 'Installed');
-  assert.equal(results[0].version, 'Installed');
-  const dbg = logEvents.find(l => l.level === 'debug' && l.msg === '--version check failed');
-  assert.ok(dbg, 'the failed version check is logged at debug');
-  assert.equal(dbg.data.path, notExe);
-});
-
-test('scanAgents reports an agent missing from PATH as not installed and logs why', async () => {
-  const { runner, logEvents } = makeRunner();
-  runner.agents = { 'fake-agent': { id: 'fake-agent', name: 'Fake Agent', path: '/definitely/does/not/exist/fake-agent-bin', command: 'this_command_does_not_exist_at_all_12345', status: 'idle' } };
-
-  const results = await runner.scanAgents();
-
-  assert.equal(results.length, 1);
-  assert.equal(results[0].installed, false);
-  assert.equal(runner.agents['fake-agent'].installed, false);
-  const dbg = logEvents.find(l => l.level === 'debug' && l.msg === 'not found on PATH');
-  assert.ok(dbg, 'expected log.debug "not found on PATH"');
-  assert.equal(dbg.agentId, 'fake-agent');
-  assert.equal(dbg.data.path, '/definitely/does/not/exist/fake-agent-bin');
-  assert.ok(dbg.data.error.length > 0, 'the underlying error message is captured');
 });
 
 test('stop logs a warning if child.kill throws and still clears the process', () => {
@@ -194,7 +136,7 @@ test('agent output reaches the window as plain text too, tagged with the run', (
   const out = sent.find(s => s.ch === 'agent:output').d;
   assert.equal(out.runKey, 'chat1/m1');
   assert.equal(out.text, 'Hello there');
-  assert.equal(out.raw, '\x1b[1mHello\x1b[0m there');
+  assert.equal(out.raw, undefined, 'only the plain text crosses to the window');
   assert.equal(out.run, 3);
   assert.equal(out.stream, 'stdout');
 });
@@ -234,8 +176,8 @@ test('two runs of one vendor are separate', async () => {
   runner.workingDir = os.tmpdir();
   const done = {};
   const ended = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') { done[d.runKey] = d; if (Object.keys(done).length === 2) resolve(); } }; });
-  assert.equal(runner.run(req({ runKey: 'a/m1' })), true);
-  assert.equal(runner.run(req({ runKey: 'b/m1' })), true);
+  assert.ok(Number.isInteger(runner.run(req({ runKey: 'a/m1' }))), 'returns the run number');
+  assert.ok(Number.isInteger(runner.run(req({ runKey: 'b/m1' }))), 'returns the run number');
   runner.stop('a/m1');
   await new Promise(r => setTimeout(r, 300));
   assert.equal(runner.processes.has('a/m1'), false);
@@ -402,7 +344,7 @@ test('folder files (TM-60): only CLAUDE.md, AGENTS.md and GEMINI.md are written,
   runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("ok")'], stdin: null });
   runner.workingDir = dir;
   const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
-  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', files: { 'CLAUDE.md': '# brain', 'evil.md': 'no', '../up.md': 'no' } }), true);
+  assert.ok(Number.isInteger(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', files: { 'CLAUDE.md': '# brain', 'evil.md': 'no', '../up.md': 'no' } })), 'returns the run number');
   await done;
   assert.equal(fs.readFileSync(path.join(dir, 'c1', 'CLAUDE.md'), 'utf8'), '# brain');
   assert.deepEqual(fs.readdirSync(path.join(dir, 'c1')), ['CLAUDE.md']);
@@ -424,10 +366,48 @@ test('Claude gets its MCP servers as a private per-launch file, deleted after th
   runner._buildAgentArgs = (v, p, m, s, mcpPath) => { seen = mcpPath; return { args: ['-e', 'process.stdout.write("ok")'], stdin: null }; };
   runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-mcp-test-'));
   const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
-  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', mcp }), true);
+  assert.ok(Number.isInteger(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', mcp })), 'returns the run number');
   assert.ok(seen && seen.endsWith('mcp.json') && !seen.startsWith(runner.workingDir), 'a temp file outside the chat folder');
   assert.deepEqual(JSON.parse(fs.readFileSync(seen, 'utf8')), mcp);
   await done;
   await new Promise(r => setTimeout(r, 200));
   assert.ok(!fs.existsSync(seen), 'deleted after the run');
+});
+
+test("grok's prompt file is named per run, so two Grok members of one chat never share it", async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { runner } = makeRunner();
+  runner.agents.grok.path = process.execPath;
+  const names = [];
+  const real = runner._buildAgentArgs.bind(runner);
+  runner._buildAgentArgs = (v, p, m, s, mcp, promptName) => { names.push(real(v, p, m, s, mcp, promptName).args.pop()); return { args: ['-e', 'setTimeout(()=>{}, 150)'], stdin: null, promptFile: p }; };
+  runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-grok-'));
+  let done = 0;
+  const both = new Promise(resolve => { runner._send = (ch) => { if (ch === 'agent:done' && ++done === 2) resolve(); }; });
+  assert.ok(Number.isInteger(runner.run({ runKey: 'c1/m1', vendor: 'grok', prompt: 'one' })), 'returns the run number');
+  assert.ok(Number.isInteger(runner.run({ runKey: 'c1/m2', vendor: 'grok', prompt: 'two' })), 'returns the run number');
+  assert.deepEqual(names, ['.daycare-prompt-1.txt', '.daycare-prompt-2.txt']);
+  const folder = path.join(runner.workingDir, 'c1');
+  assert.deepEqual(fs.readdirSync(folder).sort(), ['.daycare-prompt-1.txt', '.daycare-prompt-2.txt'], 'both prompts on disk while both run');
+  assert.equal(fs.readFileSync(path.join(folder, '.daycare-prompt-2.txt'), 'utf8'), 'two');
+  for (const n of names) assert.ok(AgentRunner.launchCommand('C:\\Users\\Matth\\AppData\\Roaming\\npm\\grok.cmd', ['--prompt-file', n], 'win32'), 'still shim-safe');
+  await both;
+  await new Promise(r => setTimeout(r, 100));
+  assert.deepEqual(fs.readdirSync(folder), [], 'both deleted after');
+});
+
+test("a refused launch deletes Claude's MCP file instead of leaving the keys in the temp folder", () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { runner } = makeRunner();
+  runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-refused-'));
+  let seen = null;
+  runner._buildAgentArgs = (v, p, m, s, mcpPath) => { seen = mcpPath; return { args: ['x'], stdin: null }; };
+  runner._spawnAgentProcess = () => null;
+  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', mcp: { mcpServers: { a: { command: 'x' } } } }), false);
+  assert.ok(seen, 'the file was written');
+  return new Promise(r => setTimeout(r, 200)).then(() => assert.ok(!fs.existsSync(seen), 'and removed again'));
 });

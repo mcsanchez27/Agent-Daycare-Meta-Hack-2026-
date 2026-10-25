@@ -71,8 +71,11 @@ test('buildPrompt keeps the newest history when it has to cut', () => {
   const byCount = buildPrompt(t, 'claude', { maxMessages: 3 });
   assert.match(byCount, /Claude: reply 28\n\nClaude: reply 29\n\nClaude: reply 30/);
   assert.ok(!byCount.includes('reply 27'));
-  const byChars = buildPrompt(t, 'claude', { maxChars: 30 });
-  assert.ok(byChars.includes('reply 30') && !byChars.includes('reply 28'));
+  // The header counts toward maxChars, so the budget is the header plus room for about two lines.
+  const bare = buildPrompt(t, 'claude', { maxMessages: 0 });
+  const headerLength = bare.length - "\n\nMatt's message to you:\ngo".length;
+  const byChars = buildPrompt(t, 'claude', { maxChars: headerLength + 30 });
+  assert.ok(byChars.includes('reply 30') && !byChars.includes('reply 28'), byChars);
 });
 
 test('buildPrompt stays under the Windows command-line limit even with huge messages', () => {
@@ -490,4 +493,36 @@ test('buildPrompt in session resume mode injects brainUpdate notice when brain f
   });
   assert.ok(p.includes('[Notice: your Central Brain, persona or skills changed. The current text:\n--- Central Brain Update ---\nUpdated MMS Doctrine: always add unit tests.]'));
   assert.ok(p.includes("Matt's message to you:\nsecond turn"));
+});
+
+test('buildPrompt answers the chat as it was when asked (upTo): a later message to someone else is not its to answer', () => {
+  const t = createThread(V1());
+  addMessage(t, { from: 'matt', to: 'claude', text: 'hi claude' });
+  const askedAt = t.nextId - 1;
+  addMessage(t, { from: 'matt', to: 'codex', text: 'hi codex' });
+  assert.throws(() => buildPrompt(t, 'claude'), /newest message is not from Matt to claude/);
+  const p = buildPrompt(t, 'claude', { upTo: askedAt });
+  assert.match(p, /Matt's message to you:\nhi claude$/);
+  assert.ok(!p.includes('hi codex'), 'what came after the ask is left out');
+});
+
+test('the header (brains, skills) counts toward the prompt budget', () => {
+  const t = createThread(V1());
+  for (let i = 0; i < 5; i++) {
+    addMessage(t, { from: 'matt', to: 'claude', text: `question ${i} ${'x'.repeat(200)}` });
+    addMessage(t, { from: 'claude', text: `answer ${i}` });
+  }
+  addMessage(t, { from: 'matt', to: 'claude', text: 'last one' });
+  const small = buildPrompt(t, 'claude', { maxChars: 1500 });
+  const big = buildPrompt(t, 'claude', { maxChars: 1500, centralBrain: 'B'.repeat(1200) });
+  assert.ok(small.includes('question 4'), 'room for history without a brain');
+  assert.ok(!big.includes('question 4'), 'a big brain leaves less room for history');
+  assert.ok(big.includes('last one') && big.includes('B'.repeat(1200)), 'the newest message and the brain always go in');
+});
+
+test('mergeThreads keeps the skills picked for a member', () => {
+  const { mergeThreads } = require('../src/renderer/thread');
+  const a = createThread([{ id: 'm1', vendor: 'claude', model: null, name: 'Claude', skills: ['security-audit.md'] }]);
+  const b = createThread([{ id: 'm1', vendor: 'codex', model: null, name: 'Codex' }]);
+  assert.deepEqual(mergeThreads(a, b).members.map(m => m.skills), [['security-audit.md'], undefined]);
 });

@@ -53,11 +53,10 @@ const electronMock = {
 
 const agentRunnerMock = class {
   constructor() { this.started = false; }
-  run() { this.started = true; return true; }
+  run() { this.started = true; return 1; }
   stop() {}
   listModels() { return {}; }
   getConfigs() { return []; }
-  scanAgents() { return []; }
   applyConfig() {}
   shutdown() {}
 };
@@ -134,7 +133,7 @@ test('main.js tests', async (t) => {
 
   await t.test('agent:run invokes AgentRunner.run', async () => {
     const result = await electronMock.ipcMain.invoke('agent:run', { runKey: 'c/m1', vendor: 'claude', model: null, prompt: 'hello' });
-    assert.equal(result, true);
+    assert.equal(result, 1, 'the run number comes back to the window');
   });
 
   await t.test('config:pick-folder invokes dialog.showOpenDialog', async () => {

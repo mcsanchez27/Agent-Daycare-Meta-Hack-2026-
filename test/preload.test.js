@@ -74,13 +74,6 @@ test('getAgentConfigs invokes agent:get-configs', () => {
   assert.deepEqual(invocations[0], { channel: 'agent:get-configs', data: undefined });
 });
 
-test('scanAgents invokes agent:scan', () => {
-  invocations.length = 0;
-  const res = global.api.scanAgents();
-  assert.equal(res, 'result-agent:scan');
-  assert.deepEqual(invocations[0], { channel: 'agent:scan', data: undefined });
-});
-
 test('getConfig invokes config:get', () => {
   invocations.length = 0;
   const res = global.api.getConfig();

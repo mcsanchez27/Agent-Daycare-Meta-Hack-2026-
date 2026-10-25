@@ -59,7 +59,7 @@ function createWindow() {
     y: y + 50,
     minWidth: 850,
     minHeight: 600,
-    backgroundColor: '#0f111a',
+    backgroundColor: '#131314',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -158,7 +158,6 @@ handle('agent:run', (req) => agentRunner.run(req));
 handle('agent:stop', ({ runKey }) => agentRunner.stop(runKey));
 handle('agent:models', () => agentRunner.listModels());
 handle('agent:get-configs', () => agentRunner.getConfigs());
-handle('agent:scan', () => agentRunner.scanAgents());
 
 // Renderer-side logging (window.onerror, unhandled promise rejections, explicit calls)
 ipcMain.on('log:write', (_, { level, message, data } = {}) => {

@@ -1,7 +1,7 @@
 {
   "name": "agent-daycare",
   "version": "1.0.0",
-  "description": "Agent Daycare V1 - one chat window for Antigravity, Claude and Codex",
+  "description": "Agent Daycare - one chat window for Gemini, Claude, Codex and Grok, alone or as a crew",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -10,7 +10,8 @@
   "keywords": [
     "agents",
     "cli",
-    "antigravity",
+    "gemini",
+    "grok",
     "claude",
     "codex",
     "chat"
