@@ -108,7 +108,7 @@ test('codex gets the whole prompt on stdin, shell characters and new lines intac
   runner.workingDir = dir;
 
   const done = new Promise(resolve => { runner._send = (ch, d) => { sent.push({ ch, d }); if (ch === 'agent:done') resolve(d); }; });
-  assert.equal(runner.run(req({ vendor: 'codex', prompt: 'ignored' })), true);
+  assert.ok(Number.isInteger(runner.run(req({ vendor: 'codex', prompt: 'ignored' }))), 'returns the run number');
   const result = await done;
   assert.equal(result.code, 0);
   const out = JSON.parse(sent.filter(s => s.ch === 'agent:output' && s.d.stream === 'stdout').map(s => s.d.text).join(''));
@@ -176,8 +176,8 @@ test('two runs of one vendor are separate', async () => {
   runner.workingDir = os.tmpdir();
   const done = {};
   const ended = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') { done[d.runKey] = d; if (Object.keys(done).length === 2) resolve(); } }; });
-  assert.equal(runner.run(req({ runKey: 'a/m1' })), true);
-  assert.equal(runner.run(req({ runKey: 'b/m1' })), true);
+  assert.ok(Number.isInteger(runner.run(req({ runKey: 'a/m1' }))), 'returns the run number');
+  assert.ok(Number.isInteger(runner.run(req({ runKey: 'b/m1' }))), 'returns the run number');
   runner.stop('a/m1');
   await new Promise(r => setTimeout(r, 300));
   assert.equal(runner.processes.has('a/m1'), false);
@@ -344,7 +344,7 @@ test('folder files (TM-60): only CLAUDE.md, AGENTS.md and GEMINI.md are written,
   runner._buildAgentArgs = () => ({ args: ['-e', 'process.stdout.write("ok")'], stdin: null });
   runner.workingDir = dir;
   const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
-  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', files: { 'CLAUDE.md': '# brain', 'evil.md': 'no', '../up.md': 'no' } }), true);
+  assert.ok(Number.isInteger(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', files: { 'CLAUDE.md': '# brain', 'evil.md': 'no', '../up.md': 'no' } })), 'returns the run number');
   await done;
   assert.equal(fs.readFileSync(path.join(dir, 'c1', 'CLAUDE.md'), 'utf8'), '# brain');
   assert.deepEqual(fs.readdirSync(path.join(dir, 'c1')), ['CLAUDE.md']);
@@ -366,7 +366,7 @@ test('Claude gets its MCP servers as a private per-launch file, deleted after th
   runner._buildAgentArgs = (v, p, m, s, mcpPath) => { seen = mcpPath; return { args: ['-e', 'process.stdout.write("ok")'], stdin: null }; };
   runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-mcp-test-'));
   const done = new Promise(resolve => { runner._send = (ch, d) => { if (ch === 'agent:done') resolve(d); }; });
-  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', mcp }), true);
+  assert.ok(Number.isInteger(runner.run({ runKey: 'c1/m1', vendor: 'claude', prompt: 'hi', mcp })), 'returns the run number');
   assert.ok(seen && seen.endsWith('mcp.json') && !seen.startsWith(runner.workingDir), 'a temp file outside the chat folder');
   assert.deepEqual(JSON.parse(fs.readFileSync(seen, 'utf8')), mcp);
   await done;
@@ -386,8 +386,8 @@ test("grok's prompt file is named per run, so two Grok members of one chat never
   runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-grok-'));
   let done = 0;
   const both = new Promise(resolve => { runner._send = (ch) => { if (ch === 'agent:done' && ++done === 2) resolve(); }; });
-  assert.equal(runner.run({ runKey: 'c1/m1', vendor: 'grok', prompt: 'one' }), true);
-  assert.equal(runner.run({ runKey: 'c1/m2', vendor: 'grok', prompt: 'two' }), true);
+  assert.ok(Number.isInteger(runner.run({ runKey: 'c1/m1', vendor: 'grok', prompt: 'one' })), 'returns the run number');
+  assert.ok(Number.isInteger(runner.run({ runKey: 'c1/m2', vendor: 'grok', prompt: 'two' })), 'returns the run number');
   assert.deepEqual(names, ['.daycare-prompt-1.txt', '.daycare-prompt-2.txt']);
   const folder = path.join(runner.workingDir, 'c1');
   assert.deepEqual(fs.readdirSync(folder).sort(), ['.daycare-prompt-1.txt', '.daycare-prompt-2.txt'], 'both prompts on disk while both run');
@@ -400,7 +400,10 @@ test("grok's prompt file is named per run, so two Grok members of one chat never
 
 test("a refused launch deletes Claude's MCP file instead of leaving the keys in the temp folder", () => {
   const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
   const { runner } = makeRunner();
+  runner.workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'daycare-refused-'));
   let seen = null;
   runner._buildAgentArgs = (v, p, m, s, mcpPath) => { seen = mcpPath; return { args: ['x'], stdin: null }; };
   runner._spawnAgentProcess = () => null;

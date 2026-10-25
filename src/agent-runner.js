@@ -265,6 +265,7 @@ class AgentRunner {
   // runKey (`<chatId>/<memberId>`, TM-54) names the run: events carry it, and
   // Stop and the timeout act on it alone, so two members of one vendor can
   // answer at once. model is the vendor's model id, or null for its default.
+  // Returns the run number once launched, false when the launch was refused.
   run({ runKey, vendor, model = null, sessionId = null, prompt = '', files = null, mcp = null }) {
     const agent = this.agents[vendor];
     if (!agent) throw new Error(`Agent ${vendor} not found`);
@@ -329,7 +330,9 @@ class AgentRunner {
       this.stop(runKey, 'timeout');
     }, timeoutSec * 1000);
     this._attachProcessStreams(child);
-    return true;
+    // The run number: every event of this launch carries it, so the window
+    // can tell this reply's events from a superseded launch's late ones.
+    return run;
   }
 
   // Each chat works in a folder of its own inside the working folder (TM-59),

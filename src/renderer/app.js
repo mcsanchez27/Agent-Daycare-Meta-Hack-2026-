@@ -1391,8 +1391,8 @@ function updatePendingMeta(key) {
 }
 
 // An agent used a tool (TM-59): "Reading note.txt", "Running npm test".
-function onStep({ runKey, step }) {
-  const p = pending[runKey];
+function onStep({ runKey, run, step }) {
+  const p = pendingFor(runKey, run);
   if (!p || !step) return;
   p.steps.push(step);
   updatePendingMeta(runKey);
@@ -1757,11 +1757,20 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   p.launched = true;
   api.run({ runKey, vendor: member.vendor, model: member.model, sessionId: p.sessionId, prompt, files, mcp }).then((started) => {
     if (started === false) finishReply(runKey, null, 'it could not be started');
+    else if (pending[runKey] === p) p.run = started;
   }).catch((err) => finishReply(runKey, null, err.message));
 }
 
-function onOutput({ runKey, stream, text }) {
+// An event belongs to the reply pending under its runKey unless it comes
+// from an earlier launch of the same key that was superseded (its late
+// output or exit must not land in, or end, the newer reply).
+function pendingFor(runKey, run) {
   const p = pending[runKey];
+  return p && (p.run == null || run == null || run === p.run) ? p : null;
+}
+
+function onOutput({ runKey, run, stream, text }) {
+  const p = pendingFor(runKey, run);
   if (!p || !text) return;
   if (stream === 'stderr') {
     p.stderr = (p.stderr + text).slice(-2000);
@@ -1803,8 +1812,9 @@ function finishReply(runKey, code, why, { stopped = false, timedOut = false, tim
     renderPlan();
   }
   // A saved session that couldn't be resumed (expired, deleted): forget it and
-  // ask again once with a fresh session and the usual recent history.
-  if (p.sessionId && member && !p.text.trim() && !stopped && !timedOut && !why) {
+  // ask again once with a fresh session and the usual recent history. An
+  // agent that used tools but said nothing did resume, so it keeps its session.
+  if (p.sessionId && member && !p.text.trim() && !p.steps.length && !stopped && !timedOut && !why) {
     delete member.sessions[p.where];
     post(p.chatId, { from: 'system', threadOf: p.threadOf || null, text: `${name}'s saved session couldn't be resumed, so it's starting a fresh one.` });
     api.log('warn', 'session resume failed, starting fresh', { runKey, code, sessionId: p.sessionId });
@@ -1996,6 +2006,9 @@ async function renderOrgMemory(panel) {
 }
 
 async function renderOrgPersonas(panel) {
+  // Chats not opened yet this session have no members in memory; read them,
+  // so the deployment counts cover every chat, not only the ones opened.
+  await Promise.all([...chats.values()].filter(c => !c.thread).map(c => loadChat(c).catch((err) => api.log('warn', 'could not read a chat for the persona counts', { id: c.id, error: err.message }))));
   const stats = getChipDeploymentStats();
 
   const topCard = document.createElement('div');
@@ -2779,7 +2792,10 @@ if (el.orgTabBuilder) el.orgTabBuilder.addEventListener('click', () => setOrgTab
 
 api.onAgentOutput(onOutput);
 api.onAgentStep(onStep);
-api.onAgentDone(({ runKey, code, ...outcome }) => finishReply(runKey, code, null, outcome));
+api.onAgentDone(({ runKey, code, run, ...outcome }) => {
+  if (!pendingFor(runKey, run)) return api.log('warn', 'ignored a done event from a superseded launch', { runKey, run });
+  finishReply(runKey, code, null, outcome);
+});
 api.onNotice(({ text }) => { if (current()) post(currentId, { from: 'system', text }); });
 
 async function init() {
