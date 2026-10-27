@@ -49,7 +49,8 @@ test('one-on-one header names the vendor and model', () => {
   addMessage(t, { from: 'matt', to: 'm1', text: 'hi' });
   const p = buildPrompt(t, 'm1');
   assert.ok(p.startsWith('You are Claude (claude, model opus), chatting one-on-one with Matt.'), p);
-  assert.match(p, /@Gemini, @Claude, @Codex or @Grok/);
+  assert.match(p, /Do not @ another agent/);
+  assert.ok(!p.includes('@Gemini'));
 });
 
 test('group header lists the members', () => {

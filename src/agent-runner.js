@@ -97,7 +97,13 @@ function parseEvent(vendor, line) {
     return null;
   }
   // agy --output-format stream-json (TM-59): init, step_update, result.
+  // agent_response text_delta is one fragment. The result event repeats the
+  // whole reply (full: true) so the runner shows it only if no fragment came.
   if (j.event === 'init' && j.conversation_id) return sessionOk(j.conversation_id) ? { sessionId: j.conversation_id } : null;
+  if (j.event === 'step_update' && j.step_update && j.step_update.step_type === 'agent_response') {
+    const delta = j.step_update.text_delta;
+    return typeof delta === 'string' && delta ? { text: delta, delta: true } : null;
+  }
   if (j.event === 'step_update' && j.step_update && j.step_update.step_type === 'tool') {
     const s = j.step_update;
     const what = describeTool(s.tool_name || (s.tool_info && s.tool_info.name), s.tool_info && s.tool_info.parameters);
@@ -105,11 +111,15 @@ function parseEvent(vendor, line) {
     if (s.state === 'ERROR') return { steps: [`${what} (failed${/denied permission/i.test(JSON.stringify(s.tool_info && s.tool_info.error || '')) ? ': not allowed' : ''})`] };
     return null;
   }
-  if (j.event === 'result' && j.result) j = j.result;
+  const resultEvent = j.event === 'result' && j.result;
+  if (resultEvent) j = j.result;
   if (j.conversation_id || j.response) {
     const out = {};
     if (sessionOk(j.conversation_id)) out.sessionId = j.conversation_id;
-    if (typeof j.response === 'string' && j.response) out.text = j.response;
+    if (typeof j.response === 'string' && j.response) {
+      out.text = j.response;
+      if (resultEvent) out.full = true;
+    }
     if (j.usage) out.usage = { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 };
     return out;
   }
@@ -188,6 +198,17 @@ const { DEFAULT_TIMEOUT_SEC } = require('./config');
 // Lines Codex prints to stderr that are not part of its answer: its banner,
 // session metadata, token counts and MCP login noise.
 const CODEX_STDERR_NOISE = /^(Reading additional input|OpenAI Codex|--------|workdir:|model:|provider:|approval:|sandbox:|reasoning effort:|reasoning summaries:|session id:|user$|tokens used|\d{1,3}(,\d{3})*$|codex$|\S*Z (ERROR|WARN) )/i;
+
+// Text from one parsed event, or null when it should not be shown.
+// A full result repeats text that already arrived as deltas, so it is dropped
+// once anything has been said. Deltas do not get a blank line between them;
+// a later whole message (Claude, Codex) still does.
+function applyReply(said, ev) {
+  if (!ev || !ev.text) return { said: !!said, text: null };
+  if (ev.full && said) return { said: true, text: null };
+  const gap = said && !ev.delta ? '\n\n' : '';
+  return { said: true, text: gap + ev.text };
+}
 
 class AgentRunner {
   constructor(mainWindow, logger, config = null) {
@@ -430,10 +451,9 @@ class AgentRunner {
     const take = (line) => {
       const ev = parseEvent(vendor, line);
       if (!ev) return false;
-      // Each CLI sends its messages whole ("I'll check…", tools, then the
-      // answer), so they get a blank line between them.
-      if (ev.text) this.emitOutput(child, (child.saidSomething ? '\n\n' : '') + ev.text);
-      if (ev.text) child.saidSomething = true;
+      const reply = applyReply(child.saidSomething, ev);
+      if (reply.text) this.emitOutput(child, reply.text);
+      child.saidSomething = reply.said;
       if (ev.steps) for (const step of ev.steps) this._send('agent:step', { runKey, vendor, run, step });
       if (ev.sessionId) child.meta.sessionId = ev.sessionId;
       if (ev.usage) child.meta.usage = { ...child.meta.usage, ...ev.usage };
@@ -528,6 +548,7 @@ AgentRunner.resolveExecutable = resolveExecutable;
 AgentRunner.killTree = killTree;
 AgentRunner.MODEL_TEXT = MODEL_TEXT;
 AgentRunner.parseAgyModels = parseAgyModels;
+AgentRunner.applyReply = applyReply;
 AgentRunner.parseEvent = parseEvent;
 
 module.exports = AgentRunner;
