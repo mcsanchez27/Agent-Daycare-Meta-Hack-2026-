@@ -114,6 +114,7 @@ test('main.js tests', async (t) => {
   await t.test('ipc handlers are registered', () => {
     assert.ok(electronMock.ipcMain.handlers['agent:run']);
     assert.ok(electronMock.ipcMain.handlers['config:get']);
+    for (const action of ['list', 'create', 'update', 'remove']) assert.ok(electronMock.ipcMain.handlers[`projects:${action}`]);
     assert.ok(electronMock.ipcMain.handlers['brains:list']);
     assert.ok(electronMock.ipcMain.handlers['brains:get-central']);
     assert.ok(electronMock.ipcMain.handlers['brains:resolve']);

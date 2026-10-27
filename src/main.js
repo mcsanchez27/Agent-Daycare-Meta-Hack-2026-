@@ -5,6 +5,9 @@ const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
 const userConfig = require('./config');
 const chats = require('./chats');
+const projects = require('./projects');
+const { rosterFrom } = require('./renderer/projects');
+const { teammates } = require('./renderer/org');
 const cliMcp = require('./cli-mcp');
 const { spellMenu } = require('./spellcheck');
 
@@ -436,6 +439,25 @@ handle('org:save', async ({ org }) => {
   logger.info('app', 'org assignments saved', { skills: Object.keys(clean.skills).length });
   return clean;
 });
+
+// Project mutations resolve only the built-in crew or existing teammates.
+const projectsFile = path.join(path.dirname(configFile), 'projects.json');
+async function projectRoster(selection) {
+  let org = {};
+  if (selection && selection.kind === 'teammates') {
+    try { org = cleanOrg(JSON.parse(await fs.promises.readFile(orgFile, 'utf8'))); }
+    catch (err) { if (err.code !== 'ENOENT') throw err; }
+  }
+  return rosterFrom(selection, teammates(org));
+}
+handle('projects:list', () => projects.list(projectsFile));
+handle('projects:create', async ({ name, selection }) => projects.create(projectsFile, { name, members: await projectRoster(selection) }));
+handle('projects:update', async ({ id, name, selection }) => projects.update(projectsFile, {
+  id, name, ...(selection ? { members: await projectRoster(selection) } : {})
+}));
+// Removing a container never opens, edits or deletes a chat file. Stale IDs
+// resolve to Unfiled, including after a restart.
+handle('projects:remove', ({ id }) => projects.remove(projectsFile, { id }));
 
 // Saved chats (TM-53 Batch 2)
 handle('chats:list', async () => {

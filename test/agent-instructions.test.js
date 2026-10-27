@@ -62,7 +62,7 @@ for (const vendor of ['claude', 'codex', 'antigravity', 'grok']) {
     const context = {
       ...orgTools, ...threadTools, chats: new Map([['chat', { thread }]]), pending, currentId: null,
       memberById: (t, id) => t.members.find(m => m.id === id), otherChats: () => [], runKeyOf: (c, m) => `${c}/${m}`,
-      renderChatList() {}, updateSendButtons() {},
+      renderChatList() {}, updateSendButtons() {}, projectNameFor: () => null,
       api: {
         resolveBrains: async () => ({ central: { text: 'Central rule' }, persona: { text: persona } }),
         getOrg: async () => ({ skills: { 'audit.md': { personas: ['verifier'] }, 'engine.md': { engines: [vendor], personas: ['verifier'] } } }),
