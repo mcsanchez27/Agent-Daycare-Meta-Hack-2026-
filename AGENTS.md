@@ -1,5 +1,9 @@
 # Agent Daycare: notes for AI agents
 
+## CI (2026-10-27)
+- `.github/workflows/ci.yml` runs `npm ci` and `npm test` with Node 20 on Windows and Ubuntu for pull requests and pushes to `master`. Electron's binary download is skipped for these headless tests.
+- The September `codex-notify` EACCES test fix is already in history (`944848e`); the hook module and its tests were later removed in TM-47. Do not restore them to apply that old fix.
+
 ## Read this first
 - **Active ticket:** TM-60 "Agent Daycare V5 – Org Control" on `tm-60/org-control`: Batch 1 (Matt's Calm UI with Antigravity, reviewed and merged by Claude as PR #54) is done; Batch 2 wires the skills library, Batch 3 the MCP directory, Batch 4 saved agents (see the TM-60 sections below). TM-59 (V4 crew flow) and TM-57 (V3.1) are merged; Matt's test cases for V3.1 and V4 collect on **TM-58**. **Active version:** V4 on `master`: one-agent and group chats (vendor and model per agent), crew flow, tool steps, vendor sessions, threads in side panel. Tickets TM-47, 53, 54, 55, 57, 59 are Done.
 - **Where work happens:** `master` holds everything built so far. Each new ticket gets its own branch off `master` named `tm-<id>/<short-name>`, merged by PR when done. Before changing anything, run `git branch --show-current`. If you are not on the branch the ticket names, stop and tell Matt.
