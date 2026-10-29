@@ -10,3 +10,6 @@ chats/
 .env.local
 org.json
 mcp-servers.json
+
+projects.json
+projects.json.tmp

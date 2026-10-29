@@ -248,7 +248,7 @@
   // upTo: the newest message id this launch answers. The window reads brain
   // files (an await) between asking and building, and a message posted to
   // someone else meanwhile must not become "the newest message".
-  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, personaSkills = [], brainUpdate = null, upTo = null } = {}) {
+  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, personaSkills = [], brainUpdate = null, upTo = null, projectName = null } = {}) {
     const members = thread.members || [];
     const me = members.find(m => m.id === memberId);
     const names = nameMap(thread);
@@ -275,7 +275,8 @@
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
       (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
-    const header = intro + background + where + 'Reply to the latest message in plain text.';
+    const project = projectName ? `Project: ${projectName}. Other chats listed here belong to this project only. Chats keep separate sessions and working folders; no project files are shared automatically. ` : '';
+    const header = intro + project + background + where + 'Reply to the latest message in plain text.';
 
     // Background from the chat this member was added from counts toward the limit.
     const was = me.memory && me.memory.name && me.memory.name !== me.name ? ` (you were called ${me.memory.name} there)` : '';
@@ -284,7 +285,7 @@
     const notice = since === null ? '' : brainUpdate ? `[Notice: your Central Brain, persona or skills changed. The current text:\n${brainUpdate.trim()}]` : '';
     // The header (brains and skills) counts toward the budget too: the whole
     // prompt goes on one command line for Claude and agy.
-    let used = memory.length + (since === null ? header.length : notice.length);
+    let used = memory.length + (since === null ? header.length : notice.length + project.length);
     // A follow-up keeps everything but the answered asks themselves (the
     // newest side rows), which end the prompt. One answer or several (TM-57).
     const answers = answer ? [].concat(answer) : null;
@@ -310,7 +311,7 @@
       used += line.length;
     }
 
-    const parts = since === null ? [header] : (notice ? [notice] : []);
+    const parts = since === null ? [header] : [...(project ? [project] : []), ...(notice ? [notice] : [])];
     if (memory && since === null) parts.push(memory);
     if (history.length) parts.push((since === null ? 'Recent conversation:\n' : 'New in this chat since your last reply:\n') + history.join('\n\n'));
     if (answers && answers.length === 1) {
