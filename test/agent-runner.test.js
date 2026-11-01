@@ -39,7 +39,7 @@ test('typed models are checked before anything is launched', () => {
 
 test('supported agents exist (V1 + grok)', () => {
   const { runner } = makeRunner();
-  assert.deepEqual(Object.keys(runner.agents), ['antigravity', 'claude', 'codex', 'grok']);
+  assert.deepEqual(Object.keys(runner.agents), ['antigravity', 'claude', 'codex', 'grok', 'meta']);
 });
 
 test('agent arguments: everyone may write in the working folder; codex reads the prompt from stdin', () => {
@@ -246,6 +246,7 @@ test('listModels: Antigravity from agy, Claude fixed, Codex typed; agy failing l
   assert.deepEqual(m.claude.map(x => x.id), ['opus', 'sonnet', 'haiku']);
   assert.deepEqual(m.codex, []);
   assert.deepEqual(m.grok.map(x => x.id), ['grok-4.6', 'grok-4.5']);
+  assert.deepEqual(m.meta, [{ id: 'spark', label: 'Muse Spark' }]);
   const { runner: r2 } = makeRunner();
   r2._agyModelsText = async () => { throw new Error('agy missing'); };
   assert.deepEqual((await r2.listModels()).antigravity, []);

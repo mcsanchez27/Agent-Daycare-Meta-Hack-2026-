@@ -40,7 +40,7 @@ test('unknown senders and missing recipients are rejected', () => {
 });
 
 test('the thread knows the supported agents', () => {
-  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok']);
+  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok', 'meta']);
 });
 
 test("buildPrompt ends with Matt's newest message and includes earlier history", () => {

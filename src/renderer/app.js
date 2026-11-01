@@ -865,6 +865,8 @@ function renderToolbelt() {
       const mine = mcpFor({ vendor: m.vendor, persona: personaIdOf(m), own: m.mcp }, servers, org.mcp || {});
       if (m.vendor === 'claude') {
         mcpName.textContent = `🔌 MCP: ${mine.length ? `${mine.map(s => s.name).join(', ')} (passed at launch)` : 'none'}`;
+      } else if (m.vendor === 'meta') {
+        mcpName.textContent = 'MCP: API engine, no per-launch servers.';
       } else {
         const has = new Set((cli[m.vendor] || []).filter(s => s.enabled).map(s => s.name.toLowerCase()));
         mcpName.textContent = `🔌 MCP: not passed by Daycare. Its CLI has ${has.size}.`;

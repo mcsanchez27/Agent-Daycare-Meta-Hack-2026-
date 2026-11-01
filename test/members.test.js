@@ -62,7 +62,7 @@ test('group header lists the members', () => {
   assert.match(p, /^You are Haiku \(claude, model haiku\)/);
   assert.match(p, /Claude and Haiku/);
   assert.ok(!p.includes('one-on-one'));
-  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok']);
+  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok', 'meta']);
 });
 
 test('saved members named Antigravity become Gemini (TM-57), unless the name is taken', () => {

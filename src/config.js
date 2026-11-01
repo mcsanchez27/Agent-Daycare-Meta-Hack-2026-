@@ -2,19 +2,20 @@
 // work in. Stored as config.json next to the app while developing (or in the
 // OS user-data folder when packaged). The file is created with defaults on
 // first run so it can be edited by hand.
+// Meta (V1) is an API engine: it has a name and a timeout but no executable.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const AGENT_IDS = ['antigravity', 'claude', 'codex', 'grok'];
+const AGENT_IDS = ['antigravity', 'claude', 'codex', 'grok', 'meta'];
 
 // How long one reply may take before the app stops the agent (TM-53).
 const DEFAULT_TIMEOUT_SEC = 300;
 
 // What each agent is called in the chat (TM-53). Matt can rename them here;
 // the picker, bubbles, relay buttons and prompts all use this name.
-const DEFAULT_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex', grok: 'Grok' };
+const DEFAULT_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex', grok: 'Grok', meta: 'Spark' };
 // Names that were only ever a default (TM-57: Antigravity is shown as Gemini,
 // the models its CLI runs). A config still holding one gets the new default.
 const RETIRED_NAMES = { antigravity: 'Antigravity' };
@@ -47,7 +48,9 @@ async function defaultAgentPaths() {
     antigravity: { command: win ? 'agy.exe' : 'agy', path: win ? path.join(local, 'agy', 'bin', 'agy.exe') : path.join(home, '.local', 'bin', 'agy') },
     claude: { command: win ? 'claude.exe' : 'claude', path: path.join(home, '.local', 'bin', win ? 'claude.exe' : 'claude') },
     codex: { command: win ? 'codex.exe' : 'codex', path: codexPath },
-    grok: { command: win ? 'grok.cmd' : 'grok', path: grokPath }
+    grok: { command: win ? 'grok.cmd' : 'grok', path: grokPath },
+    // No executable: withTimeouts fills in the name and timeout below.
+    meta: {}
   };
 }
 
@@ -103,13 +106,19 @@ function sanitize(input, base) {
     const u = input && input.agents && input.agents[id];
     let name = u && typeof u.name === 'string' ? u.name.trim().replace(/\s+/g, ' ').slice(0, MAX_NAME_LENGTH) : '';
     if (name === RETIRED_NAMES[id]) name = '';
+    const timeoutSec = u && Number.isFinite(u.timeoutSec)
+      ? Math.min(MAX_TIMEOUT_SEC, Math.max(MIN_TIMEOUT_SEC, Math.round(u.timeoutSec)))
+      : b.timeoutSec;
+    if (id === 'meta') {
+      // API engines have no executable: a name and a timeout only.
+      out.agents[id] = { name: name || b.name, timeoutSec };
+      continue;
+    }
     out.agents[id] = {
       name: name || b.name,
       command: u && typeof u.command === 'string' && u.command.trim() ? u.command.trim() : b.command,
       path: u && typeof u.path === 'string' && u.path.trim() ? u.path.trim() : b.path,
-      timeoutSec: u && Number.isFinite(u.timeoutSec)
-        ? Math.min(MAX_TIMEOUT_SEC, Math.max(MIN_TIMEOUT_SEC, Math.round(u.timeoutSec)))
-        : b.timeoutSec
+      timeoutSec
     };
   }
   return out;
