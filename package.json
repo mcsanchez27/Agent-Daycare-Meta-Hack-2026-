@@ -1,6 +1,7 @@
 {
-  "name": "agent-daycare",
+  "name": "agent-daycare-meta",
   "version": "1.0.0",
+  "productName": "Agent Daycare Meta",
   "description": "Agent Daycare - one chat window for Gemini, Claude, Codex and Grok, alone or as a crew",
   "main": "src/main.js",
   "scripts": {
