@@ -182,6 +182,20 @@ test('onAgentOutput registers listener and passes data', () => {
   assert.equal(cbData, 'output-data');
 });
 
+test('project bridge forwards only explicit project CRUD requests', () => {
+  invocations.length = 0;
+  global.api.listProjects();
+  global.api.createProject({ name: 'Fight Bot', selection: { kind: 'crew' } });
+  global.api.updateProject({ id: 'p1', name: 'Renamed' });
+  global.api.removeProject('p1');
+  assert.deepEqual(invocations, [
+    { channel: 'projects:list', data: undefined },
+    { channel: 'projects:create', data: { name: 'Fight Bot', selection: { kind: 'crew' } } },
+    { channel: 'projects:update', data: { id: 'p1', name: 'Renamed' } },
+    { channel: 'projects:remove', data: { id: 'p1' } }
+  ]);
+});
+
 test('cleanup', () => {
   Module._load = originalLoad;
 });

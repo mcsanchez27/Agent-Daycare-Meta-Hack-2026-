@@ -40,7 +40,7 @@ test('unknown senders and missing recipients are rejected', () => {
 });
 
 test('the thread knows the supported agents', () => {
-  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok']);
+  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok', 'meta']);
 });
 
 test("buildPrompt ends with Matt's newest message and includes earlier history", () => {
@@ -525,4 +525,22 @@ test('mergeThreads keeps the skills picked for a member', () => {
   const a = createThread([{ id: 'm1', vendor: 'claude', model: null, name: 'Claude', skills: ['security-audit.md'] }]);
   const b = createThread([{ id: 'm1', vendor: 'codex', model: null, name: 'Codex' }]);
   assert.deepEqual(mergeThreads(a, b).members.map(m => m.skills), [['security-audit.md'], undefined]);
+});
+
+test('a one-on-one prompt does not coach the agent to @ other vendors', () => {
+  const t = createThread([{ id: 'm1', vendor: 'antigravity', model: null, name: 'Gemini' }]);
+  addMessage(t, { from: 'matt', to: 'm1', text: 'hi' });
+  const p = buildPrompt(t, 'm1');
+  assert.match(p, /Do not @ another agent/);
+  assert.ok(!/@Claude|@Codex|@Grok/.test(p), p);
+});
+
+test('a new vendor joins from an agent reply only when Matt asked and @Name is alone on a line', () => {
+  const { joinIntent } = require('../src/renderer/thread');
+  const claude = { vendor: 'claude' };
+  assert.equal(joinIntent('see @Claude for that', claude, { mattText: 'hi' }), 'ignore');
+  assert.equal(joinIntent('done\n@Claude\n', claude, { mattText: 'hi' }), 'confirm');
+  assert.equal(joinIntent('@Claude.', claude, { mattText: 'please bring in Claude' }), 'handoff');
+  assert.equal(joinIntent('@Claude', claude, { mattText: '@Claude look at this' }), 'handoff');
+  assert.equal(joinIntent('thanks @Gemini', { memberId: 'm1' }, { mattText: '' }), 'handoff');
 });

@@ -114,6 +114,33 @@
     return t && t.memberId ? t.memberId : null;
   }
 
+  // A line that is only `@Name`, optional trailing punctuation. Buried mentions
+  // ("see @Claude") do not count: models echo those, and they must not join anyone.
+  function mentionOnOwnLine(text, name) {
+    return new RegExp(`^\\s*@${escapeRegExp(name)}\\s*[.!?]*\\s*$`, 'im').test(String(text || ''));
+  }
+
+  // Matt's message asked for this vendor by @Name or "bring in / add / ask Name".
+  function mattAskedForVendor(text, vendor, vendorNames = VENDOR_NAMES) {
+    const name = vendorNames[vendor];
+    if (!name || !text) return false;
+    if (mentionAt(text, name) !== -1) return true;
+    return new RegExp(`\\b(?:bring in|add|ask)\\s+@?${escapeRegExp(name)}\\b`, 'i').test(text);
+  }
+
+  // What an agent reply may do with a findTarget hit.
+  // 'handoff' — someone already in the chat, or a new vendor Matt just asked
+  //   for and the agent put @Name alone on a line.
+  // 'confirm' — new vendor, @Name alone on a line, Matt didn't ask. Tell him.
+  // 'ignore' — a new vendor mentioned in passing. Do nothing.
+  function joinIntent(text, target, { mattText = '', vendorNames = VENDOR_NAMES } = {}) {
+    if (!target) return 'ignore';
+    if (target.memberId) return 'handoff';
+    const name = vendorNames[target.vendor];
+    if (!name || !mentionOnOwnLine(text, name)) return 'ignore';
+    return mattAskedForVendor(mattText, target.vendor, vendorNames) ? 'handoff' : 'confirm';
+  }
+
   // Who text brings in with @ (TM-54): { memberId } for a member by name, or
   // { vendor } for a vendor's name that no member of the chat has (it joins
   // on its default model). The earliest @ wins; selfId is never a target.
@@ -221,7 +248,7 @@
   // upTo: the newest message id this launch answers. The window reads brain
   // files (an await) between asking and building, and a message posted to
   // someone else meanwhile must not become "the newest message".
-  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, personaSkills = [], brainUpdate = null, upTo = null } = {}) {
+  function buildPrompt(thread, memberId, { maxMessages = 20, maxChars = 12000, threadOf = null, answer = null, chatTitles = [], since = null, centralBrain = null, personaChip = null, personaSkills = [], brainUpdate = null, upTo = null, projectName = null } = {}) {
     const members = thread.members || [];
     const me = members.find(m => m.id === memberId);
     const names = nameMap(thread);
@@ -241,14 +268,15 @@
     const roleOf = (m) => (m.role && ROLES[m.role] ? ROLES[m.role] : null);
     const guidance = promptGuidance(me, { centralBrain, personaChip, personaSkills });
     const intro = (here.length === 1
-      ? `${who}, chatting one-on-one with Matt. To bring another agent in, write ${list(VENDORS.map(v => '@' + VENDOR_NAMES[v])).replace(' and ', ' or ')} in your reply. `
-      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring another agent in, write @Name in your reply; only do that when you need it to act, since every @ launches it (not to thank or agree). `) +
+      ? `${who}, chatting one-on-one with Matt. Do not @ another agent. Matt adds one by typing @Name himself. If he asked you to bring one in, put @Name alone on its own line. `
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring in someone already here, write @Name; only do that when you need them to act, since every @ of someone here launches them (not to thank or agree). Do not @ a vendor who is not in this chat unless Matt asked, and then put @Name alone on its own line. `) +
       (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '') +
       guidance;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
       (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
-    const header = intro + background + where + 'Reply to the latest message in plain text.';
+    const project = projectName ? `Project: ${projectName}. Other chats listed here belong to this project only. Chats keep separate sessions and working folders; no project files are shared automatically. ` : '';
+    const header = intro + project + background + where + 'Reply to the latest message in plain text.';
 
     // Background from the chat this member was added from counts toward the limit.
     const was = me.memory && me.memory.name && me.memory.name !== me.name ? ` (you were called ${me.memory.name} there)` : '';
@@ -257,7 +285,7 @@
     const notice = since === null ? '' : brainUpdate ? `[Notice: your Central Brain, persona or skills changed. The current text:\n${brainUpdate.trim()}]` : '';
     // The header (brains and skills) counts toward the budget too: the whole
     // prompt goes on one command line for Claude and agy.
-    let used = memory.length + (since === null ? header.length : notice.length);
+    let used = memory.length + (since === null ? header.length : notice.length + project.length);
     // A follow-up keeps everything but the answered asks themselves (the
     // newest side rows), which end the prompt. One answer or several (TM-57).
     const answers = answer ? [].concat(answer) : null;
@@ -283,7 +311,7 @@
       used += line.length;
     }
 
-    const parts = since === null ? [header] : (notice ? [notice] : []);
+    const parts = since === null ? [header] : [...(project ? [project] : []), ...(notice ? [notice] : [])];
     if (memory && since === null) parts.push(memory);
     if (history.length) parts.push((since === null ? 'Recent conversation:\n' : 'New in this chat since your last reply:\n') + history.join('\n\n'));
     if (answers && answers.length === 1) {
@@ -382,5 +410,5 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads };
+  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads, joinIntent, mentionOnOwnLine };
 });

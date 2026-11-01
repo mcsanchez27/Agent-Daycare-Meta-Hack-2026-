@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { PROJECT_ID } = require('./renderer/projects');
 
 // Chat ids come from the window, so they are checked before they touch a path.
 const CHAT_ID = /^[a-z0-9-]{1,64}$/;
@@ -31,6 +32,7 @@ function clean(chat) {
   if (chat.titleSet === true) c.titleSet = true;
   // The chat's agents (TM-54 Batch 2).
   if (Array.isArray(thread.members)) c.thread.members = thread.members;
+  if (typeof chat.projectId === 'string' && PROJECT_ID.test(chat.projectId)) c.projectId = chat.projectId;
   return c;
 }
 
@@ -51,7 +53,7 @@ async function list(dir) {
     if (!m) continue;
     try {
       const c = clean({ ...JSON.parse(await fs.promises.readFile(path.join(dir, name), 'utf8')), id: m[1] });
-      chats.push({ id: c.id, title: c.title, updatedAt: c.updatedAt });
+      chats.push({ id: c.id, title: c.title, updatedAt: c.updatedAt, ...(c.projectId ? { projectId: c.projectId } : {}) });
     } catch (err) {
       problems.push({ file: name, error: err.message });
     }

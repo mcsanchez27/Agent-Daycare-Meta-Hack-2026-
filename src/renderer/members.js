@@ -6,8 +6,10 @@
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.ChatMembers = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
-  const VENDORS = ['antigravity', 'claude', 'codex', 'grok'];
-  const VENDOR_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex', grok: 'Grok' };
+  // V1 adds meta (Muse Spark), an API engine without a CLI. thread.js takes
+  // these lists as factory arguments, so routing and prompts learn it here.
+  const VENDORS = ['antigravity', 'claude', 'codex', 'grok', 'meta'];
+  const VENDOR_NAMES = { antigravity: 'Gemini', claude: 'Claude', codex: 'Codex', grok: 'Grok', meta: 'Spark' };
   // A member's part in a chat (TM-59), carried in its prompts. Matt's own
   // flow: design and brainstorm with Codex, UI/UX with Gemini, engineering
   // with Claude, security with Smith, ops with Morpheus, and market scouting with Grok.

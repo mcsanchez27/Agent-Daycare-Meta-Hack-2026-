@@ -207,3 +207,11 @@ The default `workingDir` is the dedicated chat folder `~/AgentDaycare/chat` (cre
 - `src/renderer/`: the chat window. `members.js` is a chat's agents and `thread.js` the shared thread, both plain data (tested in `test/`), `app.js` draws it (textContent only, never innerHTML), `styles.css`, `index.html`. It streams each reply into a bubble and reports in plain English when an agent fails.
 
 Run `npm test` after any change in `src/`.
+
+## Hackathon V1 rebuild (from 2026-10-30, on hackathon/meta-2026)
+- V1 is full Daycare parity as Electron, rebuilt from the ground up, plus a Meta engine. Scope: full parity. Platform: Electron. Meta path: Baseten endpoint behind a provider seam.
+- Secrets: `.env.local` beside the repo root (git-ignored): BASETEN_API_KEY, BASETEN_BASE_URL, META_SPARK_MODEL. `src/env.js` loads it set-if-unset; the key lives in the main process only, never in renderer or logs. Never commit it.
+- `src/providers/`: the seam. `get(vendor)` returns { id, type: cli | api }. CLI vendors stay type cli until their specs migrate from agent-runner; `meta` is type api via `src/providers/meta.js` (OpenAI-compatible SSE transport, swappable base URL).
+- Branch base is ddfa122; V1 tracks origin/master 493a784 (PR 59, CI, TM-67 projects). PR 59 semantics (joinIntent, applyReply and deltas, Claude-only MCP ticks, preview cleanup) are carried into V1. Level with master before any PR.
+- Test note: when running as a user without access to the real Temp, set TEMP and TMP to a writable dir first (logger tests use mkdtemp).
+- Batch 2 (engine core, 2026-10-30): config/members/thread/agent-runner track 493a784; meta is a 5th engine end-to-end (config name/timeout, runner api-type runs via providers.MetaDriver, model alias spark). V1 assertion changes: VENDORS/supported-agents include meta, listModels gains meta. main.js loads .env.local at startup (key names only in the log). Runner stop/timeout spawn tests hang under the sandbox user (grandchildren cannot run taskkill); verify them on CI or your own npm test.

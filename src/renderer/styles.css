@@ -756,29 +756,11 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
   max-width: 280px;
   line-height: 1.4;
 }
-.preview-quick-actions {
-  display: flex;
-  flex-direction: column;
-  gap: .5rem;
-  margin-top: 1rem;
-  width: 100%;
-  max-width: 240px;
-}
-.preview-quick-btn {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  color: var(--text);
-  font: inherit;
-  font-size: .78rem;
-  padding: .5rem .75rem;
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: left;
-  transition: all .15s ease;
-}
-.preview-quick-btn:hover {
-  border-color: var(--matt);
-  background: rgba(37, 99, 235, 0.12);
+.builder-note {
+  margin: 0;
+  font-size: .8rem;
+  line-height: 1.4;
+  color: var(--muted);
 }
 .preview-iframe {
   flex: 1;
@@ -1640,3 +1622,17 @@ button[type="submit"]:disabled { opacity: .4; cursor: default; }
 .toolbelt-library .library-item { overflow-wrap: anywhere; }
 .org-item-actions.wrap { flex-wrap: wrap; }
 .builder-save { margin-top: .4rem; }
+
+/* Project groups keep the existing chat items and their agent/status rows. */
+.project-header { display: flex; align-items: center; gap: .3rem; padding: .5rem .25rem; }
+.project-header button { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: .3rem; }
+.project-header button:hover { color: var(--text); }
+.project-toggle { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; font-weight: 600; }
+.project-form { display: flex; flex-direction: column; gap: .85rem; width: 100%; }
+.project-form > label { display: flex; flex-direction: column; gap: .35rem; }
+.project-form input[type="text"], .project-form select { padding: .6rem; width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+.project-form fieldset { border: 1px solid var(--border); max-height: 240px; overflow-y: auto; }
+.project-form fieldset[hidden] { display: none; }
+.project-form fieldset label { display: flex; gap: .5rem; padding: .4rem; }
+.project-form button { padding: .6rem; cursor: pointer; }
+.project-error { color: #f87171; white-space: pre-wrap; }

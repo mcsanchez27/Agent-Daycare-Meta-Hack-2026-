@@ -4,7 +4,11 @@ const fs = require('fs');
 const AgentRunner = require('./agent-runner');
 const { Logger } = require('./logger');
 const userConfig = require('./config');
+const { loadLocalEnv } = require('./env');
 const chats = require('./chats');
+const projects = require('./projects');
+const { rosterFrom } = require('./renderer/projects');
+const { teammates } = require('./renderer/org');
 const cliMcp = require('./cli-mcp');
 const { spellMenu } = require('./spellcheck');
 
@@ -381,6 +385,7 @@ handle('mcp:cli-lists', async ({ fresh = false } = {}) => {
 // Org Control assignments (TM-60 Batch 2): which skills each engine and
 // saved persona gets. Beside config.json, git-ignored; created on first save.
 const orgFile = path.join(path.dirname(configFile), 'org.json');
+const envFile = path.join(path.dirname(configFile), '.env.local');
 const SKILL_FILE = /^[\w.-]+\.md$/;
 const PERSONA_ID = /^[a-z0-9-]{1,32}$/;
 function cleanAssignment(a) {
@@ -438,6 +443,25 @@ handle('org:save', async ({ org }) => {
 });
 
 // Saved chats (TM-53 Batch 2)
+// Project mutations resolve only the built-in crew or existing teammates.
+const projectsFile = path.join(path.dirname(configFile), 'projects.json');
+async function projectRoster(selection) {
+  let org = {};
+  if (selection && selection.kind === 'teammates') {
+    try { org = cleanOrg(JSON.parse(await fs.promises.readFile(orgFile, 'utf8'))); }
+    catch (err) { if (err.code !== 'ENOENT') throw err; }
+  }
+  return rosterFrom(selection, teammates(org));
+}
+handle('projects:list', () => projects.list(projectsFile));
+handle('projects:create', async ({ name, selection }) => projects.create(projectsFile, { name, members: await projectRoster(selection) }));
+handle('projects:update', async ({ id, name, selection }) => projects.update(projectsFile, {
+  id, name, ...(selection ? { members: await projectRoster(selection) } : {})
+}));
+// Removing a container never opens, edits or deletes a chat file. Stale IDs
+// resolve to Unfiled, including after a restart.
+handle('projects:remove', ({ id }) => projects.remove(projectsFile, { id }));
+
 handle('chats:list', async () => {
   const r = await chats.list(chatsDir);
   for (const p of r.problems) logger.warn('app', 'chat file could not be read', { dir: chatsDir, ...p });
@@ -494,6 +518,8 @@ app.whenReady().then(async () => {
   logger.open();
   const loaded = await userConfig.load(configFile);
   config = loaded.config;
+  const localEnv = loadLocalEnv(envFile);
+  if (!localEnv.missing) logger.info('app', 'local env loaded', { file: envFile, keys: localEnv.loaded });
   if (loaded.error) logger.warn('app', 'config problem', { file: configFile, error: loaded.error });
   else logger.info('app', loaded.created ? 'config created with defaults' : 'config loaded', { file: configFile });
   if (loaded.migratedFrom) logger.info('app', 'working folder moved to the chat folder', { from: loaded.migratedFrom, to: config.workingDir });

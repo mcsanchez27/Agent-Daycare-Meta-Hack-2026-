@@ -16,9 +16,14 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT, joinIntent } = window.ChatThread;
 const { VENDORS, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 const { folderFile, personaIdOf, teammates, teammateId, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine } = window.ChatOrg;
+
+const { seedMembers, projectOf, scopedChats, projectGroups } = window.ChatProjects;
+let projectList = [];
+let projectCatalogError = null;
+const collapsedProjects = new Set();
 
 // Same rule as the runner's MODEL_TEXT: a typed model goes on a command line.
 const MODEL_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -77,8 +82,6 @@ const el = {
   notionDesc: $('notion-desc'),
   notionTasks: $('notion-tasks'),
   notionLink: $('notion-link'),
-  previewGlanceTm58: $('preview-glance-tm58'),
-  previewGlanceTm60: $('preview-glance-tm60'),
   navOrgBtn: $('nav-org-btn'),
   orgControl: $('org-control'),
   orgCloseBtn: $('org-close-btn'),
@@ -182,7 +185,7 @@ function newChatId() {
 function startNewChat() {
   closeOrgControl();
   const c = current();
-  if (c && c.thread && c.thread.messages.length === 0) chats.delete(c.id);
+  if (c && c.thread && c.thread.messages.length === 0 && !c.projectId) chats.delete(c.id);
   showChooser('new');
 }
 
@@ -216,6 +219,104 @@ function createCustomChat(memberOpts) {
   hideChooser();
   showChat(chat.id);
   api.log('info', 'custom agent chat created', { chatId: chat.id, agent: member.name, vendor: member.vendor });
+}
+
+function createProjectChat(projectId, { open = true } = {}) {
+  const project = projectList.find(p => p.id === projectId);
+  if (!project) return;
+  const now = new Date().toISOString();
+  const chat = { id: newChatId(), title: 'New chat', projectId, createdAt: now, updatedAt: now,
+    thread: createThread(seedMembers(project.members)) };
+  chats.set(chat.id, chat);
+  collapsedProjects.delete(projectId);
+  // A deliberate + chat belongs to the project even before the first message.
+  persist(chat);
+  if (open) { hideChooser(); showChat(chat.id); } else renderChatList();
+}
+
+async function renderProjectForm(card, projectId) {
+  const project = projectList.find(p => p.id === projectId);
+  if (projectId && !project) return;
+  const active = () => card.isConnected && !el.chooser.hidden && el.chooser.contains(card);
+  const form = document.createElement('form');
+  form.className = 'project-form';
+  const nameLabel = document.createElement('label');
+  nameLabel.textContent = 'Project name';
+  const name = document.createElement('input');
+  name.type = 'text'; name.required = true; name.maxLength = 80;
+  name.value = project ? project.name : '';
+  nameLabel.appendChild(name);
+  const rosterLabel = document.createElement('label');
+  rosterLabel.textContent = 'Roster for new chats';
+  const choice = document.createElement('select');
+  const option = (value, text) => {
+    const o = document.createElement('option'); o.value = value; o.textContent = text; choice.appendChild(o);
+  };
+  if (project) option('keep', `Keep current roster (${project.members.map(m => m.name).join(', ')})`);
+  option('crew', 'Crew: Codex Design, Gemini UI/UX, Claude Engineering');
+  option('teammates', 'Choose teammates');
+  rosterLabel.appendChild(choice);
+  const picks = document.createElement('fieldset');
+  picks.hidden = true;
+  const legend = document.createElement('legend'); legend.textContent = 'Teammates (1–20)'; picks.appendChild(legend);
+  const help = document.createElement('p'); help.className = 'chooser-note';
+  help.textContent = 'Roster edits apply only to new chats. Existing agents, sessions and working folders stay as they are.';
+  const error = document.createElement('p'); error.className = 'project-error'; error.setAttribute('role', 'alert');
+  const save = document.createElement('button'); save.type = 'submit'; save.textContent = project ? 'Save project' : 'Create project & first chat';
+  const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => { if (current()) { hideChooser(); showChat(currentId); } else showChooser('new'); });
+  form.append(nameLabel, rosterLabel, picks, help, error, save, cancel);
+  card.appendChild(form);
+  name.focus();
+  const checks = [];
+  let ready = false;
+  api.getOrg().then(org => {
+    if (!card.isConnected) return;
+    for (const p of teammates(org)) {
+      const label = document.createElement('label');
+      const input = document.createElement('input'); input.type = 'checkbox'; input.value = p.id;
+      input.checked = !!project && project.members.some(m => m.persona === p.id);
+      checks.push(input);
+      const text = document.createElement('span'); text.textContent = `${p.name} · ${vendorName(p.vendor)}`;
+      label.append(input, text); picks.appendChild(label);
+    }
+    ready = true;
+  }).catch(err => { error.textContent = `Could not load teammates: ${err.message}. The crew preset is still available.`; });
+  choice.addEventListener('change', () => { picks.hidden = choice.value !== 'teammates'; });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (save.disabled) return;
+    const selection = choice.value === 'keep' ? null : choice.value === 'crew' ? { kind: 'crew' } : { kind: 'teammates', ids: checks.filter(c => c.checked).map(c => c.value) };
+    if (choice.value === 'teammates' && (!ready || !selection.ids.length)) { error.textContent = 'Choose at least one available teammate.'; return; }
+    save.disabled = true; error.textContent = '';
+    try {
+      const req = { name: name.value, ...(selection ? { selection } : {}) };
+      const saved = project ? await api.updateProject({ id: project.id, ...req }) : await api.createProject(req);
+      projectList = await api.listProjects();
+      if (!active()) {
+        if (!project) createProjectChat(saved.id, { open: false }); else renderChatList();
+        return;
+      }
+      if (!project) createProjectChat(saved.id);
+      else { hideChooser(); if (current()) showChat(currentId); else showChooser('new'); renderChatList(); }
+    } catch (err) { error.textContent = err.message; save.disabled = false; }
+  });
+  if (project) {
+    const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Delete project…';
+    let confirmed = false;
+    remove.addEventListener('click', async () => {
+      if (save.disabled) return;
+      if (!confirmed) { confirmed = true; remove.textContent = 'Confirm delete — keep all chats Unfiled'; return; }
+      remove.disabled = true; save.disabled = true;
+      try {
+        await api.removeProject(project.id);
+        projectList = await api.listProjects();
+        if (active()) { hideChooser(); if (current()) showChat(currentId); else showChooser('new'); }
+        renderChatList();
+      } catch (err) { error.textContent = err.message; remove.disabled = false; save.disabled = false; }
+    });
+    form.appendChild(remove);
+  }
 }
 
 // Adds an agent to a chat and says so there. opts: model, modelLabel, memory
@@ -362,7 +463,7 @@ function pendingInView(view, p) {
 
 async function persist(chat) {
   try {
-    await api.saveChat({ id: chat.id, title: chat.title, titleSet: chat.titleSet, createdAt: chat.createdAt, updatedAt: chat.updatedAt, thread: chat.thread });
+    await api.saveChat({ id: chat.id, title: chat.title, titleSet: chat.titleSet, createdAt: chat.createdAt, updatedAt: chat.updatedAt, projectId: chat.projectId, thread: chat.thread });
   } catch (err) {
     api.log('error', 'could not save chat', { id: chat.id, error: err.message });
   }
@@ -370,8 +471,43 @@ async function persist(chat) {
 
 function renderChatList() {
   el.chatList.replaceChildren();
+  if (projectCatalogError) {
+    const error = document.createElement('p'); error.className = 'project-error'; error.setAttribute('role', 'alert');
+    error.textContent = `Projects unavailable: ${projectCatalogError}. Chats are available; cross-chat asks are disabled. Repair projects.json and restart to restore projects.`;
+    el.chatList.appendChild(error);
+  }
   const sorted = [...chats.values()].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-  for (const chat of sorted) {
+  for (const group of projectGroups(sorted, projectList)) {
+    const key = group.project ? group.project.id : 'unfiled';
+    const section = document.createElement('section');
+    section.className = 'project-group';
+    const header = document.createElement('div');
+    header.className = 'project-header';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'project-toggle';
+    toggle.textContent = `${collapsedProjects.has(key) ? '▸' : '▾'} ${group.project ? group.project.name : projectCatalogError ? 'Chats (projects unavailable)' : 'Unfiled'} (${group.chats.length})`;
+    toggle.setAttribute('aria-expanded', String(!collapsedProjects.has(key)));
+    toggle.addEventListener('click', () => {
+      if (collapsedProjects.has(key)) collapsedProjects.delete(key); else collapsedProjects.add(key);
+      renderChatList();
+    });
+    header.appendChild(toggle);
+    if (group.project) {
+      const add = document.createElement('button');
+      add.type = 'button'; add.textContent = '+ chat';
+      add.title = `New chat in ${group.project.name}`;
+      add.addEventListener('click', () => createProjectChat(group.project.id));
+      const edit = document.createElement('button');
+      edit.type = 'button'; edit.textContent = 'Edit';
+      edit.title = `Rename or edit ${group.project.name}`;
+      edit.addEventListener('click', () => showChooser('project-edit', group.project.id));
+      header.append(add, edit);
+    }
+    section.appendChild(header);
+    el.chatList.appendChild(section);
+    if (collapsedProjects.has(key)) continue;
+    for (const chat of group.chats) {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'chat-item' + (chat.id === currentId && el.chooser.hidden ? ' active' : '');
@@ -417,7 +553,8 @@ function renderChatList() {
     // The first click opens the chat and redraws this list, so a double-click
     // never lands on one element: the second click's count says it instead.
     item.addEventListener('click', (e) => (e.detail >= 2 ? editTitle(chat, item) : openChat(chat.id)));
-    el.chatList.appendChild(item);
+    section.appendChild(item);
+    }
   }
 }
 
@@ -443,7 +580,7 @@ function editTitle(chat, item) {
       chat.titleSet = Boolean(text);
       chat.title = text || chatTitle(chat.thread);
       // A chat with nothing said in it isn't saved yet; the name sticks once it is.
-      if (chat.thread.messages.length) persist(chat);
+      if (chat.thread.messages.length || chat.projectId) persist(chat);
     }
     renderChatList();
   };
@@ -715,8 +852,8 @@ function renderToolbelt() {
       skillsName.textContent = `⚡ Skills: ${names.length ? `${names.join(', ')} (${how})` : 'none'}`;
     }).catch(() => { skillsName.textContent = '⚡ Skills: unknown'; });
 
-    // The MCP servers this member gets (TM-60 Batch 3): for Claude, passed at
-    // launch; for the others, only those its CLI actually has count.
+    // Claude gets directory servers at launch. The other engines do not, so
+    // the line says that instead of "none assigned" next to a full CLI list.
     const mcpItem = document.createElement('div');
     mcpItem.className = 'toolbelt-cap-item';
     const mcpName = document.createElement('span');
@@ -728,10 +865,11 @@ function renderToolbelt() {
       const mine = mcpFor({ vendor: m.vendor, persona: personaIdOf(m), own: m.mcp }, servers, org.mcp || {});
       if (m.vendor === 'claude') {
         mcpName.textContent = `🔌 MCP: ${mine.length ? `${mine.map(s => s.name).join(', ')} (passed at launch)` : 'none'}`;
+      } else if (m.vendor === 'meta') {
+        mcpName.textContent = 'MCP: API engine, no per-launch servers.';
       } else {
         const has = new Set((cli[m.vendor] || []).filter(s => s.enabled).map(s => s.name.toLowerCase()));
-        const parts = mine.map(s => `${s.name}${has.has(s.name.toLowerCase()) || has.has(s.id) ? '' : ' (not in its CLI yet)'}`);
-        mcpName.textContent = `🔌 MCP: ${parts.length ? parts.join(', ') : 'none assigned'} · its CLI has ${has.size}`;
+        mcpName.textContent = `🔌 MCP: not passed by Daycare. Its CLI has ${has.size}.`;
       }
     }).catch(() => { mcpName.textContent = '🔌 MCP: unknown'; });
 
@@ -896,7 +1034,12 @@ function showChooser(mode = 'new', vendor = null) {
     showChat(currentId);
   };
 
-  if (mode === 'merge') {
+  if (mode === 'project' || mode === 'project-edit') {
+    h.textContent = mode === 'project' ? 'New project' : 'Edit project';
+    renderProjectForm(card, mode === 'project-edit' ? vendor : null);
+    el.chooser.onclick = null;
+    return;
+  } else if (mode === 'merge') {
     // vendor holds the chat being merged on this screen.
     const first = chats.get(vendor);
     h.textContent = `Merge "${first.title}" with which chat?`;
@@ -930,6 +1073,8 @@ function showChooser(mode = 'new', vendor = null) {
   } else if (!vendor && mode !== 'personas' && mode !== 'builder') {
     h.textContent = mode === 'new' ? 'Who do you want to talk to?' : 'Add which agent to this chat?';
     if (mode === 'new') {
+      const newProject = option('New project…', projectCatalogError || 'A saved roster with separate chats filed together', '#2563eb', () => showChooser('project'));
+      newProject.disabled = !!projectCatalogError;
       option('Autonomous Crew', CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), '#2563eb', createCrew);
     }
     option('Teammates…', 'Agent Smith, Morpheus, Grok Scout… and the agents you saved', '#8b5cf6', () => showChooser('personas', mode));
@@ -1074,6 +1219,8 @@ async function mergeChats(a, b) {
   const now = new Date().toISOString();
   const title = `${a.title} + ${b.title}`.slice(0, 60);
   const chat = { id: newChatId(), title, titleSet: true, createdAt: now, updatedAt: now, thread: mergeThreads(a.thread, b.thread, vendorNames()) };
+  const project = projectOf(a, projectList);
+  if (project && b.projectId === project.id) chat.projectId = project.id;
   chats.set(chat.id, chat);
   post(chat.id, { from: 'system', text: `Merged from "${a.title}" and "${b.title}". Both of those chats are unchanged.` });
   api.log('info', 'chats merged', { from: [a.id, b.id], into: chat.id, members: chat.thread.members.length, messages: chat.thread.messages.length });
@@ -1123,8 +1270,13 @@ function appendRow(view, row, alwaysScroll = false) {
 
 // ---- Background asks between chats (TM-54 Batch 5) ----------------------------
 
+function projectNameFor(chatId) {
+  return projectCatalogError ? 'Unavailable — cross-chat asks disabled' : projectOf(chats.get(chatId), projectList)?.name || 'Unfiled';
+}
+
 function otherChats(chatId) {
-  return [...chats.values()].filter(c => c.id !== chatId && c.title).map(c => ({ id: c.id, title: c.title }));
+  if (projectCatalogError) return [];
+  return scopedChats(chats.get(chatId), [...chats.values()], projectList).filter(c => c.title).map(c => ({ id: c.id, title: c.title }));
 }
 
 const SIDE_STATES = { asking: 'asking…', answered: 'answered', stopped: 'stopped', busy: 'busy', failed: "didn't answer" };
@@ -1179,6 +1331,10 @@ function redrawSide(chatId, m) {
 async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null, group = null }) {
   const src = chats.get(fromChatId);
   const dst = chats.get(targetId);
+  if (!src || !dst || !otherChats(fromChatId).some(c => c.id === targetId)) {
+    if (src) post(fromChatId, { from: 'system', threadOf, text: 'That chat is outside this project or is no longer available.' });
+    return;
+  }
   const askerName = asker === 'matt' ? 'Matt' : nameOf(asker, src);
   if (hop > HOP_LIMIT) {
     post(fromChatId, { from: 'system', threadOf, text: `${askerName} asked "${dst.title}", but chats have asked each other ${HOP_LIMIT} times in a row. Reply here to keep going.` });
@@ -1190,6 +1346,10 @@ async function askChat({ fromChatId, asker, text, targetId, hop, threadOf = null
     await loadChat(dst);
   } catch (err) {
     loadError = err.message;
+  }
+  if (!otherChats(fromChatId).some(c => c.id === targetId)) {
+    post(fromChatId, { from: 'system', threadOf, text: 'That chat is outside this project or is no longer available.' });
+    return;
   }
   const owner = dst.thread ? dst.thread.members[0] : null;
   const runKey = owner ? runKeyOf(targetId, owner.id) : null;
@@ -1428,17 +1588,34 @@ function addActions(row, buttons) {
   return bar;
 }
 
-// A member's finished reply that names another agent with @ brings it in,
-// in the same place (the main chat or the thread it is in). An agent not in
-// the chat joins on its default model. After hopLimit (3, or 6 in a crew) handoffs in a row
-// there, Matt has to say something first.
+// A member's finished reply that @-names someone already in the chat brings
+// them in. A vendor who is not in the chat is not joined from prose (models
+// echo "@Claude"). @Name alone on its own line asks Matt to type it himself,
+// unless his latest message already asked for that vendor.
+function lastMattText(thread, threadOf) {
+  let text = '';
+  for (const m of thread.messages) {
+    if ((m.threadOf || null) !== threadOf) continue;
+    if (m.from === 'matt') text = m.text;
+  }
+  return text;
+}
+
 function handOff(chatId, m) {
   const chat = chats.get(chatId);
-  const target = findTarget(m.text, m.from, chat.thread.members, vendorNames());
+  const names = vendorNames();
+  const target = findTarget(m.text, m.from, chat.thread.members, names);
   if (!target) return;
   const where = m.threadOf || null;
+  const intent = joinIntent(m.text, target, { mattText: lastMattText(chat.thread, where), vendorNames: names });
   const name = (id) => nameOf(id, chat);
   const toName = target.memberId ? name(target.memberId) : vendorName(target.vendor);
+  if (intent === 'ignore') return;
+  if (intent === 'confirm') {
+    post(chatId, { from: 'system', threadOf: where, text: `${name(m.from)} put @${toName} on its own line. Type @${toName} if you want them in this chat.` });
+    api.log('info', 'join needs Matt', { chatId, where, from: m.from, vendor: target.vendor });
+    return;
+  }
   const hops = hopsSinceMatt(chat.thread, where);
   const limit = hopLimit(chat.thread);
   if (hops >= limit) {
@@ -1748,6 +1925,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
       personaChip,
       personaSkills,
       brainUpdate,
+      projectName: projectNameFor(chatId),
       upTo: p.seenUpTo
     });
   } catch (err) {
@@ -2697,9 +2875,22 @@ function builderForm({ defaultName = '' } = {}) {
   instructions.rows = 4;
   instructions.placeholder = 'Anything this teammate should always know or do';
 
-  // MCP servers from the directory (TM-60 Batch 3): real for a Claude agent
-  // at launch; for the other engines a label until their CLI has the server.
+  // MCP servers from the directory. Only Claude takes them at launch, so the
+  // other engines get a sentence instead of ticks that would do nothing.
   const tools = grid(api.listMcps(), s => s.id, s => s.name, 'No servers in the MCP Directory yet (Org Control → MCP Directory).');
+  const mcpNote = document.createElement('p');
+  mcpNote.className = 'builder-note';
+  mcpNote.textContent = 'Daycare can only hand servers to Claude at launch. Gemini, Codex and Grok keep whatever is already in their own CLI (agy mcp add, codex mcp add, grok mcp add).';
+  const mcpWrap = document.createElement('div');
+  mcpWrap.append(mcpNote, tools.grid);
+  const syncMcp = () => {
+    const claude = engineSelect.value === 'claude';
+    tools.grid.hidden = !claude;
+    mcpNote.hidden = claude;
+    if (!claude) for (const box of Object.values(tools.boxes)) box.checked = false;
+  };
+  engineSelect.addEventListener('change', syncMcp);
+  syncMcp();
   const skills = grid(api.listSkills(), s => s.file, s => s.title, 'No skills in the library yet.');
 
   const saveField = document.createElement('label');
@@ -2717,14 +2908,14 @@ function builderForm({ defaultName = '' } = {}) {
     modelPick.field,
     field('Persona Chip (Central Brain inherited automatically)', brainSelect),
     field('Custom instructions', instructions),
-    field('MCP servers (from the directory; real for a Claude agent at launch, a label for the other engines until their CLI has the server)', tools.grid),
+    field('MCP servers', mcpWrap),
     field('Skills (given to this teammate)', skills.grid),
     saveField
   ];
   const config = () => {
     const brain = brainSelect.value;
     const match = loadedBrains.find(b => b.file === brain);
-    return { name: nameInput.value.trim(), vendor: engineSelect.value, model: modelPick.value(), brain, brainText: match ? match.text : '', customInstructions: instructions.value.trim(), mcp: tools.picked(), skills: skills.picked(), save: saveBox.checked };
+    return { name: nameInput.value.trim(), vendor: engineSelect.value, model: modelPick.value(), brain, brainText: match ? match.text : '', customInstructions: instructions.value.trim(), mcp: engineSelect.value === 'claude' ? tools.picked() : [], skills: skills.picked(), save: saveBox.checked };
   };
   return { fields, config };
 }
@@ -2784,8 +2975,6 @@ if (el.tabToolbelt) el.tabToolbelt.addEventListener('click', () => setSidecarTab
 if (el.sidecarExpandBtn) el.sidecarExpandBtn.addEventListener('click', toggleSidecarExpand);
 if (el.previewReload) el.previewReload.addEventListener('click', () => { if (el.previewIframe && currentPreviewUrl) el.previewIframe.src = currentPreviewUrl; });
 if (el.previewExternal) el.previewExternal.addEventListener('click', () => { if (currentPreviewUrl) window.open(currentPreviewUrl, '_blank'); });
-if (el.previewGlanceTm58) el.previewGlanceTm58.addEventListener('click', () => glanceNotionFromText('TM-58'));
-if (el.previewGlanceTm60) el.previewGlanceTm60.addEventListener('click', () => glanceNotionFromText('TM-59'));
 
 if (el.navOrgBtn) {
   el.navOrgBtn.addEventListener('click', () => {
@@ -2826,6 +3015,8 @@ async function init() {
   workingDir = config.workingDir;
   el.folder.textContent = `Working folder: ${workingDir}`;
 
+  try { projectList = await api.listProjects(); }
+  catch (err) { projectCatalogError = err.message; api.log('error', 'project catalog could not be loaded', { error: err.message }); }
   const { chats: saved } = await api.listChats();
   for (const s of saved) chats.set(s.id, { ...s });
   // Open the most recent chat, or pick an agent for the first one.

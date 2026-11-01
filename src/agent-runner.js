@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { CHAT_ID } = require('./chats');
+const providers = require('./providers');
+const meta = require('./providers/meta');
 const { StringDecoder } = require('string_decoder');
 
 const execFileAsync = promisify(execFile);
@@ -97,7 +99,13 @@ function parseEvent(vendor, line) {
     return null;
   }
   // agy --output-format stream-json (TM-59): init, step_update, result.
+  // agent_response text_delta is one fragment. The result event repeats the
+  // whole reply (full: true) so the runner shows it only if no fragment came.
   if (j.event === 'init' && j.conversation_id) return sessionOk(j.conversation_id) ? { sessionId: j.conversation_id } : null;
+  if (j.event === 'step_update' && j.step_update && j.step_update.step_type === 'agent_response') {
+    const delta = j.step_update.text_delta;
+    return typeof delta === 'string' && delta ? { text: delta, delta: true } : null;
+  }
   if (j.event === 'step_update' && j.step_update && j.step_update.step_type === 'tool') {
     const s = j.step_update;
     const what = describeTool(s.tool_name || (s.tool_info && s.tool_info.name), s.tool_info && s.tool_info.parameters);
@@ -105,11 +113,15 @@ function parseEvent(vendor, line) {
     if (s.state === 'ERROR') return { steps: [`${what} (failed${/denied permission/i.test(JSON.stringify(s.tool_info && s.tool_info.error || '')) ? ': not allowed' : ''})`] };
     return null;
   }
-  if (j.event === 'result' && j.result) j = j.result;
+  const resultEvent = j.event === 'result' && j.result;
+  if (resultEvent) j = j.result;
   if (j.conversation_id || j.response) {
     const out = {};
     if (sessionOk(j.conversation_id)) out.sessionId = j.conversation_id;
-    if (typeof j.response === 'string' && j.response) out.text = j.response;
+    if (typeof j.response === 'string' && j.response) {
+      out.text = j.response;
+      if (resultEvent) out.full = true;
+    }
     if (j.usage) out.usage = { inputTokens: j.usage.input_tokens || 0, outputTokens: j.usage.output_tokens || 0 };
     return out;
   }
@@ -119,6 +131,15 @@ function parseEvent(vendor, line) {
 const CLAUDE_MODELS = [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }];
 // What `grok models` listed on 2026-10-24 (it answers even when signed out).
 const GROK_MODELS = [{ id: 'grok-4.6', label: 'grok-4.6' }, { id: 'grok-4.5', label: 'grok-4.5' }];
+// Meta (V1) is an API engine: the picker offers one alias and the runner
+// resolves it to the configured model. A typed id passes through untouched;
+// MODEL_TEXT stays command-line-safe because meta ids never reach a shell.
+const META_MODELS = [{ id: 'spark', label: 'Muse Spark' }];
+function resolveMetaModel(model, configured) {
+  if (model === null || model === 'spark' || model === 'default') return configured;
+  return model;
+}
+
 // grok's prompt goes in a file in the chat folder (see _buildAgentArgs), one
 // per run, so two Grok members of one chat never share it.
 const promptFileName = (run) => `.daycare-prompt-${run}.txt`;
@@ -189,6 +210,17 @@ const { DEFAULT_TIMEOUT_SEC } = require('./config');
 // session metadata, token counts and MCP login noise.
 const CODEX_STDERR_NOISE = /^(Reading additional input|OpenAI Codex|--------|workdir:|model:|provider:|approval:|sandbox:|reasoning effort:|reasoning summaries:|session id:|user$|tokens used|\d{1,3}(,\d{3})*$|codex$|\S*Z (ERROR|WARN) )/i;
 
+// Text from one parsed event, or null when it should not be shown.
+// A full result repeats text that already arrived as deltas, so it is dropped
+// once anything has been said. Deltas do not get a blank line between them;
+// a later whole message (Claude, Codex) still does.
+function applyReply(said, ev) {
+  if (!ev || !ev.text) return { said: !!said, text: null };
+  if (ev.full && said) return { said: true, text: null };
+  const gap = said && !ev.delta ? '\n\n' : '';
+  return { said: true, text: gap + ev.text };
+}
+
 class AgentRunner {
   constructor(mainWindow, logger, config = null) {
     this.mainWindow = mainWindow;
@@ -202,7 +234,8 @@ class AgentRunner {
       antigravity: { id: 'antigravity', name: 'Gemini', command: 'agy.exe', path: 'agy.exe', color: '#9d4edd', installed: true, version: 'Unknown' },
       claude: { id: 'claude', name: 'Claude', command: 'claude.exe', path: 'claude.exe', color: '#e76f51', installed: true, version: 'Unknown' },
       codex: { id: 'codex', name: 'Codex', command: 'codex.exe', path: 'codex.exe', color: '#2a9d8f', installed: true, version: 'Unknown' },
-      grok: { id: 'grok', name: 'Grok', command: 'grok.cmd', path: 'grok.cmd', color: '#e2e8f0', installed: true, version: 'Unknown' }
+      grok: { id: 'grok', name: 'Grok', command: 'grok.cmd', path: 'grok.cmd', color: '#e2e8f0', installed: true, version: 'Unknown' },
+      meta: { id: 'meta', name: 'Spark', command: null, path: null, color: '#60a5fa', installed: true, version: 'API' }
     };
 
     if (config) this.applyConfig(config);
@@ -247,7 +280,7 @@ class AgentRunner {
           this.log.warn('antigravity', 'could not list models', { error: err.message });
           return [];
         })
-        .then(antigravity => ({ antigravity, claude: CLAUDE_MODELS, codex: [], grok: GROK_MODELS }));
+        .then(antigravity => ({ antigravity, claude: CLAUDE_MODELS, codex: [], grok: GROK_MODELS, meta: META_MODELS }));
     }
     return this._models;
   }
@@ -285,6 +318,9 @@ class AgentRunner {
       this.emitOutput(ctx, `[Can't launch ${agent.name}]: its saved session id "${sessionId}" isn't one it can resume.\r\n`, 'stderr');
       return false;
     }
+
+    // API engines (V1: meta) run in this process, not as a child (runApi).
+    if (providers.isApiProvider(vendor)) return this.runApi({ runKey, vendor, model, prompt: p, files }, run);
 
     if (this.processes.has(runKey)) this.stop(runKey);
 
@@ -333,6 +369,80 @@ class AgentRunner {
     // The run number: every event of this launch carries it, so the window
     // can tell this reply's events from a superseded launch's late ones.
     return run;
+  }
+
+  // API engines (V1: meta) run in this process over HTTPS instead of as a
+  // child process. Same runKey/run/timeout/Stop lifecycle and the same
+  // agent:output/agent:done events, so the window treats them like any
+  // agent run. Meta keeps no vendor session, so sessionId is ignored and
+  // every run sends the full prompt. The API key never leaves this process:
+  // it is read from the environment here, never logged, never sent to the
+  // window.
+  runApi({ runKey, vendor, model = null, prompt = '', files = null }, run) {
+    const agent = this.agents[vendor];
+    const ctx = { runKey, vendor, run };
+    if (this.processes.has(runKey)) this.stop(runKey);
+    const workingDir = this.chatFolder(runKey);
+    for (const [name, text] of Object.entries(files || {})) {
+      if (FOLDER_FILES.includes(name) && typeof text === 'string') fs.writeFileSync(path.join(workingDir, name), text);
+      else this.log.warn(vendor, 'refused folder file', { run, runKey, name });
+    }
+    let cfg;
+    try {
+      cfg = AgentRunner.MetaDriver.loadMetaConfig(process.env);
+    } catch (err) {
+      this.log.warn(vendor, 'refused api run without a key', { run, runKey, code: err.code });
+      this.emitOutput(ctx, `[Can't launch ${agent.name}]: put your Baseten API key in .env.local next to config.json (BASETEN_API_KEY), then try again.\r\n`, 'stderr');
+      return false;
+    }
+    const api = { ...ctx, api: true, pid: null, saidSomething: false, stopReason: null, usage: null };
+    api.abort = new AbortController();
+    this.processes.set(runKey, api);
+    const timeoutSec = agent.timeoutSec || DEFAULT_TIMEOUT_SEC;
+    api.timeoutSec = timeoutSec;
+    api.timer = setTimeout(() => {
+      if (this.processes.get(runKey) !== api) return;
+      this.log.warn(vendor, 'timed out, stopping', { run, runKey, timeoutSec });
+      this.stop(runKey, 'timeout');
+    }, timeoutSec * 1000);
+    const useModel = resolveMetaModel(model, cfg.model);
+    this.log.info(vendor, 'launching', { run, runKey, model: useModel, api: true, cwd: workingDir });
+    AgentRunner.MetaDriver.chatCompletions({
+      apiKey: cfg.apiKey,
+      baseUrl: cfg.baseUrl,
+      model: useModel,
+      messages: [{ role: 'user', content: prompt }],
+      signal: api.abort.signal,
+      onDelta: (text) => {
+        if (this.processes.get(runKey) !== api) return;
+        api.saidSomething = true;
+        this.emitOutput(api, text);
+      }
+    }).then(
+      ({ usage }) => {
+        if (usage) api.usage = usage;
+        this._finishApiRun(api, null);
+      },
+      (err) => this._finishApiRun(api, err)
+    );
+    return run;
+  }
+
+  _finishApiRun(api, err) {
+    const { runKey, vendor, run } = api;
+    clearTimeout(api.timer);
+    if (this.processes.get(runKey) === api) this.processes.delete(runKey);
+    const stopped = api.stopReason === 'user';
+    const timedOut = api.stopReason === 'timeout';
+    if (err && err.name !== 'AbortError') {
+      this.log.warn(vendor, 'api run failed', { run, runKey, error: err.message });
+      this.emitOutput(api, `[${this.agents[vendor].name} had a problem]: ${err.message}\r\n`, 'stderr');
+    }
+    this._send('agent:done', {
+      runKey, vendor, run, code: err && err.name !== 'AbortError' ? 1 : 0,
+      stopped, timedOut, timeoutSec: api.timeoutSec,
+      ...(api.usage ? { usage: api.usage } : {})
+    });
   }
 
   // Each chat works in a folder of its own inside the working folder (TM-59),
@@ -430,10 +540,9 @@ class AgentRunner {
     const take = (line) => {
       const ev = parseEvent(vendor, line);
       if (!ev) return false;
-      // Each CLI sends its messages whole ("I'll check…", tools, then the
-      // answer), so they get a blank line between them.
-      if (ev.text) this.emitOutput(child, (child.saidSomething ? '\n\n' : '') + ev.text);
-      if (ev.text) child.saidSomething = true;
+      const reply = applyReply(child.saidSomething, ev);
+      if (reply.text) this.emitOutput(child, reply.text);
+      child.saidSomething = reply.said;
       if (ev.steps) for (const step of ev.steps) this._send('agent:step', { runKey, vendor, run, step });
       if (ev.sessionId) child.meta.sessionId = ev.sessionId;
       if (ev.usage) child.meta.usage = { ...child.meta.usage, ...ev.usage };
@@ -499,6 +608,14 @@ class AgentRunner {
   stop(runKey, reason = 'user') {
     const child = this.processes.get(runKey);
     if (!child) return;
+    if (child.api) {
+      this.log.info(child.vendor, 'stopping api run', { run: child.run, runKey, reason });
+      child.stopReason = reason;
+      clearTimeout(child.timer);
+      try { child.abort.abort(); } catch (err) { this.log.warn(child.vendor, 'abort failed', { run: child.run, runKey, error: err.message }); }
+      this.processes.delete(runKey);
+      return;
+    }
     this.log.info(child.vendor, 'stopping process', { run: child.run, runKey, pid: child.pid, reason });
     child.stopReason = reason;
     clearTimeout(child.timer);
@@ -528,6 +645,10 @@ AgentRunner.resolveExecutable = resolveExecutable;
 AgentRunner.killTree = killTree;
 AgentRunner.MODEL_TEXT = MODEL_TEXT;
 AgentRunner.parseAgyModels = parseAgyModels;
+AgentRunner.applyReply = applyReply;
 AgentRunner.parseEvent = parseEvent;
+AgentRunner.MetaDriver = meta;
+AgentRunner.META_MODELS = META_MODELS;
+AgentRunner.resolveMetaModel = resolveMetaModel;
 
 module.exports = AgentRunner;

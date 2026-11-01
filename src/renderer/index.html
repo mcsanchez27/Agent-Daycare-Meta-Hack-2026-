@@ -138,11 +138,8 @@
         <div class="preview-empty" id="preview-empty">
           <div class="preview-empty-icon">👁</div>
           <div class="preview-empty-text">No active preview.</div>
-          <div class="preview-empty-sub">Agents can output HTML files or link Notion cards to preview here.</div>
-          <div class="preview-quick-actions">
-            <button type="button" class="preview-quick-btn" id="preview-glance-tm58">📋 TM-58 test pass (link)</button>
-            <button type="button" class="preview-quick-btn" id="preview-glance-tm60">📋 TM-59 crew flow (link)</button>
-          </div>
+          <div class="preview-empty-sub">Ask an agent to write an .html file, then use Preview on that message. A local dev server link works the same way.</div>
+          
         </div>
         <!-- No allow-same-origin: a page an agent wrote runs as a stranger, with no reach into this window. -->
         <iframe class="preview-iframe" id="preview-iframe" hidden sandbox="allow-scripts allow-forms"></iframe>
@@ -206,6 +203,7 @@
   <script src="members.js"></script>
   <script src="org.js"></script>
   <script src="thread.js"></script>
+  <script src="projects.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

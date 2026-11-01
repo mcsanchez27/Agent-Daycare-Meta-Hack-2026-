@@ -49,7 +49,8 @@ test('one-on-one header names the vendor and model', () => {
   addMessage(t, { from: 'matt', to: 'm1', text: 'hi' });
   const p = buildPrompt(t, 'm1');
   assert.ok(p.startsWith('You are Claude (claude, model opus), chatting one-on-one with Matt.'), p);
-  assert.match(p, /@Gemini, @Claude, @Codex or @Grok/);
+  assert.match(p, /Do not @ another agent/);
+  assert.ok(!p.includes('@Gemini'));
 });
 
 test('group header lists the members', () => {
@@ -61,7 +62,7 @@ test('group header lists the members', () => {
   assert.match(p, /^You are Haiku \(claude, model haiku\)/);
   assert.match(p, /Claude and Haiku/);
   assert.ok(!p.includes('one-on-one'));
-  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok']);
+  assert.deepEqual(VENDORS, ['antigravity', 'claude', 'codex', 'grok', 'meta']);
 });
 
 test('saved members named Antigravity become Gemini (TM-57), unless the name is taken', () => {

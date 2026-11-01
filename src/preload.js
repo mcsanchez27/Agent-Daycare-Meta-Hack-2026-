@@ -20,6 +20,12 @@ contextBridge.exposeInMainWorld('api', {
   pickFolder: (current) => ipcRenderer.invoke('config:pick-folder', { current }),
   pickFile: (current, title) => ipcRenderer.invoke('config:pick-file', { current, title }),
 
+  // Project containers and saved rosters.
+  listProjects: () => ipcRenderer.invoke('projects:list'),
+  createProject: (req) => ipcRenderer.invoke('projects:create', req),
+  updateProject: (req) => ipcRenderer.invoke('projects:update', req),
+  removeProject: (id) => ipcRenderer.invoke('projects:remove', { id }),
+
   // Saved chats, one file each (TM-53 Batch 2)
   listChats: () => ipcRenderer.invoke('chats:list'),
   loadChat: (id) => ipcRenderer.invoke('chats:load', { id }),
