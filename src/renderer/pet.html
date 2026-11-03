@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Daycare Pet</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="pet-body">
+  <header class="pet-head"><span id="pet-name">Agent</span><span class="pet-sub">with you in your other app</span></header>
+  <main class="pet-log" id="pet-log" aria-live="polite"></main>
+  <form class="pet-form" id="pet-form" autocomplete="off">
+    <textarea id="pet-input" rows="2" placeholder="Message your agent..." aria-label="Message your agent"></textarea>
+    <button type="submit" id="pet-send">Send</button>
+  </form>
+  <script src="pet.js"></script>
+</body>
+</html>
