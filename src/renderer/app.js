@@ -17,7 +17,7 @@
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
 const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT, joinIntent } = window.ChatThread;
-const { VENDORS, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
+const { VENDORS, ROLES, CREW, SPARK_CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 const { folderFile, personaIdOf, teammates, teammateId, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine } = window.ChatOrg;
 
 const { seedMembers, projectOf, scopedChats, projectGroups } = window.ChatProjects;
@@ -200,10 +200,10 @@ function createChat(vendor, model, modelLabel) {
 
 // "New crew" (TM-59): Codex designs, Gemini does UI/UX, Claude engineers,
 // each on its default model, in one chat with its own folder.
-function createCrew() {
+function createCrew(spec = CREW) {
   const now = new Date().toISOString();
   const members = [];
-  for (const c of CREW) members.push(newMember(members, c, { vendorNames: vendorNames() }));
+  for (const c of spec) members.push(newMember(members, c, { vendorNames: vendorNames() }));
   const chat = { id: newChatId(), title: 'New chat', createdAt: now, updatedAt: now, thread: createThread(members) };
   chats.set(chat.id, chat);
   hideChooser();
@@ -1076,6 +1076,7 @@ function showChooser(mode = 'new', vendor = null) {
       const newProject = option('New project…', projectCatalogError || 'A saved roster with separate chats filed together', '#2563eb', () => showChooser('project'));
       newProject.disabled = !!projectCatalogError;
       option('Autonomous Crew', CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), '#2563eb', createCrew);
+      option('Spark Crew (demo)', SPARK_CREW.map(c => `${vendorName(c.vendor)} ${ROLES[c.role].label}`).join(' · '), '#2563eb', () => createCrew(SPARK_CREW));
     }
     option('Teammates…', 'Agent Smith, Morpheus, Grok Scout… and the agents you saved', '#8b5cf6', () => showChooser('personas', mode));
     option('Agent Builder…', 'Forge an agent: engine, persona chip, skills, MCP servers; save it as a teammate', '#10b981', () => showChooser('builder', mode));

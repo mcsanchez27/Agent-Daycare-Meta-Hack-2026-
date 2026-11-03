@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW } = require('../src/renderer/members');
+const { newMember, ensureMembers, renameRetired, memberById, VENDORS, ROLES, CREW, SPARK_CREW } = require('../src/renderer/members');
 const { createThread, addMessage, buildPrompt } = require('../src/renderer/thread');
 
 test('newMember names: vendor, then model, then number', () => {
@@ -123,4 +123,14 @@ test('a member keeps the skill files picked for it in the Builder', () => {
   const m = newMember([], { vendor: 'grok', name: 'Scout', skills: ['market-scouting.md', 3] });
   assert.deepEqual(m.skills, ['market-scouting.md']);
   assert.equal(newMember([], { vendor: 'grok', skills: [] }).skills, undefined);
+});
+test('the Spark crew is led by Spark and built by Claude', () => {
+  assert.deepEqual(SPARK_CREW, [
+    { vendor: 'meta', role: 'design' },
+    { vendor: 'claude', role: 'engineering' }
+  ]);
+  const members = [];
+  for (const c of SPARK_CREW) members.push(newMember(members, c));
+  assert.deepEqual(members.map(m => m.name), ['Spark', 'Claude']);
+  assert.deepEqual(members.map(m => m.role), ['design', 'engineering']);
 });
