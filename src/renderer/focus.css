@@ -1,0 +1,22 @@
+/* Focus mode, in-Daycare editor, pet window (hackathon) */
+.sidecar.focused { width: 92vw; min-width: 0; max-width: none; }
+.file-editor { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.file-editor[hidden] { display: none; }
+.file-editor-bar { display: flex; align-items: center; gap: .5rem; padding: .5rem .85rem; border-bottom: 1px solid var(--line); background: var(--panel); }
+.file-editor-name { font-size: .8rem; font-weight: 600; color: var(--text); margin-right: auto; }
+.file-editor-text { flex: 1; width: 100%; min-height: 300px; background: #111213; color: var(--text); border: none; padding: 1rem; font-family: Consolas, monospace; font-size: .85rem; line-height: 1.5; resize: none; outline: none; }
+.pet-body { display: flex; flex-direction: column; height: 100vh; margin: 0; background: var(--bg); }
+.pet-head { padding: .6rem .8rem; border-bottom: 1px solid var(--line); font-weight: 600; color: var(--text); display: flex; flex-direction: column; }
+.pet-sub { font-weight: 400; font-size: .72rem; color: var(--muted); }
+.pet-log { flex: 1; overflow-y: auto; padding: .7rem; display: flex; flex-direction: column; gap: .45rem; }
+.pet-msg { padding: .45rem .6rem; border-radius: 8px; font-size: .85rem; line-height: 1.4; color: var(--text); background: var(--panel); white-space: pre-wrap; }
+.pet-msg.matt { align-self: flex-end; background: #2563eb; color: #fff; }
+.pet-msg.sys { color: var(--muted); background: transparent; font-size: .75rem; }
+.pet-form { display: flex; gap: .4rem; padding: .6rem; border-top: 1px solid var(--line); }
+.pet-form textarea { flex: 1; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .4rem; resize: none; }
+.pet-form button { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 0 .8rem; cursor: pointer; }
+.ui-icon { width: 1.05em; height: 1.05em; display: inline-block; vertical-align: -0.18em; }
+.brand-sparkle .ui-icon, .preview-empty-icon .ui-icon { width: 1.35em; height: 1.35em; }
+.preview-empty-icon { color: var(--muted); }
+.side-a:empty::after { content: "\2026"; }
+.msg.pending .bubble:empty::after { content: "\2026"; }
