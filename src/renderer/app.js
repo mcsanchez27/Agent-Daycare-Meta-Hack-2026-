@@ -39,6 +39,7 @@ const pending = {};
 const pendingRows = {}; // runKey -> { row, meta, bubble, view } while on screen
 const summaryRows = {}; // thread's first message id -> its summary row in the main chat
 const plans = {}; // vendor -> its latest plan usage (Claude reports it: 5-hour and 7-day)
+const gitInfoCache = {}; // chatId -> { repo, branch } | null (Workspace row)
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -57,6 +58,8 @@ const el = {
   sidecarContent: $('sidecar-content'),
   chatHeaderTitle: $('chat-header-title'),
   sidecarFolder: $('sidecar-folder'),
+  sidecarGit: $('sidecar-git'),
+  workspaceGitRow: $('workspace-git-row'),
   sidecarModels: $('sidecar-models'),
   contextGaugeLabel: $('context-gauge-label'),
   contextGaugeVal: $('context-gauge-val'),
@@ -655,6 +658,21 @@ function renderSidecar() {
     const fPath = workingDir ? `${workingDir}\\${c.id}` : '—';
     el.sidecarFolder.textContent = fPath;
     el.sidecarFolder.title = fPath;
+    // GitHub row: only when the chat's folder really is in a GitHub repo.
+    if (el.workspaceGitRow && el.sidecarGit) {
+      const showGit = (info) => {
+        el.workspaceGitRow.hidden = !info;
+        if (info) el.sidecarGit.textContent = info.branch ? `${info.repo} · ${info.branch}` : info.repo;
+      };
+      if (c.id in gitInfoCache) showGit(gitInfoCache[c.id]);
+      else {
+        el.workspaceGitRow.hidden = true;
+        api.getGitInfo(c.id).then((info) => {
+          gitInfoCache[c.id] = info;
+          if (current() && current().id === c.id) showGit(info);
+        }).catch(() => { gitInfoCache[c.id] = null; });
+      }
+    }
   }
 
   // Context gauge: each agent has a context of its own, so the gauge shows
@@ -673,7 +691,7 @@ function renderSidecar() {
       el.contextBar.title = `${fullest.name}'s last reply read ${u.inputTokens.toLocaleString()} of ${u.contextWindow.toLocaleString()} tokens (${pct.toFixed(1)}%)`;
     } else if (u) {
       el.contextGaugeVal.textContent = `${tokens(u.inputTokens)} tokens`;
-      el.contextBar.style.width = '25%';
+      el.contextBar.style.width = '0%';
       el.contextBar.title = `${fullest.name}'s last reply read ${u.inputTokens.toLocaleString()} tokens (its CLI doesn't say how big its window is)`;
     } else {
       el.contextGaugeVal.textContent = '0 tokens';
@@ -938,17 +956,37 @@ function showPreview({ title, url = null, type = 'html', ticketData = null }) {
 }
 
 function glanceNotionFromText(text) {
+  const link = /(https?:\/\/(?:www\.)?notion\.(?:so|com)\/\S+)/i.exec(text);
   const match = /(TM-\d+)/i.exec(text);
   const id = match ? match[1].toUpperCase() : null;
-  const url = id ? NOTION_LINKS[id] || null : null;
-  showPreview({ title: id ? `Notion: ${id}` : 'Notion', type: 'notion', ticketData: {
-    id: id || 'Notion',
-    title: url ? 'Open in Notion for the live ticket' : 'No link saved for this ticket',
-    status: 'not live',
-    desc: "The window isn't connected to Notion, so this card only links out. A live glance is an idea, not built.",
-    url,
-    tasks: []
-  } });
+  if (!link) {
+    const url = id ? NOTION_LINKS[id] || null : null;
+    showPreview({ title: id ? `Notion: ${id}` : 'Notion', type: 'notion', ticketData: {
+      id: id || 'Notion',
+      title: url ? 'Open in Notion for the live ticket' : 'No link saved for this ticket',
+      status: 'not live',
+      desc: 'Paste a Notion page link in the chat and this card pulls it live (needs NOTION_API_KEY in .env.local). TM ids alone only link out.',
+      url,
+      tasks: []
+    } });
+    return;
+  }
+  const ref = link[1];
+  showPreview({ title: 'Notion', type: 'notion', ticketData: { id: 'Notion', title: 'Loading from Notion...', status: 'loading', desc: ref, url: ref, tasks: [] } });
+  api.getNotionTicket(ref).then((out) => {
+    if (!out || !out.connected) {
+      showPreview({ title: 'Notion', type: 'notion', ticketData: { id: 'Notion', title: 'Not connected to Notion', status: 'not connected', desc: 'Add NOTION_API_KEY to .env.local (a Notion integration token, with this page shared to it), then restart the app.', url: ref, tasks: [] } });
+      return;
+    }
+    const t = out.ticket;
+    showPreview({ title: `Notion: ${t.title}`, type: 'notion', ticketData: {
+      id: 'Notion', title: t.title, status: t.status || 'live', priority: t.priority || '',
+      desc: t.edited ? `Updated ${new Date(t.edited).toLocaleString()} - pulled live from Notion` : 'Pulled live from Notion',
+      url: t.url || ref, tasks: t.tasks || []
+    } });
+  }).catch((err) => {
+    showPreview({ title: 'Notion', type: 'notion', ticketData: { id: 'Notion', title: 'Could not pull that page', status: 'failed', desc: `${err.message}. Check the page is shared with your Notion integration.`, url: ref, tasks: [] } });
+  });
 }
 
 function previewFromText(text) {
