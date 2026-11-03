@@ -104,7 +104,7 @@
 
   // Where `@name` first appears in text as a whole word, or -1.
   function mentionAt(text, name) {
-    const hit = new RegExp(`(^|[^\w@])@${escapeRegExp(name)}(?!\w-)`, 'i').exec(text);
+    const hit = new RegExp(`(^|[^\\w@])@${escapeRegExp(name)}(?![\\w-])`, 'i').exec(text);
     return hit ? hit.index : -1;
   }
 
@@ -117,7 +117,7 @@
   // A line that is only `@Name`, optional trailing punctuation. Buried mentions
   // ("see @Claude") do not count: models echo those, and they must not join anyone.
   function mentionOnOwnLine(text, name) {
-    return new RegExp(`^\s*@${escapeRegExp(name)}\s*[.!?]*\s*$`, 'im').test(String(text || ''));
+    return new RegExp(`^\\s*@${escapeRegExp(name)}\\s*[.!?]*\\s*$`, 'im').test(String(text || ''));
   }
 
   // Matt's message asked for this vendor by @Name or "bring in / add / ask Name".
@@ -125,7 +125,7 @@
     const name = vendorNames[vendor];
     if (!name || !text) return false;
     if (mentionAt(text, name) !== -1) return true;
-    return new RegExp(`\b(?:bring in|add|ask)\s+@?${escapeRegExp(name)}\b`, 'i').test(text);
+    return new RegExp(`\\b(?:bring in|add|ask)\\s+@?${escapeRegExp(name)}\\b`, 'i').test(text);
   }
 
   // What an agent reply may do with a findTarget hit.
@@ -345,7 +345,7 @@
     const hits = [];
     for (const c of chats) {
       // One space after # is allowed: agents write markdown ("# Codex solo").
-      const re = new RegExp(`(^|[^\w#])(# ?${escapeRegExp(c.title)})(?![\w-])`, 'gi');
+      const re = new RegExp(`(^|[^\\w#])(# ?${escapeRegExp(c.title)})(?![\\w-])`, 'gi');
       for (let h; (h = re.exec(text));) hits.push({ chatId: c.id, start: h.index + h[1].length, end: h.index + h[0].length });
     }
     hits.sort((a, b) => a.start - b.start || b.end - a.end);
@@ -416,7 +416,7 @@
   function findKick(text, selfId, members) {
     for (const m of members || []) {
       if (m.id === selfId || m.left) continue;
-      if (new RegExp(`^\s*kick\s+@${escapeRegExp(m.name)}\s*[.!?]*\s*$`, 'im').test(String(text || ''))) return { memberId: m.id };
+      if (new RegExp(`^\\s*kick\\s+@${escapeRegExp(m.name)}\\s*[.!?]*\\s*$`, 'im').test(String(text || ''))) return { memberId: m.id };
     }
     return null;
   }
