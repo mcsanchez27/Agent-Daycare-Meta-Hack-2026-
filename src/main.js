@@ -235,6 +235,7 @@ ipcMain.on('pet:send', (_, payload) => {
 });
 ipcMain.on('pet:reply-out', (_, payload) => {
   if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send('pet:reply', payload || {});
+});
 // "Back to Daycare" in the pet: bring the main window back and close the pet.
 ipcMain.on('pet:back', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -243,7 +244,6 @@ ipcMain.on('pet:back', () => {
     mainWindow.focus();
   }
   if (petWindow && !petWindow.isDestroyed()) petWindow.close();
-});
 });
 
 handle('config:save', async ({ config: incoming }) => {
