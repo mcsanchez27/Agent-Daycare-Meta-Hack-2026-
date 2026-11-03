@@ -24,6 +24,7 @@ test('all source files pass syntax validation', () => {
     'src/renderer/thread.js',
     'src/renderer/projects.js',
     'src/renderer/app.js',
+    'src/renderer/focus-pet.js',
     'src/renderer/pet.js'
   ];
 

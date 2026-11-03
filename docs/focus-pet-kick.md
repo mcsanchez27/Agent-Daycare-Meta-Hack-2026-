@@ -1,5 +1,7 @@
 # Focus, editor, Antigravity, pet, and agent kick-out
 
+Renderer wiring lives in `src/renderer/focus-pet.js` (loaded after `app.js`); styles in `src/renderer/focus.css`.
+
 ## Focus + in-Daycare editor
 Preview tab: **Focus** widens the sidecar to most of the window (chat stays alongside). When Preview is showing a file from the chat's folder, **Edit** opens it in a plain text editor inside Daycare; **Save** writes it back to the same folder and reloads the preview. Only text types (html, md, txt, js, css, json, csv, xml, svg) under 512 KB, only inside that chat's folder — enforced in the main process (`src/chat-files.js`).
 
