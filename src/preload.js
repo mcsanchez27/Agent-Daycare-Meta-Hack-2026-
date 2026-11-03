@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // Settings (executable paths, working folder)
   getConfig: () => ipcRenderer.invoke('config:get'),
+  getGitInfo: (chatId) => ipcRenderer.invoke('workspace:git', { chatId }),
+  getNotionTicket: (ref) => ipcRenderer.invoke('notion:ticket', { ref }),
   saveConfig: (config) => ipcRenderer.invoke('config:save', { config }),
   pickFolder: (current) => ipcRenderer.invoke('config:pick-folder', { current }),
   pickFile: (current, title) => ipcRenderer.invoke('config:pick-file', { current, title }),
