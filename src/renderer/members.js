@@ -93,7 +93,7 @@
     const members = thread.members || [];
     for (const m of members) {
       const old = RETIRED_NAMES[m.vendor];
-      const r = old && new RegExp(`^${old}( \d+)?$`).exec(m.name);
+      const r = old && new RegExp(`^${old}( \\d+)?$`).exec(m.name);
       if (!r) continue;
       const name = (vendorNames[m.vendor] || VENDOR_NAMES[m.vendor]) + (r[1] || '');
       if (!members.some(o => o.name.toLowerCase() === name.toLowerCase())) m.name = name;
