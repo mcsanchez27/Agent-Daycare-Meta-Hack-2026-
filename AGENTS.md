@@ -1,7 +1,13 @@
 # Agent Daycare: notes for AI agents
 
+## This repo is the Meta edition (from 2026-11-02): read before the older notes
+- This is `mcsanchez27/Agent-Daycare-Meta-Hack-2026-`, Matt's entry for the Meta hackathon (submissions due Nov 4, 9 PM ET). It started as a copy of Agent Daycare and now develops on its own. Its default branch is `main`, and older notes below that say `master` or `hackathon/meta-2026` mean `main` here.
+- **Folder:** `M:\Projects\Matt\AgentDaycare-Hackathon`. Never work in `M:\Projects\Matt\Agent-Daycare`; that is the separate main product. Before changing anything, run `git remote get-url origin` and `git branch --show-current`.
+- **Branches:** work on `meta/<short-name>` off `main`, keep `npm test` green, open a draft PR here and stop. Claude Code reviews and merges. TM tickets and the Agent Daycare rules for `tm-<id>/…` branches do not apply here unless Matt says so.
+- **Remotes:** `origin` is this repo. `daycare` is the main product, for pulling a general fix across when Matt asks; never push to it.
+
 ## CI (2026-10-27)
-- `.github/workflows/ci.yml` runs `npm ci` and `npm test` with Node 20 on Windows and Ubuntu for pull requests and pushes to `master`. Electron's binary download is skipped for these headless tests.
+- `.github/workflows/ci.yml` runs `npm ci` and `npm test` with Node 20 on Windows and Ubuntu for pull requests and pushes to `main`. Electron's binary download is skipped for these headless tests.
 - The September `codex-notify` EACCES test fix is already in history (`944848e`); the hook module and its tests were later removed in TM-47. Do not restore them to apply that old fix.
 
 ## Read this first
@@ -235,6 +241,6 @@ Run `npm test` after any change in `src/`.
 - Batch 2 (engine core, 2026-10-30): config/members/thread/agent-runner track 493a784; meta is a 5th engine end-to-end (config name/timeout, runner api-type runs via providers.MetaDriver, model alias spark). V1 assertion changes: VENDORS/supported-agents include meta, listModels gains meta. main.js loads .env.local at startup (key names only in the log). Runner stop/timeout spawn tests hang under the sandbox user (grandchildren cannot run taskkill); verify them on CI or your own npm test.
 
 ## Two local folders (from 2026-11-01)
-- `M:\Projects\Matt\Agent-Daycare` stays on `master` (shortcut "Agent Daycare"). `M:\Projects\Matt\AgentDaycare-Hackathon` is a separate clone on `hackathon/meta-2026` (shortcut "Agent Daycare Meta"). Each has its own `config.json`, `org.json`, `chats/`, `logs/`, `node_modules/`; only this one has `.env.local`.
+- `M:\Projects\Matt\Agent-Daycare` stays on `master` (shortcut "Agent Daycare"). `M:\Projects\Matt\AgentDaycare-Hackathon` is this repo, on `main` (shortcut "Agent Daycare Meta"). Each has its own `config.json`, `org.json`, `chats/`, `logs/`, `node_modules/`; only this one has `.env.local`.
 - This copy is named `Agent Daycare Meta` (`productName`, title, sidebar) so its Electron profile is `%APPDATA%\Agent Daycare Meta`, and its agents work in `~/AgentDaycare-Meta/chat`.
 - Despite "rebuilt from the ground up" above, the code is master plus the Spark engine (`src/providers`, `src/env.js`, runner and config changes). Do not develop in the wrong folder: run `git branch --show-current` first.

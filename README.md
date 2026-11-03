@@ -1,13 +1,14 @@
-# Agent Daycare
+# Agent Daycare Meta
 
-One chat window for talking with **Gemini** (the `agy` CLI), **Claude**, **Codex** and **Grok** on your own PC, one at a time or as a crew. A prototype in the Batcave lineage.
+One chat window for talking with **Muse Spark**, **Gemini** (the `agy` CLI), **Claude**, **Codex** and **Grok** on your own PC, one at a time or as a crew. Built for the Meta Global AI Developer Hackathon, starting from Agent Daycare.
 
-**Status:** V4 on `master` (one-agent and group chats, crews, vendor sessions, threads, background asks between chats); V5 "Org Control" (Central Brain, persona chips, skills library, MCP directory, saved teammates) is landing in TM-60 batches. The old dashboard (mascots, hooks, roles) was removed in TM-47; its last version is the git tag `v0-dashboard`.
+**Status:** one-agent and group chats, crews, projects, vendor sessions, threads, background asks between chats, Org Control (Central Brain, persona chips, skills library, MCP directory, saved teammates) and the Spark engine.
 
 ## Run it
 1. Install the CLIs you want and make sure each is logged in: `agy`, `claude`, `codex`, `grok` (`grok login --device-code` once).
-2. `npm install`
-3. `npm start` (or double-click `Start-Agent-Daycare.bat` on Windows)
+2. For Spark, create `.env.local` in this folder with `BASETEN_API_KEY`, `BASETEN_BASE_URL` and `META_SPARK_MODEL`. It is git-ignored; never commit it.
+3. `npm install`
+4. `npm start`
 
 ## Test
 `npm test`
