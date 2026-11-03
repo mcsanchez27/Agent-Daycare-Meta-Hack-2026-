@@ -10,6 +10,8 @@ const projects = require('./projects');
 const { rosterFrom } = require('./renderer/projects');
 const { teammates } = require('./renderer/org');
 const cliMcp = require('./cli-mcp');
+const chatFiles = require('./chat-files');
+const { spawn } = require('child_process');
 const { spellMenu } = require('./spellcheck');
 
 let mainWindow = null;
@@ -170,6 +172,54 @@ ipcMain.on('log:write', (_, { level, message, data } = {}) => {
 
 // User settings (executable paths, working folder)
 handle('config:get', () => ({ file: configFile, config }));
+
+// In-Daycare editor: text files inside the chat's own folder only
+// (chat-files.js enforces folder, name and extension).
+handle('files:read', ({ chatId, name }) => chatFiles.readChatFile(config.workingDir, chatId, name));
+handle('files:save', ({ chatId, name, text }) => chatFiles.saveChatFile(config.workingDir, chatId, name, text));
+
+// Open that file in Antigravity (the antigravity agent's executable from
+// config). The resolved path must stay inside the working folder.
+handle('ide:open', async ({ chatId, name }) => {
+  const file = chatFiles.resolveChatFile(config.workingDir, chatId, name);
+  if (!file) return { ok: false, reason: 'That file cannot be opened' };
+  const exe = config && config.agents && config.agents.antigravity && config.agents.antigravity.path;
+  if (!exe) return { ok: false, reason: 'No Antigravity path is configured' };
+  try {
+    await fs.promises.access(exe);
+  } catch (_) {
+    return { ok: false, reason: `Antigravity was not found at ${exe}` };
+  }
+  const child = spawn(exe, [file], { detached: true, stdio: 'ignore' });
+  child.unref();
+  logger.info('app', 'file opened in Antigravity', { file });
+  return { ok: true };
+});
+
+// Pet mode: a small always-on-top window carrying the current chat's
+// agent. It talks to the main window through relayed IPC; the main
+// window owns the chat, so the pet never runs an agent itself.
+let petWindow = null;
+handle('pet:open', ({ name }) => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.focus();
+  } else {
+    petWindow = new BrowserWindow({
+      width: 360, height: 500, alwaysOnTop: true, title: `Daycare Pet — ${name || 'Agent'}`,
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false }
+    });
+    petWindow.loadFile(path.join(__dirname, 'renderer', 'pet.html'), { query: { name: name || 'Agent' } });
+    petWindow.on('closed', () => { petWindow = null; });
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+  return { ok: true };
+});
+ipcMain.on('pet:send', (_, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('pet:incoming', payload || {});
+});
+ipcMain.on('pet:reply-out', (_, payload) => {
+  if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send('pet:reply', payload || {});
+});
 
 handle('config:save', async ({ config: incoming }) => {
   config = await userConfig.save(configFile, incoming);
