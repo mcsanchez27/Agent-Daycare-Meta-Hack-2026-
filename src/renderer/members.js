@@ -25,6 +25,9 @@
   // "New crew": one chat with all three, the designer first (it answers Matt
   // by default).
   const CREW = [{ vendor: 'codex', role: 'design' }, { vendor: 'antigravity', role: 'uiux' }, { vendor: 'claude', role: 'engineering' }];
+  // Hackathon demo crew: Spark (Meta API, no file tools) leads with the
+  // design brief in chat; Claude engineers and writes the files.
+  const SPARK_CREW = [{ vendor: 'meta', role: 'design' }, { vendor: 'claude', role: 'engineering' }];
 
   // Saved Agent Personas (TM-60 Batch 2): preconfigured agent brains & roles.
   const PERSONAS = {
@@ -90,7 +93,7 @@
     const members = thread.members || [];
     for (const m of members) {
       const old = RETIRED_NAMES[m.vendor];
-      const r = old && new RegExp(`^${old}( \\d+)?$`).exec(m.name);
+      const r = old && new RegExp(`^${old}( \d+)?$`).exec(m.name);
       if (!r) continue;
       const name = (vendorNames[m.vendor] || VENDOR_NAMES[m.vendor]) + (r[1] || '');
       if (!members.some(o => o.name.toLowerCase() === name.toLowerCase())) m.name = name;
@@ -102,5 +105,5 @@
     return (thread.members || []).find(m => m.id === id) || null;
   }
 
-  return { VENDORS, VENDOR_NAMES, ROLES, CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById };
+  return { VENDORS, VENDOR_NAMES, ROLES, CREW, SPARK_CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById };
 });
