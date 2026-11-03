@@ -795,7 +795,7 @@ function renderToolbelt() {
   centralBanner.className = 'toolbelt-central-banner';
   const cbTitle = document.createElement('div');
   cbTitle.className = 'toolbelt-central-title';
-  cbTitle.textContent = '🧠 Central Brain (MMS Operating Doctrine)';
+  cbTitle.textContent = 'Central Brain (MMS Operating Doctrine)';
   const cbStatus = document.createElement('div');
   cbStatus.className = 'toolbelt-central-status';
   cbStatus.textContent = '● Active across all agents · Synced from brains/central-brain.md';
@@ -848,7 +848,7 @@ function renderToolbelt() {
     chipItem.className = 'toolbelt-cap-item';
     const chipName = document.createElement('span');
     chipName.className = 'toolbelt-cap-name';
-    chipName.textContent = m.brain ? `💾 Persona Chip (${m.brain})` : '💾 Persona Chip (Default)';
+    chipName.textContent = m.brain ? `Persona Chip (${m.brain})` : 'Persona Chip (Default)';
     const chipStatus = document.createElement('span');
     chipStatus.className = 'toolbelt-cap-status';
     chipStatus.textContent = '● Attached';
@@ -860,15 +860,15 @@ function renderToolbelt() {
     skillsItem.className = 'toolbelt-cap-item';
     const skillsName = document.createElement('span');
     skillsName.className = 'toolbelt-cap-name';
-    skillsName.textContent = '⚡ Skills: …';
+    skillsName.textContent = 'Skills: …';
     skillsItem.appendChild(skillsName);
     caps.appendChild(skillsItem);
     loaded.then(({ org, skills }) => {
       const mine = skillsFor({ vendor: m.vendor, persona: personaIdOf(m), own: m.skills }, skills, org.skills || {});
       const names = [...mine.engine, ...mine.persona].map(s => s.title);
       const how = folderFile(m.vendor) ? `via ${folderFile(m.vendor)}` : 'in the prompt';
-      skillsName.textContent = `⚡ Skills: ${names.length ? `${names.join(', ')} (${how})` : 'none'}`;
-    }).catch(() => { skillsName.textContent = '⚡ Skills: unknown'; });
+      skillsName.textContent = `Skills: ${names.length ? `${names.join(', ')} (${how})` : 'none'}`;
+    }).catch(() => { skillsName.textContent = 'Skills: unknown'; });
 
     // Claude gets directory servers at launch. The other engines do not, so
     // the line says that instead of "none assigned" next to a full CLI list.
@@ -876,20 +876,20 @@ function renderToolbelt() {
     mcpItem.className = 'toolbelt-cap-item';
     const mcpName = document.createElement('span');
     mcpName.className = 'toolbelt-cap-name';
-    mcpName.textContent = '🔌 MCP: …';
+    mcpName.textContent = 'MCP: …';
     mcpItem.appendChild(mcpName);
     caps.appendChild(mcpItem);
     loaded.then(({ org, servers, cli }) => {
       const mine = mcpFor({ vendor: m.vendor, persona: personaIdOf(m), own: m.mcp }, servers, org.mcp || {});
       if (m.vendor === 'claude') {
-        mcpName.textContent = `🔌 MCP: ${mine.length ? `${mine.map(s => s.name).join(', ')} (passed at launch)` : 'none'}`;
+        mcpName.textContent = `MCP: ${mine.length ? `${mine.map(s => s.name).join(', ')} (passed at launch)` : 'none'}`;
       } else if (m.vendor === 'meta') {
         mcpName.textContent = 'MCP: API engine, no per-launch servers.';
       } else {
         const has = new Set((cli[m.vendor] || []).filter(s => s.enabled).map(s => s.name.toLowerCase()));
-        mcpName.textContent = `🔌 MCP: not passed by Daycare. Its CLI has ${has.size}.`;
+        mcpName.textContent = `MCP: not passed by Daycare. Its CLI has ${has.size}.`;
       }
-    }).catch(() => { mcpName.textContent = '🔌 MCP: unknown'; });
+    }).catch(() => { mcpName.textContent = 'MCP: unknown'; });
 
     card.append(head, caps);
     el.toolbeltList.appendChild(card);
@@ -1466,10 +1466,10 @@ function renderMessage(view, m) {
   if (view === main && m.from !== 'system') {
     const buttons = [{ label: 'Thread', title: 'Open a thread on this message beside the chat', onClick: () => openPanel(m.id) }];
     if (/([a-zA-Z0-9_\-\/]+\.html|https?:\/\/localhost:\d+)/i.test(m.text)) {
-      buttons.push({ label: '👁 Preview', title: 'Live preview in sidecar inspector', onClick: () => previewFromText(m.text) });
+      buttons.push({ label: 'Preview', title: 'Live preview in sidecar inspector', onClick: () => previewFromText(m.text) });
     }
     if (/(TM-\d+|notion\.(so|com))/i.test(m.text)) {
-      buttons.push({ label: '📋 Glance Ticket', title: 'Glance Notion ticket card in inspector', onClick: () => glanceNotionFromText(m.text) });
+      buttons.push({ label: 'Glance Ticket', title: 'Glance Notion ticket card in inspector', onClick: () => glanceNotionFromText(m.text) });
     }
     addActions(row, buttons);
   }
@@ -2167,7 +2167,7 @@ async function renderOrgMemory(panel) {
   head.className = 'org-card-head';
   const title = document.createElement('div');
   title.className = 'org-card-title';
-  title.textContent = '🧠 Central Brain (MMS Operating Doctrine)';
+  title.textContent = 'Central Brain (MMS Operating Doctrine)';
   const badge = document.createElement('span');
   badge.className = 'org-card-badge';
   badge.textContent = '● Active across all agents · Synced';
@@ -2200,7 +2200,7 @@ async function renderOrgMemory(panel) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'org-save-btn';
-  saveBtn.textContent = '💾 Save & Push to All Active Agents';
+  saveBtn.textContent = 'Save & Push to All Active Agents';
   saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
@@ -2210,7 +2210,7 @@ async function renderOrgMemory(panel) {
       meta.textContent = `File: brains/${res.file} · Pushed: ${new Date(res.mtime).toLocaleTimeString()}`;
       setTimeout(() => {
         saveBtn.disabled = false;
-        saveBtn.textContent = '💾 Save & Push to All Active Agents';
+        saveBtn.textContent = 'Save & Push to All Active Agents';
       }, 2000);
     } catch (_) {
       saveBtn.disabled = false;
@@ -2236,7 +2236,7 @@ async function renderOrgPersonas(panel) {
   topHead.className = 'org-card-head';
   const topTitle = document.createElement('div');
   topTitle.className = 'org-card-title';
-  topTitle.textContent = '💾 Specialized Persona Chips (Operational Roles)';
+  topTitle.textContent = 'Specialized Persona Chips (Operational Roles)';
   const topBadge = document.createElement('span');
   topBadge.className = 'org-card-badge';
   topBadge.textContent = 'Dynamic Disk Hot-Reloading';
@@ -2253,7 +2253,7 @@ async function renderOrgPersonas(panel) {
   createCard.className = 'org-section-card';
   const createTitle = document.createElement('div');
   createTitle.className = 'org-card-title';
-  createTitle.textContent = '➕ Forge New Persona Chip';
+  createTitle.textContent = 'Forge New Persona Chip';
   const formRow = document.createElement('div');
   formRow.className = 'org-form-row';
   const nameInput = document.createElement('input');
@@ -2377,7 +2377,7 @@ async function renderOrgMcps(panel) {
   topHead.className = 'org-card-head';
   const topTitle = document.createElement('div');
   topTitle.className = 'org-card-title';
-  topTitle.textContent = '🔌 MCP Directory';
+  topTitle.textContent = 'MCP Directory';
   const topBadge = document.createElement('span');
   topBadge.className = 'org-card-badge';
   topBadge.textContent = 'Claude: per launch · others: show what they have';
@@ -2405,7 +2405,7 @@ async function renderOrgMcps(panel) {
   addCard.className = 'org-section-card';
   const addTitle = document.createElement('div');
   addTitle.className = 'org-card-title';
-  addTitle.textContent = '➕ Add a server';
+  addTitle.textContent = 'Add a server';
   const formRow = document.createElement('div');
   formRow.className = 'org-form-row';
   const nameInput = document.createElement('input');
@@ -2447,7 +2447,7 @@ async function renderOrgMcps(panel) {
     impCard.className = 'org-section-card';
     const impTitle = document.createElement('div');
     impTitle.className = 'org-card-title';
-    impTitle.textContent = `📥 In Gemini's CLI but not here (${importable.length})`;
+    impTitle.textContent = `In Gemini's CLI but not here (${importable.length})`;
     const impRow = document.createElement('div');
     impRow.className = 'org-item-actions wrap';
     for (const x of importable) {
@@ -2570,7 +2570,7 @@ async function renderOrgSkills(panel) {
   topHead.className = 'org-card-head';
   const topTitle = document.createElement('div');
   topTitle.className = 'org-card-title';
-  topTitle.textContent = '⚡ Operational Skills & Playbooks Library';
+  topTitle.textContent = 'Operational Skills & Playbooks Library';
   const topBadge = document.createElement('span');
   topBadge.className = 'org-card-badge';
   topBadge.textContent = 'Institutional Skills';
@@ -2587,7 +2587,7 @@ async function renderOrgSkills(panel) {
   addCard.className = 'org-section-card';
   const addTitle = document.createElement('div');
   addTitle.className = 'org-card-title';
-  addTitle.textContent = '➕ Add Institutional Skill';
+  addTitle.textContent = 'Add Institutional Skill';
   const formRow = document.createElement('div');
   formRow.className = 'org-form-row';
   const nameInput = document.createElement('input');
@@ -2708,7 +2708,7 @@ async function renderOrgBuilder(panel) {
   head.className = 'org-card-head';
   const title = document.createElement('div');
   title.className = 'org-card-title';
-  title.textContent = '🛠️ Agent Builder Workbench';
+  title.textContent = 'Agent Builder Workbench';
   const badge = document.createElement('span');
   badge.className = 'org-card-badge';
   badge.textContent = 'Fabrication Bench';
@@ -2732,13 +2732,13 @@ async function renderOrgBuilder(panel) {
   const deployNewBtn = document.createElement('button');
   deployNewBtn.type = 'button';
   deployNewBtn.className = 'org-save-btn';
-  deployNewBtn.textContent = '🚀 Deploy into New Mission Chat';
+  deployNewBtn.textContent = 'Deploy into New Mission Chat';
 
   const deployCurrentBtn = document.createElement('button');
   deployCurrentBtn.type = 'button';
   deployCurrentBtn.className = 'org-action-btn primary';
   deployCurrentBtn.style.padding = '.5rem 1rem';
-  deployCurrentBtn.textContent = '👥 Summon into Current Chat';
+  deployCurrentBtn.textContent = 'Summon into Current Chat';
 
   const getBuilderConfig = () => { const cfg = builder.config(); cfg.name = cfg.name || 'Custom Agent'; return cfg; };
 
@@ -2771,7 +2771,7 @@ async function renderOrgBuilder(panel) {
   savedCard.className = 'org-section-card';
   const savedTitle = document.createElement('div');
   savedTitle.className = 'org-card-title';
-  savedTitle.textContent = '👥 Saved teammates';
+  savedTitle.textContent = 'Saved teammates';
   const savedList = document.createElement('div');
   savedList.className = 'org-item-actions wrap';
   const savedNote = document.createElement('div');
