@@ -16,6 +16,8 @@ test('all source files pass syntax validation', () => {
     'src/spellcheck.js',
     'src/projects.js',
     'src/env.js',
+    'src/git-info.js',
+    'src/notion.js',
     'src/providers/index.js',
     'src/providers/meta.js',
     'src/renderer/org.js',

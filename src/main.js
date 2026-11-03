@@ -10,6 +10,8 @@ const projects = require('./projects');
 const { rosterFrom } = require('./renderer/projects');
 const { teammates } = require('./renderer/org');
 const cliMcp = require('./cli-mcp');
+const gitInfo = require('./git-info');
+const notion = require('./notion');
 const { spellMenu } = require('./spellcheck');
 
 let mainWindow = null;
@@ -170,6 +172,18 @@ ipcMain.on('log:write', (_, { level, message, data } = {}) => {
 
 // User settings (executable paths, working folder)
 handle('config:get', () => ({ file: configFile, config }));
+
+// Sidecar Workspace row: GitHub repo + branch of the chat's own folder
+// (a subfolder of a repo still resolves to that repo). Read-only; null
+// hides the row. The chat id is validated so it stays a plain folder name.
+handle('workspace:git', ({ chatId }) => {
+  if (!config || !/^[A-Za-z0-9-]{1,80}$/.test(String(chatId || ''))) return null;
+  return gitInfo.getGitInfo(path.join(config.workingDir, String(chatId)));
+});
+
+// Live Notion glance: the token stays in this process (env.js loaded
+// .env.local at startup); the renderer only ever gets ticket fields.
+handle('notion:ticket', ({ ref }) => notion.getTicket(ref, { env: process.env }));
 
 handle('config:save', async ({ config: incoming }) => {
   config = await userConfig.save(configFile, incoming);
