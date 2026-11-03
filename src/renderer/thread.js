@@ -104,7 +104,7 @@
 
   // Where `@name` first appears in text as a whole word, or -1.
   function mentionAt(text, name) {
-    const hit = new RegExp(`(^|[^\\w@])@${escapeRegExp(name)}(?!\w-)`, 'i').exec(text);
+    const hit = new RegExp(`(^|[^\\w@])@${escapeRegExp(name)}(?![\\w-])`, 'i').exec(text);
     return hit ? hit.index : -1;
   }
 
@@ -274,7 +274,7 @@
       guidance;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
     const background = "To ask one of Matt's other chats something without bringing it in, write # and that chat's exact title, then the question (for example: #Trip plans what dates did we pick?). The answer comes back to you here. " +
-      (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}" `).join(', ')}. ` : '');
+      (chatTitles.length ? `Matt's other chats: ${chatTitles.map(c => `"${c}"`).join(', ')}. ` : '');
     const project = projectName ? `Project: ${projectName}. Other chats listed here belong to this project only. Chats keep separate sessions and working folders; no project files are shared automatically. ` : '';
     const header = intro + project + background + where + 'Reply to the latest message in plain text.';
 
@@ -345,7 +345,7 @@
     const hits = [];
     for (const c of chats) {
       // One space after # is allowed: agents write markdown ("# Codex solo").
-      const re = new RegExp(`(^|[^\w#])(# ?${escapeRegExp(c.title)})(?![\w-])`, 'gi');
+      const re = new RegExp(`(^|[^\\w#])(# ?${escapeRegExp(c.title)})(?![\\w-])`, 'gi');
       for (let h; (h = re.exec(text));) hits.push({ chatId: c.id, start: h.index + h[1].length, end: h.index + h[0].length });
     }
     hits.sort((a, b) => a.start - b.start || b.end - a.end);
