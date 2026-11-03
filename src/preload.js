@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('api', {
   openPet: (name) => ipcRenderer.invoke('pet:open', { name }),
   petSend: (text) => ipcRenderer.send('pet:send', { text }),
   petReply: (payload) => ipcRenderer.send('pet:reply-out', payload),
+  petBack: () => ipcRenderer.send('pet:back'),
   onPetIncoming: (callback) => ipcRenderer.on('pet:incoming', (_, data) => callback(data)),
   onPetReply: (callback) => ipcRenderer.on('pet:reply', (_, data) => callback(data)),
   saveConfig: (config) => ipcRenderer.invoke('config:save', { config }),
