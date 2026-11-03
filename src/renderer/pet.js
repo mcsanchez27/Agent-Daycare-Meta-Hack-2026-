@@ -19,6 +19,8 @@ function add(text, who) {
 
 add(`${agentName} is with you. Messages go to your chat in Daycare.`, 'sys');
 
+document.getElementById('pet-back').addEventListener('click', () => api.petBack());
+
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   const text = input.value.trim();
