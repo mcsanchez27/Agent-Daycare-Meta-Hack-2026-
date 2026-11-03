@@ -12,6 +12,8 @@ const { teammates } = require('./renderer/org');
 const cliMcp = require('./cli-mcp');
 const gitInfo = require('./git-info');
 const notion = require('./notion');
+const chatFiles = require('./chat-files');
+const { spawn, execFile } = require('child_process');
 const { spellMenu } = require('./spellcheck');
 
 let mainWindow = null;
@@ -184,6 +186,56 @@ handle('workspace:git', ({ chatId }) => {
 // Live Notion glance: the token stays in this process (env.js loaded
 // .env.local at startup); the renderer only ever gets ticket fields.
 handle('notion:ticket', ({ ref }) => notion.getTicket(ref, { env: process.env }));
+// In-Daycare editor: text files inside the chat's own folder only
+// (chat-files.js enforces folder, name and extension).
+handle('files:read', ({ chatId, name }) => chatFiles.readChatFile(config.workingDir, chatId, name));
+handle('files:save', ({ chatId, name, text }) => chatFiles.saveChatFile(config.workingDir, chatId, name, text));
+
+// Open that file in Antigravity (the antigravity agent's executable from
+// config). The resolved path must stay inside the working folder.
+handle('ide:open', async ({ chatId, name }) => {
+  const file = chatFiles.resolveChatFile(config.workingDir, chatId, name);
+  if (!file) return { ok: false, reason: 'That file cannot be opened' };
+  let exe = config && config.agents && config.agents.antigravity && config.agents.antigravity.path;
+  const exists = async (p) => { try { await fs.promises.access(p); return true; } catch (_) { return false; } };
+  if (!exe || !(await exists(exe))) {
+    const found = await new Promise((done) => {
+      execFile('where', ['agy.exe'], { timeout: 2500 }, (err, out) => done(err ? null : String(out).split(/\r?\n/).find(Boolean)));
+    });
+    if (found) exe = found.trim();
+  }
+  if (!exe || !(await exists(exe))) return { ok: false, reason: 'Antigravity was not found (checked Settings path and PATH)' };
+  const child = spawn(exe, [file], { detached: true, stdio: 'ignore' });
+  child.on('error', (err) => logger.warn('app', 'Antigravity did not launch', { exe, error: err.message }));
+  child.unref();
+  logger.info('app', 'file opened in Antigravity', { file });
+  return { ok: true };
+});
+
+// Pet mode: a small always-on-top window carrying the current chat's
+// agent. It talks to the main window through relayed IPC; the main
+// window owns the chat, so the pet never runs an agent itself.
+let petWindow = null;
+handle('pet:open', ({ name }) => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.focus();
+  } else {
+    petWindow = new BrowserWindow({
+      width: 360, height: 500, alwaysOnTop: true, title: `Daycare Pet — ${name || 'Agent'}`,
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false }
+    });
+    petWindow.loadFile(path.join(__dirname, 'renderer', 'pet.html'), { query: { name: name || 'Agent' } });
+    petWindow.on('closed', () => { petWindow = null; });
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+  return { ok: true };
+});
+ipcMain.on('pet:send', (_, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('pet:incoming', payload || {});
+});
+ipcMain.on('pet:reply-out', (_, payload) => {
+  if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send('pet:reply', payload || {});
+});
 
 handle('config:save', async ({ config: incoming }) => {
   config = await userConfig.save(configFile, incoming);

@@ -269,7 +269,7 @@
     const guidance = promptGuidance(me, { centralBrain, personaChip, personaSkills });
     const intro = (here.length === 1
       ? `${who}, chatting one-on-one with Matt. Do not @ another agent. Matt adds one by typing @Name himself. If he asked you to bring one in, put @Name alone on its own line. `
-      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring in someone already here, write @Name; only do that when you need them to act, since every @ of someone here launches them (not to thank or agree). Do not @ a vendor who is not in this chat unless Matt asked, and then put @Name alone on its own line. `) +
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring in someone already here, write @Name; only do that when you need them to act, since every @ of someone here launches them (not to thank or agree). Do not @ a vendor who is not in this chat unless Matt asked, and then put @Name alone on its own line. To remove an agent who is derailing the chat, put kick @Name alone on its own line; Matt can bring them back. `) +
       (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '') +
       guidance;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
@@ -410,5 +410,22 @@
     return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + '…' : line;
   }
 
-  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads, joinIntent, mentionOnOwnLine };
+  // An agent removing another agent: a line that is only `kick @Name`.
+  // Prose ("we should kick @X out") never counts, and self never counts;
+  // the caller still refuses the chat owner. Returns { memberId } or null.
+  function findKick(text, selfId, members) {
+    // Lines inside fenced code blocks are examples, never orders.
+    let fenced = false;
+    const live = String(text || '').split('\n').filter((line) => {
+      if (/^\s*```/.test(line)) { fenced = !fenced; return false; }
+      return !fenced;
+    }).join('\n');
+    for (const m of members || []) {
+      if (m.id === selfId || m.left) continue;
+      if (new RegExp(`^\\s*kick\\s+@${escapeRegExp(m.name)}\\s*[.!?]*\\s*$`, 'im').test(live)) return { memberId: m.id };
+    }
+    return null;
+  }
+
+  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findKick, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads, joinIntent, mentionOnOwnLine };
 });
