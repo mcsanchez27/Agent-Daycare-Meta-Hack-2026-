@@ -148,6 +148,7 @@
           <div class="preview-empty-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
           <div class="preview-empty-text">No active preview.</div>
           <div class="preview-empty-sub">Ask an agent to write an .html file, then use Preview on that message. A local dev server link works the same way.</div>
+          
         </div>
         <!-- No allow-same-origin: a page an agent wrote runs as a stranger, with no reach into this window. -->
         <iframe class="preview-iframe" id="preview-iframe" hidden sandbox="allow-scripts allow-forms"></iframe>
@@ -189,7 +190,7 @@
       </div>
       <div class="sidecar-section">
         <div class="sidecar-section-title">Active Capabilities</div>
-        <div class="toolbelt-list" id="toolbelt-list"></div>
+        <div id="toolbelt-list" id="toolbelt-list"></div>
       </div>
       <div class="sidecar-section">
         <div class="sidecar-section-title">MCP servers each CLI has (read live)</div>
@@ -207,7 +208,7 @@
       <form class="composer panel-composer-dock" id="panel-composer" autocomplete="off">
         <div class="mentions" id="panel-mentions" role="listbox" aria-label="Bring in an agent" hidden></div>
         <div class="input-row">
-          <textarea id="panel-message" rows="1" placeholder="Reply in the thread…" aria-label="Reply in the thread"></textarea>
+          <textarea id="panel-message" rows="1" placeholder="Reply in thread…" aria-label="Reply in the thread"></textarea>
           <button type="submit" id="panel-send" title="Send reply">
             <span class="send-arrow">↑</span>
           </button>
