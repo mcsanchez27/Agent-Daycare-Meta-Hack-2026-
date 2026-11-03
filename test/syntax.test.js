@@ -16,13 +16,15 @@ test('all source files pass syntax validation', () => {
     'src/spellcheck.js',
     'src/projects.js',
     'src/env.js',
+    'src/chat-files.js',
     'src/providers/index.js',
     'src/providers/meta.js',
     'src/renderer/org.js',
     'src/renderer/members.js',
     'src/renderer/thread.js',
     'src/renderer/projects.js',
-    'src/renderer/app.js'
+    'src/renderer/app.js',
+    'src/renderer/pet.js'
   ];
 
   for (const f of files) {
