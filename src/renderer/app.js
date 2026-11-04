@@ -437,6 +437,7 @@ function openPanel(rootId) {
   if (el.sidecarPreview) el.sidecarPreview.hidden = true;
   if (el.sidecarToolbelt) el.sidecarToolbelt.hidden = true;
   el.panel.hidden = false;
+  if (el.sidecar && el.sidecar.offsetWidth < 480) el.sidecar.style.width = '520px';
   el.panelLabel.textContent = `Thread on ${root.from === 'matt' ? 'your' : nameOf(root.from) + "'s"} message`;
   renderView(panel);
   updatePlaceholder(panel);
@@ -761,7 +762,7 @@ function tokens(n) {
 // Claude reply. Kept in this window's storage so it shows after a restart.
 function renderPlan() {
   const p = plans.claude;
-  el.plan.hidden = !p;
+  el.plan.hidden = !p || (!p.fiveHour && !p.sevenDay);
   if (p) {
     const pct = (w) => (w ? `${Math.round(w.used * 100)}%` : '?');
     const when = (w) => (w && w.resetsAt ? new Date(w.resetsAt * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'unknown');
@@ -776,6 +777,7 @@ function renderPlan() {
 // Sidecar expansion toggle (TM-60 Batch 3)
 function toggleSidecarExpand() {
   if (!el.sidecar) return;
+  el.sidecar.style.width = '';
   const isExpanded = el.sidecar.classList.toggle('expanded');
   if (el.sidecarExpandBtn) {
     el.sidecarExpandBtn.textContent = isExpanded ? '⤡' : '⤢';
@@ -783,6 +785,34 @@ function toggleSidecarExpand() {
   }
 }
 
+
+// Sidecar drag-resize: drag the strip on the sidecar's left edge. The
+// width is remembered; Expand/Focus clear it so their widths win again.
+(function wireSidecarResize() {
+  const handle = document.getElementById('sidecar-resize');
+  const sidecar = el.sidecar;
+  if (!handle || !sidecar) return;
+  try {
+    const saved = Number(localStorage.getItem('sidecarWidth'));
+    if (saved >= 280 && saved <= Math.round(window.innerWidth * 0.75)) sidecar.style.width = `${saved}px`;
+  } catch (_) { /* storage unavailable */ }
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidecar.offsetWidth;
+    const onMove = (ev) => {
+      const w = Math.min(Math.max(startW + (startX - ev.clientX), 280), Math.round(window.innerWidth * 0.75));
+      sidecar.style.width = `${w}px`;
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      try { localStorage.setItem('sidecarWidth', String(sidecar.offsetWidth)); } catch (_) { /* ignore */ }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
 // Renders the toolbelt capabilities tab (TM-60 Batch 3, 4)
 function renderToolbelt() {
   if (!el.toolbeltList) return;
@@ -1575,9 +1605,12 @@ function updatePendingMeta(key) {
   // what the agent is doing right now (TM-59) once it uses a tool.
   const secs = `${Math.round((Date.now() - p.started) / 1000)}s`;
   const now = p.steps.length ? p.steps[p.steps.length - 1] : null;
+  const idleSecs = Math.round((Date.now() - (p.lastActivity || p.started)) / 1000);
+  const stall = idleSecs >= 20 ? ` · no news for ${idleSecs}s (may be stalled)` : '';
   r.meta.textContent = p.text && !now ? `${nameOf(p.memberId)} · replying…`
     : now ? `${nameOf(p.memberId)} · ${now} · ${secs}`
     : `${nameOf(p.memberId)} · thinking… ${secs}`;
+  r.meta.textContent += stall;
   if (p.steps.length) {
     if (!r.steps) {
       r.steps = document.createElement('ol');
@@ -1594,6 +1627,7 @@ function onStep({ runKey, run, step }) {
   const p = pendingFor(runKey, run);
   if (!p || !step) return;
   p.steps.push(step);
+  p.lastActivity = Date.now();
   updatePendingMeta(runKey);
 }
 
@@ -1705,6 +1739,11 @@ function updateSendButton(view) {
     view.send.title = `Asks ${chatAsks.map(a => `"${chats.get(a.chatId).title}"`).join(' and ')} in the background`;
     return;
   }
+  if (current() && /(^|\s)@all(?![\w-])/i.test(view.input.value) && current().thread.members.filter(m => !m.left).length > 1) {
+    view.send.disabled = false;
+    view.send.title = 'Asks every agent in this chat (busy ones are skipped)';
+    return;
+  }
   const t = current() && view.input.value.trim() ? target(view) : null;
   const busy = Boolean(t && t.memberId && pending[runKeyOf(currentId, t.memberId)]);
   view.send.disabled = !t || busy;
@@ -1728,6 +1767,16 @@ function send(view) {
     autoGrow(view);
     closeMentions(view);
     for (const a of chatAsks) askChat({ fromChatId: currentId, asker: 'matt', text: a.question, targetId: a.chatId, hop: 1, threadOf: view.threadOf });
+    return;
+  }
+  // @all: one message, every agent in the chat answers it.
+  const activeMembers = current().thread.members.filter(m => !m.left);
+  if (activeMembers.length > 1 && /(^|\s)@all(?![\w-])/i.test(text)) {
+    post(currentId, { from: 'matt', to: activeMembers[0].id, text, threadOf: view.threadOf });
+    view.input.value = '';
+    autoGrow(view);
+    closeMentions(view);
+    for (const m of activeMembers) if (!pending[runKeyOf(currentId, m.id)]) ask(currentId, m.id, view.threadOf);
     return;
   }
   const t = target(view);
@@ -1763,10 +1812,21 @@ function mentionItems(q) {
     const m = members.find(x => x.name.toLowerCase() === n.toLowerCase());
     return !m ? 'joins on its default model' : m.left ? 'left: joins again' : 'in this chat';
   };
-  return VENDORS.filter(v => vendorName(v).toLowerCase().startsWith(q.query)).map(v => ({
-    key: v, label: vendorName(v), color: vendors[v] ? vendors[v].color : '#888', insert: `@${vendorName(v)} `,
-    sub: status(vendorName(v))
-  }));
+  // Agents already in this chat, by their own name (personas included):
+  // typing any word of the name finds them ("Lead Architect" via "lead").
+  const items = members
+    .filter(m => m.name.toLowerCase().split(/\s+/).some(w => w.startsWith(q.query)))
+    .map(m => ({ key: `m:${m.id}`, label: m.name, color: vendors[m.vendor] ? vendors[m.vendor].color : '#888', insert: `@${m.name} `, sub: m.left ? 'left: joins again' : 'in this chat' }));
+  const active = members.filter(m => !m.left);
+  if (active.length > 1 && 'all'.startsWith(q.query)) {
+    items.push({ key: 'all', label: 'all', color: '#888', insert: '@all ', sub: `ask all ${active.length} agents in this chat` });
+  }
+  for (const v of VENDORS) {
+    if (!vendorName(v).toLowerCase().startsWith(q.query)) continue;
+    if (items.some(i => i.label.toLowerCase() === vendorName(v).toLowerCase())) continue;
+    items.push({ key: v, label: vendorName(v), color: vendors[v] ? vendors[v].color : '#888', insert: `@${vendorName(v)} `, sub: status(vendorName(v)) });
+  }
+  return items.slice(0, 8);
 }
 
 function updateMentions(view) {
@@ -1887,7 +1947,7 @@ async function ask(chatId, memberId, threadOf = null, { side = null, answer = nu
   // await): Send stays off, so a second send can't launch the agent twice.
   const runKey = runKeyOf(chatId, memberId);
   const p = pending[runKey] = {
-    chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(),
+    chatId, memberId, threadOf, side, answer, hop: side ? side.hop : hop, text: '', stderr: '', steps: [], started: Date.now(), lastActivity: Date.now(),
     where, sessionId: session ? session.id : null, seenUpTo: thread.nextId - 1, brainSig: '', launched: false
   };
   if (chatId === currentId) {
@@ -1996,6 +2056,7 @@ function onOutput({ runKey, run, stream, text }) {
     return;
   }
   p.text += text;
+  p.lastActivity = Date.now();
   // An answer to another chat streams into that chat's ask row too.
   if (p.side && p.side.chatId === currentId) {
     for (const view of openViews()) {

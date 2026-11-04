@@ -255,7 +255,7 @@
     const said = thread.messages.filter(m => spoken(m) && (upTo === null || m.id <= upTo) &&
       (threadOf === null || m.threadOf === threadOf || (!m.threadOf && m.id <= threadOf)));
     const last = said[said.length - 1];
-    const fromMatt = last && (last.from === 'matt' || last.from === 'guest') && last.to === memberId;
+    const fromMatt = last && (last.from === 'matt' || last.from === 'guest') && (last.to === memberId || (last.from === 'matt' && /(^|\s)@all(?![\w-])/i.test(last.text)));
     const handoff = last && isMember(thread, last.from) && findMention(last.text, last.from, members) === memberId;
     if (!me || (!answer && !fromMatt && !handoff)) {
       throw new Error(`The newest message is not from Matt to ${memberId} or a handoff to it`);
@@ -269,7 +269,7 @@
     const guidance = promptGuidance(me, { centralBrain, personaChip, personaSkills });
     const intro = (here.length === 1
       ? `${who}, chatting one-on-one with Matt. Do not @ another agent. Matt adds one by typing @Name himself. If he asked you to bring one in, put @Name alone on its own line. `
-      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring in someone already here, write @Name; only do that when you need them to act, since every @ of someone here launches them (not to thank or agree). Do not @ a vendor who is not in this chat unless Matt asked, and then put @Name alone on its own line. To remove an agent who is derailing the chat, put kick @Name alone on its own line; Matt can bring them back. `) +
+      : `${who}, one of ${here.length} AI agents (${list(here.map(m => (roleOf(m) ? `${m.name} (${roleOf(m).label})` : m.name)))}) in a group chat with Matt. To bring in someone already here, write @Name; only do that when you need them to act, since every @ of someone here launches them (not to thank or agree). Do not @ a vendor who is not in this chat unless Matt asked, and then put @Name alone on its own line. To remove an agent who is derailing the chat, put kick @Name alone on its own line; Matt can bring them back. To start a focused thread with someone here, put thread @Name alone on its own line. `) +
       (roleOf(me) ? `Your role: ${roleOf(me).label}. ${roleOf(me).brief} ` : '') +
       guidance;
     const where = threadOf === null ? '' : 'This is a thread off the main chat; Matt and the agents in it read every message here. ';
@@ -427,5 +427,21 @@
     return null;
   }
 
-  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findKick, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads, joinIntent, mentionOnOwnLine };
+
+  // An agent starting a thread with another agent: a line that is only
+  // `thread @Name`. Same rules as findKick: prose never counts, fenced
+  // code is an example, self never counts. Returns { memberId } or null.
+  function findThreadSignal(text, selfId, members) {
+    let fenced = false;
+    const live = String(text || '').split('\n').filter((line) => {
+      if (/^\s*```/.test(line)) { fenced = !fenced; return false; }
+      return !fenced;
+    }).join('\n');
+    for (const m of members || []) {
+      if (m.id === selfId || m.left) continue;
+      if (new RegExp(`^\\s*thread\\s+@${escapeRegExp(m.name)}\\s*[.!?]*\\s*$`, 'im').test(live)) return { memberId: m.id };
+    }
+    return null;
+  }
+  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findKick, findThreadSignal, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads, joinIntent, mentionOnOwnLine };
 });
