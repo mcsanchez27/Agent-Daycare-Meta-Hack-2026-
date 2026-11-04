@@ -16,7 +16,7 @@
 
 // `api` is the global the preload bridge exposes (window.api); declaring it
 // again here is a SyntaxError that stops this whole file from running.
-const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT, joinIntent } = window.ChatThread;
+const { createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findTarget, findTargets, splitChatAsks, routeMessage, memorySnapshot, mergeThreads, hopsSinceMatt, hopLimit, HOP_LIMIT, joinIntent } = window.ChatThread;
 const { VENDORS, ROLES, CREW, SPARK_CREW, PERSONAS, newMember, ensureMembers, renameRetired, memberById } = window.ChatMembers;
 const { folderFile, personaIdOf, teammates, teammateId, skillsFor, folderText, describeAssignment, textSig, mcpFor, claudeMcpConfig, parseCommandLine } = window.ChatOrg;
 
@@ -1021,9 +1021,12 @@ function glanceNotionFromText(text) {
 
 function previewFromText(text) {
   const hostMatch = /(https?:\/\/localhost:\d+[^\s]*)/i.exec(text);
+  const webMatch = /(https?:\/\/(?!localhost)[^\s]+)/i.exec(text);
   const htmlMatch = /([a-zA-Z0-9_\-\/]+\.html)/i.exec(text);
   if (hostMatch) {
     showPreview({ title: hostMatch[1], url: hostMatch[1], type: 'html' });
+  } else if (webMatch) {
+    showPreview({ title: webMatch[1], url: webMatch[1], type: 'html' });
   } else if (htmlMatch) {
     const filename = htmlMatch[1];
     const cFolder = workingDir && currentId ? `${workingDir}/${currentId}`.replace(/\\/g, '/') : '';
@@ -1495,7 +1498,7 @@ function renderMessage(view, m) {
   if (view === panel && m.id === panel.threadOf) row.classList.add('root');
   if (view === main && m.from !== 'system') {
     const buttons = [{ label: 'Thread', title: 'Open a thread on this message beside the chat', onClick: () => openPanel(m.id) }];
-    if (/([a-zA-Z0-9_\-\/]+\.html|https?:\/\/localhost:\d+)/i.test(m.text)) {
+    if (/([a-zA-Z0-9_\-\/]+\.html|https?:\/\/[^\s]+)/i.test(m.text)) {
       buttons.push({ label: 'Preview', title: 'Live preview in sidecar inspector', onClick: () => previewFromText(m.text) });
     }
     if (/(TM-\d+|notion\.(so|com))/i.test(m.text)) {
@@ -1779,14 +1782,34 @@ function send(view) {
     for (const m of activeMembers) if (!pending[runKeyOf(currentId, m.id)]) ask(currentId, m.id, view.threadOf);
     return;
   }
+  // @thread (main view only): the answers land in a thread on this
+  // message instead of sprawling down the main chat.
+  const threadIt = view.threadOf === null && /(^|\s)@thread(?![\w-])/i.test(text);
+  // Every agent named in the message answers, not just the first.
+  const mentioned = findTargets(text, null, current().thread.members)
+    .map(x => x.memberId).filter(id => memberById(current().thread, id));
+  if (mentioned.length > 1 || (mentioned.length === 1 && threadIt)) {
+    const postedMsg = post(currentId, { from: 'matt', to: mentioned[0], text, threadOf: view.threadOf });
+    view.input.value = '';
+    autoGrow(view);
+    closeMentions(view);
+    const rootId = threadIt && postedMsg ? postedMsg.id : view.threadOf;
+    for (const id of mentioned) {
+      const mid = memberById(current().thread, id).left ? rejoin(currentId, id, view.threadOf) : id;
+      if (!pending[runKeyOf(currentId, mid)]) ask(currentId, mid, rootId);
+    }
+    if (threadIt && postedMsg && view === main) openPanel(postedMsg.id);
+    return;
+  }
   const t = target(view);
   if (t.memberId && pending[runKeyOf(currentId, t.memberId)]) return;
   const to = t.memberId ? rejoin(currentId, t.memberId, view.threadOf) : join(currentId, t.vendor, { threadOf: view.threadOf }).id;
-  post(currentId, { from: 'matt', to, text, threadOf: view.threadOf });
+  const postedMsg = post(currentId, { from: 'matt', to, text, threadOf: view.threadOf });
   view.input.value = '';
   autoGrow(view);
   closeMentions(view);
-  ask(currentId, to, view.threadOf);
+  ask(currentId, to, threadIt && postedMsg ? postedMsg.id : view.threadOf);
+  if (threadIt && postedMsg && view === main) openPanel(postedMsg.id);
 }
 
 // The `@word` being typed right before the cursor, or null.
@@ -1820,6 +1843,9 @@ function mentionItems(q) {
   const active = members.filter(m => !m.left);
   if (active.length > 1 && 'all'.startsWith(q.query)) {
     items.push({ key: 'all', label: 'all', color: '#888', insert: '@all ', sub: `ask all ${active.length} agents in this chat` });
+  }
+  if ('thread'.startsWith(q.query)) {
+    items.push({ key: 'thread', label: 'thread', color: '#888', insert: '@thread ', sub: 'agents reply in a thread on this message' });
   }
   for (const v of VENDORS) {
     if (!vendorName(v).toLowerCase().startsWith(q.query)) continue;
@@ -2421,6 +2447,30 @@ async function renderOrgPersonas(panel) {
     grid.appendChild(chipCard);
   }
   panel.appendChild(grid);
+  // What each CLI already has (read live when this page opened). Claude
+  // is not read from a CLI: Daycare hands it the servers above at launch.
+  const cliCard = document.createElement('div');
+  cliCard.className = 'org-section-card';
+  const cliTitle = document.createElement('div');
+  cliTitle.className = 'org-card-title';
+  cliTitle.textContent = 'On your CLIs (read live)';
+  cliCard.appendChild(cliTitle);
+  const cliNames = { antigravity: 'Gemini (agy)', codex: 'Codex', grok: 'Grok' };
+  for (const v of ['antigravity', 'codex', 'grok']) {
+    const list = cli[v] || [];
+    const row = document.createElement('div');
+    row.className = 'org-item-desc';
+    row.textContent = list.length
+      ? `${cliNames[v]}: ${list.map(x => x.name + (x.enabled ? '' : ' (off)')).join(', ')}`
+      : `${cliNames[v]}: none found (add with ${v === 'antigravity' ? 'agy' : v} mcp add)`;
+    cliCard.appendChild(row);
+  }
+  const claudeRow = document.createElement('div');
+  claudeRow.className = 'org-item-desc';
+  claudeRow.textContent = 'Claude: receives the Daycare servers above at launch; nothing to read.';
+  cliCard.append(claudeRow);
+  searchable.push(cliCard);
+  panel.appendChild(cliCard);
 }
 
 // Secrets in a command line ("--header X-Goog-Api-Key: …") are hidden on screen.
@@ -2445,9 +2495,31 @@ async function renderOrgMcps(panel) {
   topHead.append(topTitle, topBadge);
   const topDesc = document.createElement('p');
   topDesc.className = 'org-item-desc';
-  topDesc.textContent = "Servers Daycare knows, kept in mcp-servers.json beside config.json (never in git, since entries can carry keys). Give one to all agents, engines or personas. A Claude agent receives its servers when it launches. Gemini, Codex and Grok keep their own lists, so each card shows which of them already has the server; adding it to those CLIs is still done in the CLI (agy mcp add, codex mcp add, grok mcp add).";
+  topDesc.textContent = "Daycare's own server list (mcp-servers.json beside config.json, never in git — entries can carry keys). Claude agents receive these at launch; other CLIs keep their own lists (see \"On your CLIs\" below). There is no public catalog to browse: Figma, Gmail and friends appear here only after you add them, above or in the CLI.";
   topCard.append(topHead, topDesc);
   panel.appendChild(topCard);
+  // Search across everything on this page (Daycare servers + CLI lists).
+  const searchCard = document.createElement('div');
+  searchCard.className = 'org-section-card';
+  const searchInput = document.createElement('input');
+  searchInput.className = 'org-input';
+  searchInput.placeholder = 'Search servers on this page (e.g. figma, gmail)';
+  const searchNote = document.createElement('div');
+  searchNote.className = 'org-meta-info';
+  searchCard.append(searchInput, searchNote);
+  panel.appendChild(searchCard);
+  const searchable = [];
+  const applySearch = () => {
+    const q = searchInput.value.trim().toLowerCase();
+    let shown = 0;
+    for (const el of searchable) {
+      const hit = !q || el.textContent.toLowerCase().includes(q);
+      el.hidden = !hit;
+      if (hit) shown++;
+    }
+    searchNote.textContent = q ? (shown ? `${shown} match${shown === 1 ? '' : 'es'}` : `No server matching "${searchInput.value.trim()}" yet — add it above, or in the CLI (agy/codex/grok mcp add).`) : '';
+  };
+  searchInput.addEventListener('input', applySearch);
 
   let servers = [];
   let org = { mcp: {} };
@@ -2576,6 +2648,7 @@ async function renderOrgMcps(panel) {
     actions.appendChild(remove);
     card.append(head, desc, cmd, assign, actions);
     grid.appendChild(card);
+    searchable.push(card);
   }
   if (!servers.length) {
     const empty = document.createElement('p');
