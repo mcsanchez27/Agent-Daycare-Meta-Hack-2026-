@@ -2447,30 +2447,6 @@ async function renderOrgPersonas(panel) {
     grid.appendChild(chipCard);
   }
   panel.appendChild(grid);
-  // What each CLI already has (read live when this page opened). Claude
-  // is not read from a CLI: Daycare hands it the servers above at launch.
-  const cliCard = document.createElement('div');
-  cliCard.className = 'org-section-card';
-  const cliTitle = document.createElement('div');
-  cliTitle.className = 'org-card-title';
-  cliTitle.textContent = 'On your CLIs (read live)';
-  cliCard.appendChild(cliTitle);
-  const cliNames = { antigravity: 'Gemini (agy)', codex: 'Codex', grok: 'Grok' };
-  for (const v of ['antigravity', 'codex', 'grok']) {
-    const list = cli[v] || [];
-    const row = document.createElement('div');
-    row.className = 'org-item-desc';
-    row.textContent = list.length
-      ? `${cliNames[v]}: ${list.map(x => x.name + (x.enabled ? '' : ' (off)')).join(', ')}`
-      : `${cliNames[v]}: none found (add with ${v === 'antigravity' ? 'agy' : v} mcp add)`;
-    cliCard.appendChild(row);
-  }
-  const claudeRow = document.createElement('div');
-  claudeRow.className = 'org-item-desc';
-  claudeRow.textContent = 'Claude: receives the Daycare servers above at launch; nothing to read.';
-  cliCard.append(claudeRow);
-  searchable.push(cliCard);
-  panel.appendChild(cliCard);
 }
 
 // Secrets in a command line ("--header X-Goog-Api-Key: …") are hidden on screen.
@@ -2657,6 +2633,30 @@ async function renderOrgMcps(panel) {
     grid.appendChild(empty);
   }
   panel.appendChild(grid);
+  // What each CLI already has (read live when this page opened). Claude
+  // is not read from a CLI: Daycare hands it the servers above at launch.
+  const cliCard = document.createElement('div');
+  cliCard.className = 'org-section-card';
+  const cliTitle = document.createElement('div');
+  cliTitle.className = 'org-card-title';
+  cliTitle.textContent = 'On your CLIs (read live)';
+  cliCard.appendChild(cliTitle);
+  const cliNames = { antigravity: 'Gemini (agy)', codex: 'Codex', grok: 'Grok' };
+  for (const v of ['antigravity', 'codex', 'grok']) {
+    const list = cli[v] || [];
+    const row = document.createElement('div');
+    row.className = 'org-item-desc';
+    row.textContent = list.length
+      ? `${cliNames[v]}: ${list.map(x => x.name + (x.enabled ? '' : ' (off)')).join(', ')}`
+      : `${cliNames[v]}: none found (add with ${v === 'antigravity' ? 'agy' : v} mcp add)`;
+    cliCard.appendChild(row);
+  }
+  const claudeRow = document.createElement('div');
+  claudeRow.className = 'org-item-desc';
+  claudeRow.textContent = 'Claude: receives the Daycare servers above at launch; nothing to read.';
+  cliCard.append(claudeRow);
+  searchable.push(cliCard);
+  panel.appendChild(cliCard);
 }
 
 // Tick boxes for an assignment: "All agents", then each engine and each saved
