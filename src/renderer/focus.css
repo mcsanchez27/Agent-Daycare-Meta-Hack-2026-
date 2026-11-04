@@ -19,5 +19,11 @@
 .ui-icon { width: 1.05em; height: 1.05em; display: inline-block; vertical-align: -0.18em; }
 .brand-sparkle .ui-icon, .preview-empty-icon .ui-icon { width: 1.35em; height: 1.35em; }
 .preview-empty-icon { color: var(--muted); }
+.sidecar { position: relative; }
+.sidecar-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 6; }
+.sidecar-resize:hover { background: rgba(255, 255, 255, .08); }
+.thread-panel { height: auto; min-height: 0; }
+.thread-panel .thread { flex: 1; min-height: 0; overflow-y: auto; }
+.panel-composer-dock { flex-shrink: 0; }
 .side-a:empty::after { content: "\2026"; }
 .msg.pending .bubble:empty::after { content: "\2026"; }

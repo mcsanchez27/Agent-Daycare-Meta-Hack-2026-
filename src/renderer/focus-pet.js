@@ -6,7 +6,7 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const api = window.api;
-  const { findKick } = window.ChatThread;
+  const { findKick, findThreadSignal } = window.ChatThread;
 
   let fpFile = null; // chat-folder file currently in Preview
   let fpPet = null; // { chatId, memberId } the pet window is talking to
@@ -66,6 +66,19 @@
           if (chatId === currentId) renderMembers();
         }
       }
+      const threadSig = !replyMsg.threadOf ? findThreadSignal(replyMsg.text, memberId, c.thread.members) : null;
+      if (threadSig) {
+        const tTarget = memberById(c.thread, threadSig.memberId);
+        const tKicker = memberById(c.thread, memberId);
+        if (tTarget && !tTarget.left && !pending[runKeyOf(chatId, threadSig.memberId)]) {
+          post(chatId, {
+            from: 'system',
+            threadOf: null,
+            text: `${tKicker ? tKicker.name : 'An agent'} started a thread with ${tTarget.name} on that reply. It continues under the reply (Thread button).`
+          });
+          ask(chatId, threadSig.memberId, replyMsg.id);
+        }
+      }
       if (fpQueued && fpPet && fpPet.chatId === chatId && fpPet.memberId === memberId && !pending[runKeyOf(chatId, memberId)]) {
         const queued = fpQueued;
         fpQueued = null;
@@ -81,7 +94,7 @@
   const focusBtn = $('preview-focus');
   if (focusBtn) focusBtn.addEventListener('click', () => {
     const sidecar = $('sidecar');
-    if (sidecar) sidecar.classList.toggle('focused');
+    if (sidecar) { sidecar.style.width = ''; sidecar.classList.toggle('focused'); }
   });
 
   const editBtn = $('preview-edit');
