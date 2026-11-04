@@ -256,7 +256,7 @@
       (threadOf === null || m.threadOf === threadOf || (!m.threadOf && m.id <= threadOf)));
     const last = said[said.length - 1];
     const fromMatt = last && (last.from === 'matt' || last.from === 'guest') && (last.to === memberId || (last.from === 'matt' && /(^|\s)@all(?![\w-])/i.test(last.text)));
-    const handoff = last && isMember(thread, last.from) && findMention(last.text, last.from, members) === memberId;
+    const handoff = last && (isMember(thread, last.from) || last.from === 'matt') && me && last.from !== memberId && mentionAt(last.text, me.name) !== -1;
     if (!me || (!answer && !fromMatt && !handoff)) {
       throw new Error(`The newest message is not from Matt to ${memberId} or a handoff to it`);
     }
@@ -443,5 +443,19 @@
     }
     return null;
   }
-  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findKick, findThreadSignal, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads, joinIntent, mentionOnOwnLine };
+
+  // Every member text brings in with @Name, in the order they appear:
+  // [{ memberId }]. Matt uses this so "@Codex and @Claude" reaches both,
+  // not just the first (findTarget). Self is never a target.
+  function findTargets(text, selfId, members) {
+    const hits = [];
+    for (const m of members || []) {
+      if (m.id === selfId) continue;
+      const at = mentionAt(text, m.name);
+      if (at !== -1) hits.push({ at, memberId: m.id });
+    }
+    hits.sort((a, b) => a.at - b.at);
+    return hits.map(({ memberId }) => ({ memberId }));
+  }
+  return { VENDORS, HOP_LIMIT, hopLimit, createThread, addMessage, buildPrompt, promptGuidance, chatTitle, findMention, findTarget, findTargets, findKick, findThreadSignal, findChatMention, findChatMentions, splitChatAsks, routeMessage, memorySnapshot, hopsSinceMatt, mergeThreads, joinIntent, mentionOnOwnLine };
 });

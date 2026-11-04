@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createThread, addMessage, buildPrompt, findThreadSignal } = require('../src/renderer/thread');
+const { createThread, addMessage, buildPrompt, findThreadSignal, findTargets } = require('../src/renderer/thread');
 const { newMember } = require('../src/renderer/members');
 
 function claudeAndSonnet() {
@@ -23,6 +23,19 @@ test('@all: every member can be prompted from one Matt message', () => {
   addMessage(t, { from: 'matt', to: 'm1', text: '@all what is your take?' });
   assert.match(buildPrompt(t, 'm1'), /what is your take/);
   assert.match(buildPrompt(t, 'm2'), /what is your take/);
+});
+
+test('findTargets: every agent named in a Matt message, in order', () => {
+  const t = claudeAndSonnet();
+  assert.deepEqual(findTargets('@Sonnet and @Claude, thoughts?', null, t.members), [{ memberId: 'm2' }, { memberId: 'm1' }]);
+  assert.deepEqual(findTargets('no mentions here', null, t.members), []);
+  assert.deepEqual(findTargets('@Claude only', 'm1', t.members), [], 'self never a target');
+});
+
+test('@thread: a second named agent can be prompted inside the thread', () => {
+  const t = claudeAndSonnet();
+  const root = addMessage(t, { from: 'matt', to: 'm1', text: '@Claude and @Sonnet, @thread evaluate this' });
+  assert.match(buildPrompt(t, 'm2', { threadOf: root.id }), /evaluate this/);
 });
 
 test('without @all, a Matt message prompts only its addressee', () => {

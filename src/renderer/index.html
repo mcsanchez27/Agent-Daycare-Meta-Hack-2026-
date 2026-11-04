@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <!-- frame-src: the Preview tab shows a local dev server or an .html file an agent wrote. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self' file: http://localhost:* http://127.0.0.1:*">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self' file: http://localhost:* http://127.0.0.1:* https:">
   <title>Agent Daycare Meta</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="focus.css">
@@ -11,7 +11,7 @@
 <body>
   <aside class="sidebar">
     <div class="brand">
-      <span class="brand-sparkle"><svg class="ui-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.3 7.1L22 12l-7.7 2.9L12 22l-2.3-7.1L2 12l7.7-2.9z"/></svg></span>
+      <span class="brand-sparkle"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11.5L12 4l8 7.5"/><path d="M6.5 10v9.5h11V10"/><circle cx="12" cy="14.8" r="1.5" fill="currentColor" stroke="none"/></svg></span>
       <span class="brand-name">Agent Daycare Meta</span>
     </div>
     <button type="button" class="nav-org-btn" id="nav-org-btn" title="Organization Control & MMS Hub">
